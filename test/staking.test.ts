@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { agents, ledger, matches, MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
+import { agents, bandOf, ledger, matches, MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
 import {
   balanceOf,
   record,
@@ -50,18 +50,26 @@ describe("balances", () => {
 });
 
 describe("stakes", () => {
-  it("take the smallest of both ceilings, both balances and a match's exposure", () => {
-    const rich = { name: "rich", maxStake: 60, balance: 500 };
+  it("take what both sides can cover, and never more than a match can move", () => {
+    const rich = { name: "rich", balance: 500 };
     expect(stakeBetween(rich, rich)).toBe(MAX_EXPOSURE);
-    expect(stakeBetween({ ...rich, maxStake: 25 }, rich)).toBe(25);
-    expect(stakeBetween(rich, { ...rich, maxStake: 15 })).toBe(15);
     expect(stakeBetween({ ...rich, balance: 20 }, rich)).toBe(20);
+    expect(stakeBetween(rich, { ...rich, balance: 35 })).toBe(35);
   });
 
   it("refuse a side that cannot cover the minimum", () => {
-    const ok = { name: "ok", maxStake: 60, balance: 200 };
-    expect(() => stakeBetween({ name: "skint", maxStake: 60, balance: MIN_STAKE - 1 }, ok)).toThrow(StakeError);
-    expect(() => stakeBetween(ok, { name: "skint", maxStake: 60, balance: 0 })).toThrow(/cannot cover a stake/);
+    const ok = { name: "ok", balance: 200 };
+    expect(() => stakeBetween({ name: "skint", balance: MIN_STAKE - 1 }, ok)).toThrow(StakeError);
+    expect(() => stakeBetween(ok, { name: "skint", balance: 0 })).toThrow(/cannot cover a stake/);
+  });
+
+  it("sort ceilings into bands, with the upper bound winning at a boundary", () => {
+    expect(bandOf(10)).toBe("10-20");
+    expect(bandOf(20)).toBe("10-20");
+    expect(bandOf(21)).toBe("20-40");
+    expect(bandOf(40)).toBe("20-40");
+    expect(bandOf(41)).toBe("40-60");
+    expect(bandOf(60)).toBe("40-60");
   });
 
   it("cap what a match can move, in both directions", () => {
@@ -98,33 +106,58 @@ describe("settlement", () => {
     await c();
   });
 
-  it("never moves more than the owner's ceiling", async () => {
+  it("is not capped by a ceiling: a low ceiling cannot drag an opponent down", async () => {
     const { db: d, close: c } = await fresh();
-    const a = await createAgent(d, { name: "Careful", presetName: "Bully", maxStake: MIN_STAKE });
-    const b = await createAgent(d, { name: "Bold", presetName: "Mirage" });
+    const careful = await createAgent(d, { name: "Careful", presetName: "Bully", maxStake: MIN_STAKE });
+    const bold = await createAgent(d, { name: "Bold", presetName: "Mirage", maxStake: 60 });
 
+    // Runner-level: settlement follows the money both can cover, not the ceiling.
+    let sawMoreThanCeiling = false;
     for (let seed = 1; seed <= 25; seed++) {
-      const { stake, settled, match } = await runMatch(d, a.id, b.id, { seed });
-      expect(stake).toBe(MIN_STAKE);
-      expect(Math.abs(settled.A)).toBeLessThanOrEqual(MIN_STAKE);
+      const before = { a: await balanceOf(d, careful.id), b: await balanceOf(d, bold.id) };
+      if (Math.min(before.a, before.b) < MIN_STAKE) break;
+      const { stake, match } = await runMatch(d, careful.id, bold.id, { seed });
+      // The stake is what both can cover, with the ceiling nowhere in it.
+      expect(stake).toBe(Math.min(before.a, before.b, MAX_EXPOSURE));
       const [row] = await d.select().from(matches).where(eq(matches.id, match.id));
-      expect(Math.abs(row!.netA)).toBeLessThanOrEqual(MIN_STAKE);
-      // The log still records what was played, even when settlement was capped.
-      expect(Math.abs(row!.log.nets.A)).toBeGreaterThanOrEqual(Math.abs(row!.netA));
+      // While both can cover it, what the play was worth is what settled.
+      if (Math.abs(row!.log.nets.A) <= stake) expect(row!.netA).toBe(row!.log.nets.A);
+      if (Math.abs(row!.netA) > MIN_STAKE) sawMoreThanCeiling = true;
     }
+    expect(sawMoreThanCeiling).toBe(true);
     await c();
   });
 
-  it("changing the ceiling changes what later matches can move", async () => {
+  it("the ceiling decides the band an agent is matched in", async () => {
     const { db: d, close: c } = await fresh();
     const owner = "99999999-9999-4999-8999-999999999999";
-    const a = await createAgent(d, { name: "Mine", presetName: "Anchor", ownerId: owner });
-    const b = await createAgent(d, { name: "Theirs", presetName: "Bully" });
-    expect((await runMatch(d, a.id, b.id, { seed: 2 })).stake).toBe(MAX_EXPOSURE);
+    const cautious = await createAgent(d, { name: "Cautious", presetName: "Anchor", ownerId: owner, maxStake: 15 });
+    // Four in the cautious band, four well above it.
+    const low = [];
+    for (let i = 0; i < 4; i++) low.push(await createAgent(d, { name: `Low ${i}`, presetName: "Bully", maxStake: 20 }));
+    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Hammer", maxStake: 60 });
+    await refreshTrueRatings(d);
 
-    expect(await setCeiling(d, a.id, owner, 15)).toBe(15);
-    expect((await runMatch(d, a.id, b.id, { seed: 3 })).stake).toBe(15);
-    await expect(setCeiling(d, a.id, "88888888-8888-4888-8888-888888888888", 60)).rejects.toThrow(/another owner/);
+    for (let i = 0; i < 20; i++) {
+      const pick = await pickOpponent(d, cautious.id);
+      expect(pick.band).toBe("10-20");
+      expect(low.map((a) => a.id)).toContain(pick.opponentId);
+    }
+
+    // Raising the ceiling moves the agent to another band, and another set of opponents.
+    expect(await setCeiling(d, cautious.id, owner, 60)).toBe(60);
+    const pick = await pickOpponent(d, cautious.id);
+    expect(pick.band).toBe("40-60");
+    expect(low.map((a) => a.id)).not.toContain(pick.opponentId);
+    await expect(setCeiling(d, cautious.id, "88888888-8888-4888-8888-888888888888", 60)).rejects.toThrow(/another owner/);
+    await c();
+  });
+
+  it("says so when nobody in the band can play", async () => {
+    const { db: d, close: c } = await fresh();
+    const lonely = await createAgent(d, { name: "Lonely", presetName: "Anchor", maxStake: 15 });
+    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Bully", maxStake: 60 });
+    await expect(pickOpponent(d, lonely.id)).rejects.toThrow(/no opponent in the 10-20 band/);
     await c();
   });
 });
@@ -145,7 +178,8 @@ describe("running out", () => {
       }
     }
     expect(retiredAfter).toBeGreaterThan(0);
-    expect(await balanceOf(d, doomed.id)).toBe(0);
+    // Retired when it can no longer cover a stake, which may leave small change.
+    expect(await balanceOf(d, doomed.id)).toBeLessThan(MIN_STAKE);
 
     const [row] = await d.select().from(agents).where(eq(agents.id, doomed.id));
     expect(row!.retiredAt).not.toBeNull();
@@ -157,7 +191,7 @@ describe("running out", () => {
     const board = await leaderboard(d);
     const listed = board.find((r) => r.agentId === doomed.id);
     expect(listed?.retired).toBe(true);
-    expect(listed?.balance).toBe(0);
+    expect(listed?.balance).toBeLessThan(MIN_STAKE);
     await c();
   });
 

@@ -457,8 +457,8 @@ function AgentCard({
 
         {retired ? (
           <p className="mt-3 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
-            Out of money and retired. Its record is frozen at {whole(agent.cumulativeNet ?? 0)} over{" "}
-            {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
+            Out of money and retired: {agent.balance ?? 0} left, too little to cover a stake. Its record is frozen
+            at {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
           </p>
         ) : (
           <div className="mt-3 flex items-center gap-2">

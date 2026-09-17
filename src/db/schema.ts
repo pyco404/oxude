@@ -45,9 +45,8 @@ export const agents = pgTable(
      */
     policyStakes: jsonb("policy_stakes").$type<Stakes>(),
     /**
-     * The owner's per-match ceiling: this agent can never stake more than this,
-     * whatever its balance or its opponent's. Set when renting, changeable by
-     * the owner, and clamped to MAX_EXPOSURE.
+     * The owner's per-match ceiling. It decides which band the agent plays in,
+     * and so who it meets; it does not cap what a match settles.
      */
     maxStake: integer("max_stake").notNull().default(60),
     /**
@@ -157,14 +156,35 @@ export const ratings = pgTable("ratings", {
 /** Matches counted by the displayed recent-form figure. */
 export const RATING_WINDOW = 50;
 
-/** Balance an agent starts with when rented. */
-export const STARTING_BALANCE = 200;
+/** Balance an agent starts with when rented: three matches at full exposure. */
+export const STARTING_BALANCE = 60;
 /** Below this, an agent cannot cover a match and is not matched. */
 export const MIN_STAKE = 10;
 /** The most a match can move: three rounds at the raised bet. */
 export const MAX_EXPOSURE = 60;
 /** Each owner's first elicitation costs them nothing. */
 export const FREE_ELICITATIONS = 1;
+
+/**
+ * Ceiling bands. A ceiling says what kind of match an agent wants, and agents
+ * are matched inside one band; it does not cap settlement. Capping settlement
+ * made the lowest ceiling dominant, because it dragged a stronger opponent
+ * down to it.
+ */
+export const CEILING_BANDS = [
+  { name: "10-20", min: 10, max: 20 },
+  { name: "20-40", min: 20, max: 40 },
+  { name: "40-60", min: 40, max: 60 },
+] as const;
+
+export type CeilingBand = (typeof CEILING_BANDS)[number]["name"];
+
+/** Which band a ceiling sits in. Upper bound wins at a boundary. */
+export function bandOf(ceiling: number): CeilingBand {
+  if (ceiling <= 20) return "10-20";
+  if (ceiling <= 40) return "20-40";
+  return "40-60";
+}
 
 export type AgentRow = typeof agents.$inferSelect;
 export type MatchRow = typeof matches.$inferSelect;

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
 import { OXUDE_RULES, type Stakes } from "../round.js";
@@ -14,10 +14,13 @@ import {
   ledger,
   matches,
   ratings,
+  bandOf,
+  CEILING_BANDS,
   MAX_EXPOSURE,
   MIN_STAKE,
   RATING_WINDOW,
   STARTING_BALANCE,
+  type CeilingBand,
   type AgentRow,
   type MatchRow,
   type RulesConfig,
@@ -147,8 +150,8 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   // What both sides can cover, under both owners' ceilings.
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, maxStake: rowA.maxStake, balance: balances.get(rowA.id) ?? 0 },
-    { name: rowB.name, maxStake: rowB.maxStake, balance: balances.get(rowB.id) ?? 0 },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
   );
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
@@ -216,6 +219,8 @@ export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Reco
 
 export type OpponentPick = {
   opponentId: string;
+  /** The ceiling band both agents are in. */
+  band?: CeilingBand;
   /** Which path matchmaking took, for the log. */
   path: "closest-rating" | "preset-fallback";
   candidates: number;
@@ -246,7 +251,17 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
     .having(sql`sum(${ledger.amount}) >= ${MIN_STAKE}`)
     .as("solvent");
 
-  // An agent that cannot cover a stake is not offered as an opponent.
+  // Same band, and able to cover a stake. The band is what a ceiling buys:
+  // who you meet, not what a match is worth.
+  const band = bandOf(me.maxStake);
+  const bounds = CEILING_BANDS.find((b) => b.name === band)!;
+  const inBand =
+    band === "10-20"
+      ? lte(agents.maxStake, bounds.max)
+      : band === "20-40"
+        ? and(gt(agents.maxStake, 20), lte(agents.maxStake, 40))
+        : gt(agents.maxStake, 40);
+
   const candidates = await db
     .select({ id: agents.id, ownerId: agents.ownerId, rating: agents.trueRating })
     .from(agents)
@@ -256,6 +271,7 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
         ne(agents.id, agentId),
         isNull(agents.retiredAt),
         gte(agents.maxStake, MIN_STAKE),
+        inBand,
         // Two agents with no owner are not the same owner.
         me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId)),
       ),
@@ -267,6 +283,7 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
     );
     const pick: OpponentPick = {
       opponentId: best.id,
+      band,
       path: "closest-rating",
       candidates: candidates.length,
       ratingGap: Math.abs((best.rating ?? 0) - mine),
@@ -275,16 +292,19 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
     return pick;
   }
 
+  // Fall back to a preset agent in the same band, so a thin queue does not
+  // silently put a cautious agent in with the boldest on the roster.
   const [preset] = await db
     .select({ id: agents.id })
     .from(agents)
     .innerJoin(solvent, eq(solvent.agentId, agents.id))
-    .where(and(ne(agents.id, agentId), isNull(agents.retiredAt), sql`${agents.presetName} is not null`))
+    .where(and(ne(agents.id, agentId), isNull(agents.retiredAt), inBand, sql`${agents.presetName} is not null`))
     .orderBy(sql`random()`)
     .limit(1);
-  if (!preset) throw new Error("no preset agent available to fall back to");
+  if (!preset) throw new StakeError(`no opponent in the ${band} band can cover a stake right now`);
   const pick: OpponentPick = {
     opponentId: preset.id,
+    band,
     path: "preset-fallback",
     candidates: candidates.length,
     ratingGap: null,
@@ -378,4 +398,4 @@ export async function setCeiling(db: Db, agentId: string, ownerId: string | null
   return maxStake;
 }
 
-export { balanceOf, connect, MAX_EXPOSURE, MIN_STAKE, RATING_WINDOW, StakeError };
+export { balanceOf, bandOf, CEILING_BANDS, connect, MAX_EXPOSURE, MIN_STAKE, RATING_WINDOW, StakeError };

@@ -62,32 +62,34 @@ export async function statement(db: Db, agentId: string, limit = 50) {
 export class StakeError extends Error {}
 
 /**
- * What a match between these two can put at risk: the smaller of the two
- * owners' ceilings and the two balances, and never more than one match can
- * move. Throws when either side cannot cover the minimum.
+ * What a match between these two puts at risk: what both can actually cover,
+ * and never more than one match can move. Ceilings do not enter this - they
+ * decide who meets whom, not what a match is worth. Throws when either side
+ * cannot cover the minimum.
  */
 export function stakeBetween(
-  a: { name: string; maxStake: number; balance: number },
-  b: { name: string; maxStake: number; balance: number },
+  a: { name: string; balance: number },
+  b: { name: string; balance: number },
 ): number {
   for (const side of [a, b]) {
     if (side.balance < MIN_STAKE) {
       throw new StakeError(`${side.name} cannot cover a stake: balance ${side.balance}, minimum ${MIN_STAKE}`);
     }
-    if (side.maxStake < MIN_STAKE) {
-      throw new StakeError(`${side.name} has a ceiling of ${side.maxStake}, below the minimum stake of ${MIN_STAKE}`);
-    }
   }
-  return Math.min(a.maxStake, b.maxStake, a.balance, b.balance, MAX_EXPOSURE);
+  return Math.min(a.balance, b.balance, MAX_EXPOSURE);
 }
 
-/** Neither side can lose more than the stake, whatever the match did. */
+/** Nobody can lose money they do not have: the stake is what both could cover. */
 export const settle = (net: number, stake: number): number => Math.max(-stake, Math.min(stake, net));
 
-/** An agent with nothing left is retired: its record stops here. */
+/**
+ * An agent that can no longer cover a stake is retired: its record stops here.
+ * The test is the minimum stake, not zero - a balance below it can never be
+ * played again, so leaving it alive would just make an unplayable zombie.
+ */
 export async function retireIfBroke(db: Writable, agentId: string): Promise<boolean> {
   const balance = await balanceOf(db, agentId);
-  if (balance > 0) return false;
+  if (balance >= MIN_STAKE) return false;
   await db.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, agentId));
   return true;
 }

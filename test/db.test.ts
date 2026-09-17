@@ -74,14 +74,20 @@ describe("match runner", () => {
     });
 
     for (let i = 0; i < 20; i++) {
-      const { match, log } = await runMatch(db, a.id, b.id);
+      const { match, log, stake, settled, retired } = await runMatch(db, a.id, b.id);
       const [stored] = await db.select().from(matches).where(eq(matches.id, match.id));
       const replayed = replayMatch(stored!, resolveAgent(a), resolveAgent(b));
       expect(replayed).toEqual(stored!.log);
       expect(replayed).toEqual(log);
-      expect(stored!.netA).toBe(log.nets.A);
-      expect(stored!.netB).toBe(-log.nets.A);
+      // The row records what settled; the log records what was played. They
+      // differ only when a thin balance could not cover the whole result.
+      expect(stored!.netA).toBe(settled.A);
+      // Zero-sum rather than toBe(-settled.A): a settled 0 is -0 on one side.
+      expect(stored!.netA + stored!.netB).toBe(0);
+      expect(Math.abs(stored!.netA)).toBeLessThanOrEqual(stake);
+      if (Math.abs(log.nets.A) <= stake) expect(stored!.netA).toBe(log.nets.A);
       expect(stored!.rulesConfig).toEqual(DEFAULT_RULES);
+      if (retired.length > 0) break;
     }
   });
 
