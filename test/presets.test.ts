@@ -20,7 +20,18 @@ function view(
   oppRaiseCount = oppRaisedLastRound ? 1 : 0,
   stakes: Stakes = CLASSIC_STAKES,
 ): View {
-  return { myEdge, oppRaisedLastRound, oppRaiseCount, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 2, myNet: 0, stakes };
+  return {
+    myEdge,
+    oppRaisedLastRound,
+    oppRaiseCount,
+    myRoundsWon: 0,
+    oppRoundsWon: 0,
+    roundNumber: 2,
+    myNet: 0,
+    stakes,
+    oppActionThisRound: null,
+    myActionThisRound: null,
+  };
 }
 
 const BASE: StrategyParams = {
@@ -29,6 +40,7 @@ const BASE: StrategyParams = {
   bluffAtOrBelow: null,
   bluffUnderPressure: false,
   pressureFoldBelow: null,
+  foldToRaiseBelow: null,
 };
 
 type Case = [edge: number, oppRaisedLast: boolean, expected: Action, rule: string];
@@ -99,10 +111,10 @@ describe("presets", () => {
 
   it("parameters are exactly as specified", () => {
     expect(PRESET_PARAMS).toEqual({
-      Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
-      Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
-      Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
-      Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null },
+      Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
+      Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
+      Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
+      Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null, foldToRaiseBelow: null },
     });
   });
 
@@ -184,5 +196,25 @@ describe("pot odds", () => {
     playMatch(spy, spy, { seed: 1, stakes });
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((s) => s.ante === 3 && s.baseBet === 10 && s.raisedBet === 20)).toBe(true);
+  });
+
+  it("facing a raise this round, only foldToRaiseBelow applies", () => {
+    const facing = (edge: number, params: Partial<StrategyParams>, ante = 4) =>
+      makeStrategy({ ...BASE, raiseAtOrAbove: 0.25, bluffAtOrBelow: 0.32, bluffUnderPressure: true, ...params })({
+        ...view(edge, true, 1, { ante, baseBet: 10, raisedBet: 20 }),
+        oppActionThisRound: "raise",
+      });
+    // Never raises back and ignores bluff/pressure rules when facing a raise.
+    expect(EDGES.map((e) => facing(e, {}))).toEqual(["call", "call", "call", "call", "call"]);
+    expect(EDGES.map((e) => facing(e, { foldToRaiseBelow: 0.45 }))).toEqual(["fold", "fold", "call", "call", "call"]);
+    // Pot odds at ante 4: calling 20 at 0.3 is worth -8 < -4; at 0.4 it ties and calls.
+    expect(EDGES.map((e) => facing(e, { foldToRaiseBelow: "pot-odds" }))).toEqual(["fold", "call", "call", "call", "call"]);
+    expect(EDGES.map((e) => facing(e, { foldToRaiseBelow: "pot-odds" }, 3))).toEqual(["fold", "fold", "call", "call", "call"]);
+  });
+
+  it("facing a call this round, the normal rules apply", () => {
+    const agent = makeStrategy({ ...BASE, foldBelow: 0.35, raiseAtOrAbove: 0.65, foldToRaiseBelow: 0.99 });
+    const v = (edge: number): View => ({ ...view(edge), oppActionThisRound: "call" });
+    expect(EDGES.map((e) => agent(v(e)))).toEqual(["fold", "call", "call", "call", "raise"]);
   });
 });
