@@ -1,42 +1,51 @@
 import {
+  CLASSIC_STAKES,
+  expectedNet,
   makeStrategy,
   PRESET_NAMES,
   PRESET_PARAMS,
   seatAveragedNet,
-  CLASSIC_STAKES,
   type Action,
   type Agent,
   type FoldThreshold,
   type PresetName,
   type Stakes,
   type StrategyParams,
+  type TurnOrder,
 } from "../src/index.js";
 import { analyse, fmt, MAX_PROBE_BEATS, NAMES, PROBES, SPREAD_LIMIT, TIE } from "./analysis.js";
+import { selfCheck, tableFor, tableSeatAveraged, type DecisionTable } from "./table-eval.js";
 
-// Exact search for preset parameters meeting the ship criteria at one ante,
-// ranked by how well they hold across an ante sweep around it.
-// Usage: npm run search [-- --ante 4 --base 10 --raise 20 --spread-ante 1 --top 3]
-// Env: ANY_BLUFF=1 drops the bluffer requirement, ANY_TRICKY=1 lets Tricky react to pressure,
-// WINDOWS=1 prints each passing set's contiguous passing ante window.
-const arg = (flag: string, fallback: number) => {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 ? Number(process.argv[i + 1]) : fallback;
+// Exact search for preset parameters that meet the ship criteria across an
+// ante range (every criterion must hold at the low end, the centre and the
+// high end; the points in between are then checked and reported).
+//
+// Usage: npm run search -- [--turns simultaneous|alternating] [--ante 4] [--range 1]
+//                          [--base 10] [--raise 20] [--top 3]
+// Env: ANY_BLUFF=1 drops the bluffer requirement; ANY_TRICKY=1 lets Tricky react to pressure.
+const flag = (name: string) => {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
 };
-const ANTE = arg("--ante", 4);
-const BASE = arg("--base", CLASSIC_STAKES.baseBet);
-const RAISE = arg("--raise", CLASSIC_STAKES.raisedBet);
-const HALF_WIDTH = arg("--spread-ante", 1);
-const TOP = arg("--top", 3);
+const num = (name: string, fallback: number) => Number(flag(name) ?? fallback);
+const TURNS = (flag("--turns") ?? "simultaneous") as TurnOrder;
+if (TURNS !== "simultaneous" && TURNS !== "alternating") throw new Error(`--turns must be simultaneous or alternating`);
+const ANTE = num("--ante", 4);
+const RANGE = num("--range", 1);
+const BASE = num("--base", CLASSIC_STAKES.baseBet);
+const RAISE = num("--raise", CLASSIC_STAKES.raisedBet);
+const TOP = num("--top", 3);
+const REQUIRE_BLUFF = !process.env.ANY_BLUFF;
+const TRICKY_IGNORES_PRESSURE = !process.env.ANY_TRICKY;
+
 const stakesAt = (ante: number): Stakes => ({ ante, baseBet: BASE, raisedBet: RAISE });
-
-// Sweep points for reporting; the ranking points add both sides of the search ante,
-// where pot-odds thresholds can flip. Between flips every value is linear in the ante.
 const round2 = (x: number) => Math.round(x * 100) / 100;
-const SWEEP = Array.from({ length: Math.round(HALF_WIDTH * 20) + 1 }, (_, k) => round2(ANTE - HALF_WIDTH + k * 0.1));
-const RANK_ANTES = [...new Set([ANTE - HALF_WIDTH, ANTE - HALF_WIDTH / 2, ANTE - 0.001, ANTE, ANTE + 0.001, ANTE + HALF_WIDTH / 2, ANTE + HALF_WIDTH])];
-const BEHAVIOUR_ANTES = [ANTE - HALF_WIDTH, ANTE, ANTE + HALF_WIDTH];
+const HARD = [ANTE - RANGE, ANTE, ANTE + RANGE];
+// Between pot-odds flips every value is linear in the ante; the extra points
+// cover both sides of the centre, where flips happen with base 10 / raise 20.
+const EXTRA = [ANTE - RANGE / 2, ANTE - 0.001, ANTE + 0.001, ANTE + RANGE / 2];
+const SWEEP = Array.from({ length: Math.round(RANGE * 20) + 1 }, (_, k) => round2(ANTE - RANGE + k * 0.1));
 
-const EDGE_VALUES = [0.3, 0.4, 0.5, 0.6, 0.7];
 const T: FoldThreshold[] = [0, 0.35, 0.45, 0.55, 0.65, 0.75, "pot-odds"];
 const GRID = {
   foldBelow: T,
@@ -44,251 +53,265 @@ const GRID = {
   bluffAtOrBelow: [null, 0.32, 0.42, 0.52],
   bluffUnderPressure: [false, true],
   pressureFoldBelow: [null, 0.35, 0.45, 0.6, 0.65, 0.75, "pot-odds"] as (FoldThreshold | null)[],
+  foldToRaiseBelow: (TURNS === "alternating" ? [null, ...T.slice(1)] : [null]) as (FoldThreshold | null)[],
 };
 
-type Table = { unpressured: Action[]; pressured: Action[] };
-const tableOf = (agent: Agent, ante: number): Table => {
-  const at = (raised: boolean) =>
-    EDGE_VALUES.map((myEdge) =>
-      agent({ myEdge, oppRaisedLastRound: raised, oppRaiseCount: +raised, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 2, myNet: 0, stakes: stakesAt(ante) }),
-    );
-  return { unpressured: at(false), pressured: at(true) };
-};
-const code = (t: Table) => `${t.unpressured.map((a) => a[0]).join("")}/${t.pressured.map((a) => a[0]).join("")}`;
+// Table rows: [pressured][facing none, call, raise][edge 0.3..0.7]
+const row = (t: DecisionTable, p: number, f: number) => Array.from(t.subarray((p * 3 + f) * 5, (p * 3 + f) * 5 + 5));
+const ACT = ["f", "c", "r"];
+const code = (t: DecisionTable) =>
+  (TURNS === "alternating" ? [row(t, 0, 0), row(t, 1, 0), row(t, 0, 2)] : [row(t, 0, 0), row(t, 1, 0)])
+    .map((r) => r.map((a) => ACT[a]).join(""))
+    .join("/");
 
-function degeneracies(t: Table): string[] {
-  const all = [...t.unpressured, ...t.pressured];
+function degeneracies(t: DecisionTable): string[] {
+  const acting = [row(t, 0, 0), row(t, 1, 0), row(t, 0, 1), row(t, 1, 1)].flat();
   const flags: string[] = [];
-  if (!all.includes("fold")) flags.push("never folds");
-  if (!all.includes("raise")) flags.push("never raises");
-  if (new Set(t.unpressured).size === 1) flags.push("ignores its edge");
+  if (![...acting, ...(TURNS === "alternating" ? row(t, 0, 2) : [])].includes(0)) flags.push("never folds");
+  if (!acting.includes(2)) flags.push("never raises");
+  if (new Set(row(t, 0, 0)).size === 1) flags.push("ignores its edge");
+  if (TURNS === "alternating" && row(t, 0, 2).every((a) => a === 0)) flags.push("folds to every raise");
   return flags;
 }
-/** A bluff: raising at some edge while not raising at a stronger one. */
-const bluffsIn = (row: Action[]) => row.some((a, i) => a === "raise" && row.slice(i + 1).some((b) => b !== "raise"));
-const bluffs = (t: Table) => bluffsIn(t.unpressured) || bluffsIn(t.pressured);
+/** A bluff: raising at some edge while not raising at a stronger one (when acting first or facing a call). */
+const bluffRow = (r: number[]) => r.some((a, i) => a === 2 && r.slice(i + 1).some((b) => b !== 2));
+const bluffs = (t: DecisionTable) => [row(t, 0, 0), row(t, 1, 0), row(t, 0, 1), row(t, 1, 1)].some(bluffRow);
+const ignoresPressure = (t: DecisionTable) => [0, 1, 2].every((f) => row(t, 0, f).join() === row(t, 1, f).join());
 
-type Cand = { agent: Agent; tables: Table[]; codes: string; params: StrategyParams[] };
-const probeCodes = new Set(PROBES.map(([, p]) => code(tableOf(p, ANTE))));
+// ---- Candidates ----
+type Cand = { agent: Agent; tables: Map<number, DecisionTable>; key: string; params: StrategyParams[] };
+const tableAt = (c: Cand, ante: number) => {
+  let t = c.tables.get(ante);
+  if (!t) c.tables.set(ante, (t = tableFor(c.agent, stakesAt(ante))));
+  return t;
+};
 const byKey = new Map<string, Cand>();
-let rejected = { degenerate: 0, probe: 0 };
 for (const foldBelow of GRID.foldBelow)
   for (const raiseAtOrAbove of GRID.raiseAtOrAbove)
     for (const bluffAtOrBelow of GRID.bluffAtOrBelow)
       for (const bluffUnderPressure of GRID.bluffUnderPressure)
-        for (const pressureFoldBelow of GRID.pressureFoldBelow) {
-          const params: StrategyParams = { foldBelow, raiseAtOrAbove, bluffAtOrBelow, bluffUnderPressure, pressureFoldBelow };
-          const agent = makeStrategy(params);
-          const tables = BEHAVIOUR_ANTES.map((a) => tableOf(agent, a));
-          const codes = tables.map(code).join(" ");
-          const existing = byKey.get(codes);
-          if (existing) {
-            existing.params.push(params);
-            continue;
+        for (const pressureFoldBelow of GRID.pressureFoldBelow)
+          for (const foldToRaiseBelow of GRID.foldToRaiseBelow) {
+            const params: StrategyParams = { foldBelow, raiseAtOrAbove, bluffAtOrBelow, bluffUnderPressure, pressureFoldBelow, foldToRaiseBelow };
+            const agent = makeStrategy(params);
+            const c: Cand = { agent, tables: new Map(), key: "", params: [params] };
+            c.key = HARD.map((a) => code(tableAt(c, a))).join(" ");
+            const existing = byKey.get(c.key);
+            if (existing) existing.params.push(params);
+            else byKey.set(c.key, c);
           }
-          byKey.set(codes, { agent, tables, codes, params: [params] });
-        }
+
+const probeTables = PROBES.map(([, p]) => new Map(HARD.map((a) => [a, tableFor(p, stakesAt(a))] as const)));
+const probeCodes = new Set(probeTables.flatMap((m) => [...m.values()].map(code)));
+const rejected = { degenerate: 0, probe: 0 };
 const cands: Cand[] = [];
 for (const c of byKey.values()) {
-  if (c.tables.some((t) => degeneracies(t).length > 0)) rejected.degenerate++;
-  else if (c.tables.some((t) => probeCodes.has(code(t)))) rejected.probe++;
+  const ts = HARD.map((a) => tableAt(c, a));
+  if (ts.some((t) => degeneracies(t).length > 0)) rejected.degenerate++;
+  else if (ts.some((t) => probeCodes.has(code(t)))) rejected.probe++;
   else cands.push(c);
 }
 const N = cands.length;
-const searchTable = (c: Cand) => c.tables[BEHAVIOUR_ANTES.indexOf(ANTE)]!;
-const isBluffer = cands.map((c) => bluffs(searchTable(c)));
-// Tricky never reacts to pressure, at any ante in the sweep.
-const ignoresPressure = cands.map((c) => c.tables.every((t) => t.pressured.join() === t.unpressured.join()));
+const isBluffer = cands.map((c) => HARD.every((a) => bluffs(tableAt(c, a))));
+const trickyOk = cands.map((c) => !TRICKY_IGNORES_PRESSURE || HARD.every((a) => ignoresPressure(tableAt(c, a))));
 
-const changes = (p: StrategyParams, o: StrategyParams) =>
-  (Object.keys(o) as (keyof StrategyParams)[]).filter((k) => p[k] !== o[k]);
-const nearest = (c: Cand, o: StrategyParams) =>
-  c.params.reduce((best, p) => (changes(p, o).length < changes(best, o).length ? p : best));
-const cost = PRESET_NAMES.map((role) => cands.map((c) => changes(nearest(c, PRESET_PARAMS[role]), PRESET_PARAMS[role]).length));
+// ---- Verify the fast evaluator on this search's own candidates ----
+{
+  const sample: [Agent, Agent][] = [];
+  for (let k = 0; k < 60; k++) sample.push([cands[(k * 7919) % N]!.agent, cands[(k * 104729 + 13) % N]!.agent]);
+  sample.push([() => "raise", cands[0]!.agent], [PROBES[1]![1], cands[N - 1]!.agent]);
+  for (const a of [...HARD, ...EXTRA]) selfCheck(sample, stakesAt(a), TURNS);
+}
 
-// Exact values, memoised per ante.
-const memo = new Map<number, Map<number, number>>();
-function vs(i: number, j: number, ante: number): number {
+const started = Date.now();
+// ---- Exact matrices at the hard antes ----
+const M = HARD.map(() => new Float64Array(N * N));
+const PV = HARD.map(() => PROBES.map(() => new Float64Array(N)));
+HARD.forEach((ante, h) => {
+  const s = stakesAt(ante);
+  const ts = cands.map((c) => tableAt(c, ante));
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      const v = tableSeatAveraged(ts[i]!, ts[j]!, s, TURNS);
+      M[h]![i * N + j] = v;
+      M[h]![j * N + i] = -v;
+    }
+    PROBES.forEach((_, k) => (PV[h]![k]![i] = tableSeatAveraged(probeTables[k]!.get(ante)!, ts[i]!, s, TURNS)));
+  }
+});
+const matrixSeconds = (Date.now() - started) / 1000;
+
+// Lazy values at the extra antes.
+const extraMemo = new Map<string, number>();
+function valueAt(i: number, j: number, ante: number): number {
+  const h = HARD.indexOf(ante);
+  if (h >= 0) return M[h]![i * N + j]!;
   if (i === j) return 0;
-  let m = memo.get(ante);
-  if (!m) memo.set(ante, (m = new Map()));
-  const key = i < j ? i * N + j : j * N + i;
-  let v = m.get(key);
+  const key = `${ante}:${Math.min(i, j)}:${Math.max(i, j)}`;
+  let v = extraMemo.get(key);
   if (v === undefined) {
-    v = seatAveragedNet(cands[Math.min(i, j)]!.agent, cands[Math.max(i, j)]!.agent, { stakes: stakesAt(ante) });
-    m.set(key, v);
+    const [a, b] = [Math.min(i, j), Math.max(i, j)];
+    v = tableSeatAveraged(tableAt(cands[a]!, ante), tableAt(cands[b]!, ante), stakesAt(ante), TURNS);
+    extraMemo.set(key, v);
   }
   return i < j ? v : -v;
 }
-const probeMemo = new Map<string, number>();
-function probeVs(k: number, i: number, ante: number): number {
-  const key = `${k}:${i}:${ante}`;
-  let v = probeMemo.get(key);
+function probeAt(k: number, i: number, ante: number): number {
+  const h = HARD.indexOf(ante);
+  if (h >= 0) return PV[h]![k]![i]!;
+  const key = `p${ante}:${k}:${i}`;
+  let v = extraMemo.get(key);
   if (v === undefined) {
-    v = seatAveragedNet(PROBES[k]![1], cands[i]!.agent, { stakes: stakesAt(ante) });
-    probeMemo.set(key, v);
+    v = tableSeatAveraged(tableFor(PROBES[k]![1], stakesAt(ante)), tableAt(cands[i]!, ante), stakesAt(ante), TURNS);
+    extraMemo.set(key, v);
   }
   return v;
 }
 
-const started = Date.now();
-const WORDS = Math.ceil(N / 32);
-const beatsBits = new Uint32Array(N * WORDS); // i beats j
-const beatenBits = new Uint32Array(N * WORDS); // j beats i
-for (let i = 0; i < N; i++)
-  for (let j = i + 1; j < N; j++) {
-    const v = vs(i, j, ANTE);
-    if (v > TIE) {
-      beatsBits[i * WORDS + (j >>> 5)]! |= 1 << (j & 31);
-      beatenBits[j * WORDS + (i >>> 5)]! |= 1 << (i & 31);
-    } else if (v < -TIE) {
-      beatsBits[j * WORDS + (i >>> 5)]! |= 1 << (i & 31);
-      beatenBits[i * WORDS + (j >>> 5)]! |= 1 << (j & 31);
-    }
-  }
-const arAt = (i: number) => probeVs(0, i, ANTE);
-const bits = (row: Uint32Array, base: number, out: number[]) => {
-  out.length = 0;
-  for (let w = 0; w < WORDS; w++) {
-    let x = row[base + w]!;
-    while (x) {
-      const b = x & -x;
-      out.push(w * 32 + 31 - Math.clz32(b));
-      x ^= b;
-    }
-  }
-  return out;
-};
-
 type Check = { ok: boolean; margin: number; binding: string };
-/** All criteria for a set [R, S, P, Tr] at one ante; margin is the smallest slack. */
+/** All five criteria for [Reckless, Steady, Patient, Tricky] at one ante. Margin = smallest slack. */
 function check(ids: number[], ante: number): Check {
   const [r, s, p, t] = ids as [number, number, number, number];
-  const loop: [string, number][] = [
-    ["Reckless>Patient", vs(r, p, ante)],
-    ["Steady>Reckless", vs(s, r, ante)],
-    ["Steady>Patient", vs(s, p, ante)],
-    ["Patient>Tricky", vs(p, t, ante)],
-    ["Tricky>Reckless", vs(t, r, ante)],
-    ["Tricky>Steady", vs(t, s, ante)],
+  const slacks: [string, number, "strict" | "weak"][] = [
+    ["Reckless>Patient", valueAt(r, p, ante), "strict"],
+    ["Steady>Reckless", valueAt(s, r, ante), "strict"],
+    ["Steady>Patient", valueAt(s, p, ante), "strict"],
+    ["Patient>Tricky", valueAt(p, t, ante), "strict"],
+    ["Tricky>Reckless", valueAt(t, r, ante), "strict"],
+    ["Tricky>Steady", valueAt(t, s, ante), "strict"],
   ];
-  const avgs = ids.map((i) => ids.reduce((acc, j) => acc + vs(i, j, ante), 0) / 4);
+  const avgs = ids.map((i) => ids.reduce((acc, j) => acc + valueAt(i, j, ante), 0) / 4);
   const spread = Math.max(...avgs) - Math.min(...avgs);
-  const slacks: [string, number][] = [...loop, [`spread ${spread.toFixed(3)}`, SPREAD_LIMIT - spread]];
+  slacks.push(["spread", SPREAD_LIMIT - spread, "strict"]);
   let beatsOk = true;
   PROBES.forEach(([name], k) => {
-    const row = ids.map((i) => probeVs(k, i, ante));
-    const avg = row.reduce((a, b) => a + b, 0) / 4;
-    slacks.push([`${name} avg`, -avg]);
-    if (k > 0 && row.filter((x) => x > TIE).length > MAX_PROBE_BEATS) beatsOk = false;
+    const vals = ids.map((i) => probeAt(k, i, ante));
+    slacks.push([`${name} avg`, -vals.reduce((a, b) => a + b, 0) / 4, "weak"]);
+    if (k > 0 && vals.filter((x) => x > TIE).length > MAX_PROBE_BEATS) beatsOk = false;
   });
   const worst = slacks.reduce((w, x) => (x[1] < w[1] ? x : w));
-  const ok = beatsOk && slacks.every(([label, v]) => (label.startsWith("spread") ? v > 0 : label.includes("avg") ? v >= -TIE : v > TIE));
+  const ok = beatsOk && slacks.every(([, v, kind]) => (kind === "strict" ? v > TIE : v >= -TIE));
   return { ok, margin: worst[1], binding: beatsOk ? worst[0] : "probe beats > 2" };
 }
 
-type Sol = { ids: number[]; cost: number; robust: number; worst: number };
-const passing: Sol[] = [];
-let loops = 0;
-const S: number[] = [], R: number[] = [], P: number[] = [];
-for (let t = 0; t < N; t++) {
-  if (!ignoresPressure[t] && !process.env.ANY_TRICKY) continue;
-  for (const s of bits(beatsBits, t * WORDS, S)) {
-    const tsRow = new Uint32Array(WORDS);
-    for (let w = 0; w < WORDS; w++) tsRow[w] = beatsBits[t * WORDS + w]! & beatsBits[s * WORDS + w]!;
-    for (const r of bits(tsRow, 0, R)) {
-      const pRow = new Uint32Array(WORDS);
-      for (let w = 0; w < WORDS; w++) {
-        pRow[w] = beatsBits[r * WORDS + w]! & beatsBits[s * WORDS + w]! & beatenBits[t * WORDS + w]!;
-      }
-      for (const p of bits(pRow, 0, P)) {
-        loops++;
-        if (!(isBluffer[r] || isBluffer[s] || isBluffer[p] || isBluffer[t]) && !process.env.ANY_BLUFF) continue;
-        if (arAt(r) + arAt(s) + arAt(p) + arAt(t) > 4 * TIE) continue;
-        const ids = [r, s, p, t];
-        if (!check(ids, ANTE).ok) continue;
-        passing.push({ ids, cost: ids.reduce((acc, id, k) => acc + cost[k]![id]!, 0), robust: 0, worst: 0 });
-      }
+// ---- Loop enumeration: loop must hold at every hard ante ----
+const W = Math.ceil(N / 32);
+const beats = new Uint32Array(N * W);
+const beaten = new Uint32Array(N * W);
+for (let i = 0; i < N; i++)
+  for (let j = 0; j < N; j++) {
+    if (i !== j && M.every((m) => m[i * N + j]! > TIE)) {
+      beats[i * W + (j >>> 5)]! |= 1 << (j & 31);
+      beaten[j * W + (i >>> 5)]! |= 1 << (i & 31);
     }
   }
+const each = (buf: Uint32Array, off: number, fn: (x: number) => void) => {
+  for (let w = 0; w < W; w++) {
+    let x = buf[off + w]!;
+    while (x) {
+      const b = x & -x;
+      fn(w * 32 + 31 - Math.clz32(b));
+      x ^= b;
+    }
+  }
+};
+const cost = PRESET_NAMES.map((role) =>
+  cands.map((c) => Math.min(...c.params.map((p) => changedKeys(p, PRESET_PARAMS[role]).length))),
+);
+function changedKeys(p: StrategyParams, o: StrategyParams) {
+  return (Object.keys(o) as (keyof StrategyParams)[]).filter((k) => p[k] !== o[k]);
 }
-for (const sol of passing) {
-  const results = RANK_ANTES.map((a) => check(sol.ids, a));
-  sol.robust = results.filter((x) => x.ok).length;
-  sol.worst = Math.min(...results.map((x) => x.margin));
-}
-passing.sort((a, b) => b.robust - a.robust || b.worst - a.worst || a.cost - b.cost);
-const fullyRobust = passing.filter((s) => s.robust === RANK_ANTES.length);
 
-console.log(`Search: ante ${ANTE}, base ${BASE}, raise ${RAISE}. Robustness over ante ${SWEEP[0]}..${SWEEP[SWEEP.length - 1]}.`);
-console.log(`${byKey.size} distinct behaviours (over antes ${BEHAVIOUR_ANTES.join(", ")}); rejected ${rejected.degenerate} degenerate, ${rejected.probe} probe-identical; ${N} searched.`);
-console.log(`${loops} loops found; ${passing.length} sets pass every criterion at ante ${ANTE}${process.env.ANY_BLUFF ? "" : " with a bluffer"}${process.env.ANY_TRICKY ? " (Tricky may react to pressure)" : ""}; ${fullyRobust.length} also pass at every ranking ante (${RANK_ANTES.join(", ")}). ${((Date.now() - started) / 1000).toFixed(1)}s`);
-if (passing.length > 0) {
-  const cheapest = passing.reduce((b, s) => (s.cost < b.cost ? s : b));
-  console.log(`Fewest changes among passing sets: ${cheapest.cost}; fewest among fully robust: ${fullyRobust.length ? Math.min(...fullyRobust.map((s) => s.cost)) : "n/a"}.`);
+type Sol = { ids: number[]; cost: number; worst: number; allPass: boolean };
+const sols: Sol[] = [];
+let loops = 0;
+const ts = new Uint32Array(W);
+const sp = new Uint32Array(W);
+const pr = new Uint32Array(W);
+for (let t = 0; t < N; t++) {
+  if (!trickyOk[t]) continue;
+  each(beats, t * W, (s) => {
+    for (let w = 0; w < W; w++) {
+      ts[w] = beats[t * W + w]! & beats[s * W + w]!;
+      sp[w] = beats[s * W + w]! & beaten[t * W + w]!;
+    }
+    each(ts, 0, (r) => {
+      for (let w = 0; w < W; w++) pr[w] = sp[w]! & beats[r * W + w]!;
+      each(pr, 0, (p) => {
+        loops++;
+        if (REQUIRE_BLUFF && !(isBluffer[r] || isBluffer[s] || isBluffer[p] || isBluffer[t])) return;
+        const ids = [r, s, p, t];
+        let worst = Infinity;
+        for (const a of HARD) {
+          const c = check(ids, a);
+          if (!c.ok) return;
+          worst = Math.min(worst, c.margin);
+        }
+        sols.push({ ids, cost: ids.reduce((acc, id, k) => acc + cost[k]![id]!, 0), worst, allPass: false });
+      });
+    });
+  });
 }
+for (const sol of sols) {
+  const extra = EXTRA.map((a) => check(sol.ids, a));
+  sol.allPass = extra.every((c) => c.ok);
+  sol.worst = Math.min(sol.worst, ...extra.map((c) => c.margin));
+}
+sols.sort((a, b) => +b.allPass - +a.allPass || b.worst - a.worst || a.cost - b.cost);
+const robust = sols.filter((s) => s.allPass);
 
+console.log(`Turn order: ${TURNS}. Stakes base ${BASE} / raise ${RAISE}; ante ${HARD[0]}..${HARD[2]} around ${ANTE}.`);
+console.log(`Constraints: ${REQUIRE_BLUFF ? "at least one bluffer" : "no bluffer required"}; ${TRICKY_IGNORES_PRESSURE ? "Tricky ignores pressure" : "Tricky unconstrained"}.`);
+console.log(`${byKey.size} distinct behaviours; rejected ${rejected.degenerate} degenerate, ${rejected.probe} probe-identical; ${N} searched (${isBluffer.filter(Boolean).length} bluffers).`);
+console.log(`Fast evaluator verified against the exact calculator. Matrices ${matrixSeconds.toFixed(0)}s, total ${((Date.now() - started) / 1000).toFixed(0)}s.`);
+console.log(`${loops} loops hold at antes ${HARD.join(", ")}; ${sols.length} sets pass all criteria there; ${robust.length} also pass at ${EXTRA.join(", ")}.`);
+
+// ---- Report ----
 const pad = (s: string, n = 12) => s.padStart(n);
 const fmtT = (x: FoldThreshold | null) => (x === null ? "off" : x === "pot-odds" ? "pot-odds" : String(x));
 const fmtParams = (p: StrategyParams) =>
   `fold<${fmtT(p.foldBelow)} raise>=${p.raiseAtOrAbove >= 1 ? "never" : p.raiseAtOrAbove} bluff<=${p.bluffAtOrBelow ?? "off"}` +
-  `${p.bluffUnderPressure ? " (also under pressure)" : ""} pressureFold<${fmtT(p.pressureFoldBelow)}`;
+  `${p.bluffUnderPressure ? "(+pressure)" : ""} pressureFold<${fmtT(p.pressureFoldBelow)}` +
+  (TURNS === "alternating" ? ` foldToRaise<${fmtT(p.foldToRaiseBelow)}` : "");
 const always = (a: Action): Agent => () => a;
 
+/** Value of leading round 1 (and so round 3) in a mirror match. */
+export const leadValue = (a: Agent, stakes: Stakes) => expectedNet(a, a, { stakes, turnOrder: "alternating", firstLeader: "A" });
+
 function report(sol: Sol, rank: number) {
-  console.log(`\n#${rank}: ${sol.cost} parameter changes; passes at ${sol.robust}/${RANK_ANTES.length} ranking antes; worst margin ${fmt(sol.worst)}`);
+  console.log(`\n#${rank}: ${sol.cost} parameter changes; ${sol.allPass ? "passes at every checked ante" : "FAILS at an in-between ante"}; worst margin ${fmt(sol.worst)}`);
   const presets = {} as Record<PresetName, Agent>;
+  const stakes = stakesAt(ANTE);
   PRESET_NAMES.forEach((role, k) => {
     const c = cands[sol.ids[k]!]!;
-    const p = nearest(c, PRESET_PARAMS[role]);
+    const p = c.params.reduce((b, q) => (changedKeys(q, PRESET_PARAMS[role]).length < changedKeys(b, PRESET_PARAMS[role]).length ? q : b));
     presets[role] = c.agent;
-    const changed = changes(p, PRESET_PARAMS[role]);
-    const traits = [isBluffer[sol.ids[k]!] ? "bluffs" : "", c.tables.some((t, i) => i > 0 && code(t) !== code(c.tables[0]!)) ? "adapts to ante" : ""].filter(Boolean);
-    console.log(`  ${pad(role, 8)} ${fmtParams(p)}`);
-    console.log(`  ${pad("", 8)} behaviour @${BEHAVIOUR_ANTES.join("/")}: ${c.codes}  ${changed.length ? `changed: ${changed.join(", ")}` : "unchanged"}${traits.length ? `  [${traits.join(", ")}]` : ""}`);
+    const tags = [isBluffer[sol.ids[k]!] ? "bluffs" : "", HARD.some((a) => code(tableAt(c, a)) !== code(tableAt(c, ANTE))) ? "adapts to ante" : ""].filter(Boolean);
+    console.log(`  ${pad(role, 8)} ${fmtParams(p)}${tags.length ? `  [${tags.join(", ")}]` : ""}`);
+    console.log(`  ${pad("", 8)} @${ANTE}: ${code(tableAt(c, ANTE))}   changed: ${changedKeys(p, PRESET_PARAMS[role]).join(", ") || "none"}`);
   });
-  const stakes = stakesAt(ANTE);
-  const a = analyse(stakes, presets);
-  console.log(`  Exact matrix at ante ${ANTE}:`);
+  const a = analyse(stakes, presets, TURNS);
+  console.log(`  Exact matrix at ante ${ANTE} (general calculator):`);
   console.log(pad("row vs col") + PRESET_NAMES.map((n) => pad(n)).join("") + pad("vs presets"));
   const extra: [string, Agent][] = [["AlwaysFold", always("fold")], ["AlwaysCall", always("call")]];
   const rows: [string, number[]][] = [
-    ...a.matrix.map((row, i): [string, number[]] => [NAMES[i]!, row]),
-    ...extra.map(([n, ag]): [string, number[]] => [n, PRESET_NAMES.map((pn) => seatAveragedNet(ag, presets[pn], { stakes }))]),
+    ...a.matrix.map((r, i): [string, number[]] => [NAMES[i]!, r]),
+    ...extra.map(([n, ag]): [string, number[]] => [n, PRESET_NAMES.map((pn) => seatAveragedNet(ag, presets[pn], { stakes, turnOrder: TURNS }))]),
   ];
-  rows.forEach(([name, row], i) => {
+  rows.forEach(([name, r], i) => {
     if (i === PRESET_NAMES.length) console.log(pad("-- others --"));
-    const avg = row.reduce((s, x) => s + x, 0) / row.length;
-    const won = row.filter((x) => x > TIE).length;
-    console.log(pad(name) + row.map((x) => pad(fmt(x))).join("") + pad(fmt(avg)) + (i >= PRESET_NAMES.length ? `  beats ${won}/4` : ""));
+    const avg = r.reduce((x, y) => x + y, 0) / r.length;
+    console.log(pad(name) + r.map((x) => pad(fmt(x))).join("") + pad(fmt(avg)) + (i >= PRESET_NAMES.length ? `  beats ${r.filter((x) => x > TIE).length}/4` : ""));
   });
-  console.log(`  Ante sweep (margin = smallest slack across all criteria; binding criterion shown):`);
+  if (TURNS === "alternating") {
+    console.log(`  Value of leading round 1 in a mirror match: ` + PRESET_NAMES.map((n) => `${n} ${fmt(leadValue(presets[n], stakes))}`).join(", "));
+  }
+  console.log(`  Ante sweep (margin = smallest slack across all criteria):`);
   for (const ante of SWEEP) {
     const c = check(sol.ids, ante);
     console.log(`    ante ${ante.toFixed(1)}  ${c.ok ? "PASS" : "FAIL"}  margin ${fmt(c.margin)}  (${c.binding})`);
   }
 }
 
-if (process.env.WINDOWS) {
-  // For each passing set: the contiguous passing window around the search ante, and margins inside it.
-  const rows = passing.map((sol) => {
-    const res = SWEEP.map((a) => ({ a, ...check(sol.ids, a) }));
-    const at = res.findIndex((x) => x.a === ANTE);
-    let lo = at, hi = at;
-    while (lo > 0 && res[lo - 1]!.ok) lo--;
-    while (hi < res.length - 1 && res[hi + 1]!.ok) hi++;
-    const inside = res.slice(lo, hi + 1);
-    const probe1 = PROBES.map((_, k) => sol.ids.reduce((acc, i) => acc + probeVs(k, i, ANTE), 0) / 4);
-    return { lo: res[lo]!.a, hi: res[hi]!.a, width: res[hi]!.a - res[lo]!.a, min: Math.min(...inside.map((x) => x.margin)), probe: probe1, cost: sol.cost };
-  });
-  rows.sort((x, y) => y.width - x.width || y.min - x.min);
-  const widths = new Map<string, number>();
-  for (const r of rows) widths.set(r.width.toFixed(1), (widths.get(r.width.toFixed(1)) ?? 0) + 1);
-  console.log("window widths:", [...widths].map(([w, n]) => `${w}:${n}`).join(" "));
-  console.log("fold-0.3 probe avg at search ante, range:", Math.min(...rows.map((r) => r.probe[1]!)).toFixed(4), "..", Math.max(...rows.map((r) => r.probe[1]!)).toFixed(4));
-  console.log("largest in-window margin:", Math.max(...rows.map((r) => r.min)).toFixed(4));
-  for (const r of rows.slice(0, 5)) console.log(`  ${r.lo}..${r.hi} min ${fmt(r.min)} probes ${r.probe.map((x) => fmt(x)).join(" ")} cost ${r.cost}`);
-}
-
-console.log("\nKey: behaviour = actions for edges 0.3..0.7, unpressured/pressured (f=fold c=call r=raise).");
-passing.slice(0, TOP).forEach((s, i) => report(s, i + 1));
+console.log(`\nKey: rows = acting first / acting first under pressure${TURNS === "alternating" ? " / facing a raise" : ""}; edges 0.3..0.7; f=fold c=call r=raise.`);
+sols.slice(0, TOP).forEach((s, i) => report(s, i + 1));
