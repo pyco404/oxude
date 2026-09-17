@@ -1,6 +1,7 @@
 import {
   bigint,
   bigserial,
+  boolean,
   doublePrecision,
   index,
   integer,
@@ -44,6 +45,12 @@ export const agents = pgTable(
      */
     policyStakes: jsonb("policy_stakes").$type<Stakes>(),
     /**
+     * The owner's per-match ceiling: this agent can never stake more than this,
+     * whatever its balance or its opponent's. Set when renting, changeable by
+     * the owner, and clamped to MAX_EXPOSURE.
+     */
+    maxStake: integer("max_stake").notNull().default(60),
+    /**
      * Exact expected net against the roster, from the calculator. Private: shown
      * to the agent's owner while writing a brief, never on the ladder and never
      * on someone else's agent. Null until computed.
@@ -76,6 +83,8 @@ export const matches = pgTable(
     winner: text("winner").$type<Seat>(),
     netA: integer("net_a").notNull(),
     netB: integer("net_b").notNull(),
+    /** What each side risked. Neither can lose more than this in one match. */
+    stake: integer("stake").notNull().default(0),
     /** The full match log. This is the public transcript. */
     log: jsonb("log").$type<MatchLog>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -86,6 +95,47 @@ export const matches = pgTable(
     index("matches_created_idx").on(t.createdAt),
     index("matches_seq_idx").on(t.seq),
   ],
+);
+
+/**
+ * Every movement of money. Balances are the sum of an agent's rows rather than
+ * a column that is incremented: the same reasoning as ratings, so a balance
+ * cannot drift away from the events that produced it.
+ */
+export const ledger = pgTable(
+  "ledger",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Monotonic, so a balance at a point in time is well defined. */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    /** Signed: positive is money in. */
+    amount: integer("amount").notNull(),
+    reason: text("reason").$type<LedgerReason>().notNull(),
+    /** Set for settlements. */
+    matchId: uuid("match_id").references(() => matches.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("ledger_agent_idx").on(t.agentId, t.seq), index("ledger_match_idx").on(t.matchId)],
+);
+
+export type LedgerReason = "rental-seed" | "match-settlement" | "adjustment";
+
+/** One row per model call, so the first elicitation for an owner can be free. */
+export const elicitations = pgTable(
+  "elicitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id").notNull(),
+    /** "preview" rates a brief; "rent" writes an agent's table. */
+    kind: text("kind").$type<"preview" | "rent">().notNull(),
+    /** True when it did not count against the owner's allowance. */
+    free: boolean("free").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("elicitations_owner_idx").on(t.ownerId, t.createdAt)],
 );
 
 export const ratings = pgTable("ratings", {
@@ -107,6 +157,16 @@ export const ratings = pgTable("ratings", {
 /** Matches counted by the displayed recent-form figure. */
 export const RATING_WINDOW = 50;
 
+/** Balance an agent starts with when rented. */
+export const STARTING_BALANCE = 200;
+/** Below this, an agent cannot cover a match and is not matched. */
+export const MIN_STAKE = 10;
+/** The most a match can move: three rounds at the raised bet. */
+export const MAX_EXPOSURE = 60;
+/** Each owner's first elicitation costs them nothing. */
+export const FREE_ELICITATIONS = 1;
+
 export type AgentRow = typeof agents.$inferSelect;
 export type MatchRow = typeof matches.$inferSelect;
 export type RatingRow = typeof ratings.$inferSelect;
+export type LedgerRow = typeof ledger.$inferSelect;

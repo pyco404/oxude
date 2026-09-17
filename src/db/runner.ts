@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull, ne, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
 import { OXUDE_RULES, type Stakes } from "../round.js";
@@ -11,13 +11,18 @@ import type { TablesRelationalConfig } from "drizzle-orm";
 import { connect, type Db } from "./client.js";
 import {
   agents,
+  ledger,
   matches,
   ratings,
+  MAX_EXPOSURE,
+  MIN_STAKE,
   RATING_WINDOW,
+  STARTING_BALANCE,
   type AgentRow,
   type MatchRow,
   type RulesConfig,
 } from "./schema.js";
+import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, StakeError } from "./ledger.js";
 
 export const DEFAULT_RULES: RulesConfig = {
   turnOrder: OXUDE_RULES.turnOrder,
@@ -66,9 +71,16 @@ export type CreateAgentInput = {
   policyTable?: Policy;
   /** Defaults to the shipped stakes; must match the stakes matches are played at. */
   policyStakes?: Stakes;
+  /** The owner's per-match ceiling. Defaults to a full match's exposure. */
+  maxStake?: number;
+  /** Balance to seed. Defaults to STARTING_BALANCE. */
+  startingBalance?: number;
 };
 
-/** Writes an agent with its table already snapshotted, and a ratings row. */
+/** Clamped so an owner cannot set a ceiling no match could honour. */
+export const clampCeiling = (value: number) => Math.max(MIN_STAKE, Math.min(MAX_EXPOSURE, Math.floor(value)));
+
+/** Writes an agent with its table snapshotted, a ratings row, and a seeded balance. */
 export async function createAgent(db: Db, input: CreateAgentInput) {
   const table = input.policyTable ?? (input.presetName ? snapshotPreset(input.presetName) : undefined);
   if (!table) throw new Error(`agent ${input.name} needs a preset name or a policy table`);
@@ -81,9 +93,12 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
       ownerId: input.ownerId ?? null,
       policyTable: table,
       policyStakes: input.policyStakes ?? DEFAULT_RULES.stakes,
+      maxStake: clampCeiling(input.maxStake ?? MAX_EXPOSURE),
     })
     .returning();
   await db.insert(ratings).values({ agentId: row!.id });
+  // Renting seeds the balance: the first movement in this agent's ledger.
+  await record(db, [{ agentId: row!.id, amount: input.startingBalance ?? STARTING_BALANCE, reason: "rental-seed" }]);
   return row!;
 }
 
@@ -125,13 +140,25 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   const rules = options.rules ?? DEFAULT_RULES;
   assertStakesMatch(rowA, rules.stakes);
   assertStakesMatch(rowB, rules.stakes);
+  for (const row of [rowA, rowB]) {
+    if (row.retiredAt !== null) throw new StakeError(`${row.name} is retired`);
+  }
+
+  // What both sides can cover, under both owners' ceilings.
+  const balances = await balancesOf(db, [rowA.id, rowB.id]);
+  const stake = stakeBetween(
+    { name: rowA.name, maxStake: rowA.maxStake, balance: balances.get(rowA.id) ?? 0 },
+    { name: rowB.name, maxStake: rowB.maxStake, balance: balances.get(rowB.id) ?? 0 },
+  );
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
   // name-free log is exactly what a replay reproduces.
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
 
   // One transaction: a recorded match and the ratings derived from it move together.
-  const match = await db.transaction(async (tx) => {
+  // Capped by the stake: a match can never take more than was put at risk.
+  const settledA = settle(log.nets.A, stake);
+  const { match, retired } = await db.transaction(async (tx) => {
     const [inserted] = await tx
       .insert(matches)
       .values({
@@ -140,16 +167,24 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
         seed,
         rulesConfig: rules,
         winner: log.winner,
-        netA: log.nets.A,
-        netB: log.nets.B,
+        netA: settledA,
+        netB: -settledA,
+        stake,
         log,
       })
       .returning();
+    await record(tx, [
+      { agentId: rowA.id, amount: settledA, reason: "match-settlement", matchId: inserted!.id },
+      { agentId: rowB.id, amount: -settledA, reason: "match-settlement", matchId: inserted!.id },
+    ]);
     await updateRating(tx, rowA.id);
     await updateRating(tx, rowB.id);
-    return inserted!;
+    // An agent with nothing left stops here; its record freezes as it stands.
+    const broke: string[] = [];
+    for (const id of [rowA.id, rowB.id]) if (await retireIfBroke(tx, id)) broke.push(id);
+    return { match: inserted!, retired: broke };
   });
-  return { match, log };
+  return { match, log, stake, settled: { A: settledA, B: -settledA }, retired };
 }
 
 /**
@@ -204,13 +239,23 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
 
   // Paired on true rating: the only signal here that is not noise. No recency
   // gate, so a cold roster can bootstrap.
+  const solvent = db
+    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
+    .from(ledger)
+    .groupBy(ledger.agentId)
+    .having(sql`sum(${ledger.amount}) >= ${MIN_STAKE}`)
+    .as("solvent");
+
+  // An agent that cannot cover a stake is not offered as an opponent.
   const candidates = await db
     .select({ id: agents.id, ownerId: agents.ownerId, rating: agents.trueRating })
     .from(agents)
+    .innerJoin(solvent, eq(solvent.agentId, agents.id))
     .where(
       and(
         ne(agents.id, agentId),
         isNull(agents.retiredAt),
+        gte(agents.maxStake, MIN_STAKE),
         // Two agents with no owner are not the same owner.
         me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId)),
       ),
@@ -233,6 +278,7 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   const [preset] = await db
     .select({ id: agents.id })
     .from(agents)
+    .innerJoin(solvent, eq(solvent.agentId, agents.id))
     .where(and(ne(agents.id, agentId), isNull(agents.retiredAt), sql`${agents.presetName} is not null`))
     .orderBy(sql`random()`)
     .limit(1);
@@ -257,6 +303,7 @@ export type LadderTab = "winnings" | "per-match";
 export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings") {
   const netPerMatch = sql<number>`case when ${ratings.matchesPlayed} = 0 then 0
     else ${ratings.cumulativeNet}::double precision / ${ratings.matchesPlayed} end`;
+  const balance = sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
   const rows = db
     .select({
       agentId: agents.id,
@@ -266,17 +313,17 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
       cumulativeNet: ratings.cumulativeNet,
       netPerMatch,
       recentForm: ratings.rollingNet50,
+      balance,
+      // Retired agents stay on the ladder, marked: a record is history, not hidden.
+      retired: sql<boolean>`${agents.retiredAt} is not null`,
     })
     .from(ratings)
     .innerJoin(agents, eq(agents.id, ratings.agentId));
 
   // "Per match" needs a match to divide by; that is arithmetic, not a skill bar.
   return tab === "winnings"
-    ? rows.where(isNull(agents.retiredAt)).orderBy(desc(ratings.cumulativeNet)).limit(limit)
-    : rows
-        .where(and(isNull(agents.retiredAt), gt(ratings.matchesPlayed, 0)))
-        .orderBy(desc(netPerMatch))
-        .limit(limit);
+    ? rows.orderBy(desc(ratings.cumulativeNet)).limit(limit)
+    : rows.where(gt(ratings.matchesPlayed, 0)).orderBy(desc(netPerMatch)).limit(limit);
 }
 
 /**
@@ -303,6 +350,9 @@ export async function publicAgent(db: Db, agentId: string) {
       matchesPlayed: ratings.matchesPlayed,
       cumulativeNet: ratings.cumulativeNet,
       recentForm: ratings.rollingNet50,
+      maxStake: agents.maxStake,
+      balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
+      retired: sql<boolean>`${agents.retiredAt} is not null`,
     })
     .from(agents)
     .leftJoin(ratings, eq(ratings.agentId, agents.id))
@@ -319,4 +369,13 @@ export async function ownerAgent(db: Db, agentId: string, ownerId: string | null
   return row;
 }
 
-export { connect, RATING_WINDOW };
+/** The owner's ceiling, changed after renting. */
+export async function setCeiling(db: Db, agentId: string, ownerId: string | null, ceiling: number) {
+  const row = await ownerAgent(db, agentId, ownerId);
+  if (!row) throw new Error(`no agent ${agentId}`);
+  const maxStake = clampCeiling(ceiling);
+  await db.update(agents).set({ maxStake }).where(eq(agents.id, agentId));
+  return maxStake;
+}
+
+export { balanceOf, connect, MAX_EXPOSURE, MIN_STAKE, RATING_WINDOW, StakeError };

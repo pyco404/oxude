@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { agents, matches, ratings, RATING_WINDOW } from "../src/db/schema.js";
+import { agents, ledger, matches, ratings, RATING_WINDOW, STARTING_BALANCE } from "../src/db/schema.js";
 import {
   assertStakesMatch,
   createAgent,
@@ -49,6 +49,7 @@ const addAgent = async (values: Partial<typeof agents.$inferInsert> & { name: st
     })
     .returning();
   await db.insert(ratings).values({ agentId: row!.id });
+  await db.insert(ledger).values({ agentId: row!.id, amount: STARTING_BALANCE, reason: "rental-seed" });
   return row!;
 };
 
@@ -180,15 +181,13 @@ describe("matchmaking", () => {
   it("falls back to a preset agent when the pool is thin, and logs which path it took", async () => {
     const { db: fresh, close: closeFresh } = await connect();
     await migrate(fresh);
-    const [lonely] = await fresh.insert(agents).values({ name: "Lonely", presetName: "Anchor" }).returning();
-    await fresh.insert(ratings).values({ agentId: lonely!.id });
-    const [preset] = await fresh.insert(agents).values({ name: "Roster", presetName: "Mirage" }).returning();
-    await fresh.insert(ratings).values({ agentId: preset!.id });
+    const lonely = await createAgent(fresh, { name: "Lonely", presetName: "Anchor" });
+    const preset = await createAgent(fresh, { name: "Roster", presetName: "Mirage" });
 
     const picks: OpponentPick[] = [];
-    const pick = await pickOpponent(fresh, lonely!.id, { onLog: (p) => picks.push(p) });
+    const pick = await pickOpponent(fresh, lonely.id, { onLog: (p) => picks.push(p) });
     expect(pick.path).toBe("preset-fallback");
-    expect(pick.opponentId).toBe(preset!.id);
+    expect(pick.opponentId).toBe(preset.id);
     expect(pick.candidates).toBeLessThan(4);
     expect(picks).toHaveLength(1);
     await closeFresh();
@@ -205,11 +204,13 @@ describe("ladder", () => {
         .values({ name, presetName: "Anchor", policyTable: snapshotPreset("Anchor"), retiredAt: retired ? new Date() : null })
         .returning();
       await fresh.insert(ratings).values({ agentId: row!.id });
+      await fresh.insert(ledger).values({ agentId: row!.id, amount: STARTING_BALANCE, reason: "rental-seed" });
       const [opp] = await fresh
         .insert(agents)
         .values({ name: `${name}-opp`, presetName: "Bully", policyTable: snapshotPreset("Bully") })
         .returning();
       await fresh.insert(ratings).values({ agentId: opp!.id });
+      await fresh.insert(ledger).values({ agentId: opp!.id, amount: STARTING_BALANCE, reason: "rental-seed" });
       for (const [i, net] of nets.entries()) {
         await fresh.insert(matches).values({
           agentA: row!.id,
@@ -232,13 +233,17 @@ describe("ladder", () => {
     await make("Retired", [100, 100], true);
 
     const board = await leaderboard(fresh);
-    // Every active agent appears, opponents included; ranking is all-time net won.
-    expect(board.map((r) => r.name).slice(0, 2)).toEqual(["Grinder", "Sprinter"]);
-    expect(board.map((r) => r.name)).not.toContain("Retired");
+    // Every agent appears, opponents and retired ones included; ranking is all-time net won.
+    const active = board.filter((r) => !r.retired);
+    expect(active.map((r) => r.name).slice(0, 2)).toEqual(["Grinder", "Sprinter"]);
+    const retired = board.find((r) => r.name === "Retired");
+    expect(retired?.retired).toBe(true);
+    expect(retired?.cumulativeNet).toBe(200);
     expect(board.every((r, i) => i === 0 || board[i - 1]!.cumulativeNet >= r.cumulativeNet)).toBe(true);
-    expect(board[0]!.cumulativeNet).toBe(50);
-    expect(board[0]!.recentForm).toBeCloseTo(5, 9);
-    expect(board[1]!.cumulativeNet).toBe(30);
+    expect(board.every((r) => typeof r.balance === "number")).toBe(true);
+    expect(active[0]!.cumulativeNet).toBe(50);
+    expect(active[0]!.recentForm).toBeCloseTo(5, 9);
+    expect(active[1]!.cumulativeNet).toBe(30);
     expect(board.find((r) => r.name === sprinter.name)!.matchesPlayed).toBe(3);
     // The private rating is not in the ladder at all.
     expect(Object.keys(board[0]!)).not.toContain("trueRating");
@@ -251,6 +256,10 @@ describe("ladder", () => {
     const a = (await fresh.insert(agents).values({ name: "A", presetName: "Anchor", policyTable: snapshotPreset("Anchor") }).returning())[0]!;
     const b = (await fresh.insert(agents).values({ name: "B", presetName: "Bully", policyTable: snapshotPreset("Bully") }).returning())[0]!;
     await fresh.insert(ratings).values([{ agentId: a.id }, { agentId: b.id }]);
+    await fresh.insert(ledger).values([
+      { agentId: a.id, amount: STARTING_BALANCE, reason: "rental-seed" as const },
+      { agentId: b.id, amount: STARTING_BALANCE, reason: "rental-seed" as const },
+    ]);
     const stamp = new Date("2026-01-01T00:00:00Z");
     // 60 matches sharing one timestamp: only seq distinguishes them.
     for (let i = 0; i < 60; i++) {
