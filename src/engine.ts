@@ -5,11 +5,12 @@ import {
   decideRound,
   EDGES,
   freezeStakes,
-  INITIAL_STATE,
+  initialState,
   isMatchOver,
   matchWinner,
   resolveActions,
   type Stakes,
+  type TurnOrder,
 } from "./round.js";
 import type { Agent, MatchLog, RoundLog, Seat } from "./types.js";
 
@@ -18,14 +19,19 @@ export type MatchOptions = {
   names?: { A: string; B: string };
   /** Defaults to CLASSIC_STAKES (ante 10, base 10, raised 20). */
   stakes?: Readonly<Stakes>;
+  /** Defaults to "simultaneous". */
+  turnOrder?: TurnOrder;
 };
 
 export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): MatchLog {
   const { seed } = options;
   const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
+  const turnOrder = options.turnOrder ?? "simultaneous";
   const rng = mulberry32(seed);
+  // Alternating play draws the round-1 leader first; simultaneous play draws nothing extra.
+  const firstLeader: Seat | null = turnOrder === "alternating" ? (rng() < 0.5 ? "A" : "B") : null;
   const rounds: RoundLog[] = [];
-  let state = INITIAL_STATE;
+  let state = initialState(firstLeader);
 
   while (!isMatchOver(state)) {
     // RNG draw order is fixed: edge first, then (only if needed) the flip.
@@ -33,7 +39,8 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
     const edgeA = EDGES[edgeIndex];
     if (edgeA === undefined) throw new Error(`edge index out of range: ${edgeIndex}`);
 
-    const { edgeB, actions } = decideRound(agentA, agentB, state, edgeA, stakes);
+    const leader = state.nextLeader;
+    const { edgeB, actions, sequence } = decideRound(agentA, agentB, state, edgeA, stakes);
     const resolution = resolveActions(actions, stakes);
 
     let winner: Seat | null = null;
@@ -52,6 +59,8 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
     state = advanceState(state, actions, winner, bet);
     rounds.push({
       roundNumber,
+      leader,
+      sequence,
       edges: { A: edgeA, B: edgeB },
       actions,
       outcome: resolution.outcome,
@@ -68,6 +77,8 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
   return {
     seed,
     stakes: { ...stakes },
+    turnOrder,
+    firstLeader,
     names: options.names ?? { A: "A", B: "B" },
     rounds,
     roundsWon: { ...state.roundsWon },
