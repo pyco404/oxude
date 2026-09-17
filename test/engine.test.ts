@@ -9,6 +9,7 @@ import {
   CLASSIC_RULES,
   mulberry32,
   nextUint32,
+  FLIP_FOR_ANTE_RULES,
   RAISE_AT_RISK_RULES,
   type MatchRules,
   playMatch,
@@ -32,7 +33,8 @@ function manyMatches(count: number, masterSeed: number, rules: MatchRules = CLAS
 
 const LOGS = manyMatches(10_000, 12345);
 const RISK_LOGS = manyMatches(10_000, 54321, RAISE_AT_RISK_RULES);
-const ALL_LOGS = [...LOGS, ...RISK_LOGS];
+const ANTE_FLIP_LOGS = manyMatches(10_000, 777, FLIP_FOR_ANTE_RULES);
+const ALL_LOGS = [...LOGS, ...RISK_LOGS, ...ANTE_FLIP_LOGS];
 
 describe("zero-sum", () => {
   it("nets sum to zero at the end of every match and after every round", () => {
@@ -230,7 +232,7 @@ describe("round resolution", () => {
   });
 });
 
-describe("raise-at-risk rules", () => {
+describe("fold-to-raise rules", () => {
   it("defaults to classic rules and records the rules in the log", () => {
     expect(playMatch(constantAgent("raise"), constantAgent("fold"), { seed: 1 }).rules).toEqual(CLASSIC_RULES);
     expect(
@@ -270,8 +272,34 @@ describe("raise-at-risk rules", () => {
     expect(seen.raiserLost).toBeGreaterThan(0);
   });
 
-  it("only fold-versus-raise changes; every other round resolves as in classic rules", () => {
-    for (const log of RISK_LOGS) {
+  it("flip-for-ante: folding to a raise flips for the ante only", () => {
+    const seen = { A: 0, B: 0 };
+    for (let seed = 0; seed < 400; seed++) {
+      for (const [a, b] of [["raise", "fold"], ["fold", "raise"]] as const) {
+        const log = playMatch(constantAgent(a), constantAgent(b), { seed, rules: FLIP_FOR_ANTE_RULES });
+        let expectedA = 0;
+        for (const r of log.rounds) {
+          expect(r.outcome).toBe("folded-to-raise");
+          expect(r.flip).not.toBeNull();
+          expect(r.flip!.winner).toBe(r.flip!.roll < r.edges.A ? "A" : "B");
+          expect(r.winner).toBe(r.flip!.winner);
+          expect(r.bet).toBe(ANTE);
+          seen[r.winner!]++;
+          expectedA += r.winner === "A" ? ANTE : -ANTE;
+          expect(r.nets.A).toBe(expectedA);
+        }
+      }
+    }
+    expect(seen.A).toBeGreaterThan(0);
+    expect(seen.B).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["raiser-risks-raise", () => RISK_LOGS],
+    ["flip-for-ante", () => ANTE_FLIP_LOGS],
+  ] as const)("%s: only fold-versus-raise changes; every other round resolves as in classic rules", (_, logs) => {
+    const ruleLogs = logs();
+    for (const log of ruleLogs) {
       for (const r of log.rounds) {
         const { A, B } = r.actions;
         const foldVsRaise = (A === "fold" && B === "raise") || (A === "raise" && B === "fold");
@@ -290,27 +318,29 @@ describe("raise-at-risk rules", () => {
         }
       }
     }
-    expect(RISK_LOGS.some((l) => l.rounds.some((r) => r.outcome === "folded-to-raise"))).toBe(true);
+    expect(ruleLogs.some((l) => l.rounds.some((r) => r.outcome === "folded-to-raise"))).toBe(true);
   });
 
-  it("is deterministic per seed", () => {
-    for (let seed = 0; seed < 200; seed++) {
-      const run = () => playMatch(PRESETS.Tricky, PRESETS.Reckless, { seed, rules: RAISE_AT_RISK_RULES });
-      expect(run()).toEqual(run());
+  it("is deterministic per seed under every ruleset", () => {
+    for (const rules of [CLASSIC_RULES, RAISE_AT_RISK_RULES, FLIP_FOR_ANTE_RULES]) {
+      for (let seed = 0; seed < 200; seed++) {
+        const run = () => playMatch(PRESETS.Tricky, PRESETS.Reckless, { seed, rules });
+        expect(run()).toEqual(run());
+      }
     }
   });
 
   it("does not alias the caller's rules object", () => {
-    const rules = { raiseAtRiskOnFold: true };
+    const rules: MatchRules = { foldToRaise: "raiser-risks-raise" };
     const log = playMatch(constantAgent("raise"), constantAgent("fold"), { seed: 1, rules });
-    rules.raiseAtRiskOnFold = false;
-    expect(log.rules.raiseAtRiskOnFold).toBe(true);
+    rules.foldToRaise = "classic";
+    expect(log.rules.foldToRaise).toBe("raiser-risks-raise");
   });
 });
 
 describe("log", () => {
   it("round-trips through JSON unchanged", () => {
-    for (const log of [...LOGS.slice(0, 250), ...RISK_LOGS.slice(0, 250)]) {
+    for (const log of [...LOGS.slice(0, 200), ...RISK_LOGS.slice(0, 200), ...ANTE_FLIP_LOGS.slice(0, 200)]) {
       expect(JSON.parse(JSON.stringify(log))).toEqual(log);
     }
   });

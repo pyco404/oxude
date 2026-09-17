@@ -24,8 +24,9 @@ function complementEdge(edge: number): number {
   return Math.round((1 - edge) * 100) / 100;
 }
 
-export const CLASSIC_RULES: MatchRules = { raiseAtRiskOnFold: false };
-export const RAISE_AT_RISK_RULES: MatchRules = { raiseAtRiskOnFold: true };
+export const CLASSIC_RULES: MatchRules = { foldToRaise: "classic" };
+export const RAISE_AT_RISK_RULES: MatchRules = { foldToRaise: "raiser-risks-raise" };
+export const FLIP_FOR_ANTE_RULES: MatchRules = { foldToRaise: "flip-for-ante" };
 
 export type MatchOptions = {
   seed: number;
@@ -84,13 +85,13 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
 
     if (actionA === "fold" && actionB === "fold") {
       outcome = "both-folded";
-    } else if (foldedToRaise && rules.raiseAtRiskOnFold) {
+    } else if (foldedToRaise && rules.foldToRaise !== "classic") {
       outcome = "folded-to-raise";
       const raiser: Seat = actionA === "raise" ? "A" : "B";
       const roll = rng();
       winner = roll < edgeA ? "A" : "B";
       flip = { probabilityAWins: edgeA, roll, winner };
-      bet = winner === raiser ? ANTE : RAISED_BET;
+      bet = rules.foldToRaise === "flip-for-ante" || winner === raiser ? ANTE : RAISED_BET;
     } else if (actionA === "fold" || actionB === "fold") {
       outcome = "one-folded";
       bet = ANTE;

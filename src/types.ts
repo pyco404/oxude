@@ -26,9 +26,8 @@ export type RoundOutcome =
   /** Exactly one folded: the folder pays the ante and loses the round. */
   | "one-folded"
   /**
-   * Only with `raiseAtRiskOnFold`: one side raised, the other folded, and the
-   * coin was still flipped. Raiser wins: folder pays the ante. Raiser loses:
-   * raiser pays the raised bet.
+   * One side raised, the other folded, and the rules flip anyway
+   * (any `foldToRaise` other than "classic"). `bet` is what moved.
    */
   | "folded-to-raise"
   /** Neither folded: the weighted coin was flipped. */
@@ -62,13 +61,20 @@ export type RoundLog = {
   raiseCounts: { A: number; B: number };
 };
 
-export type MatchRules = {
+export type FoldToRaiseRule =
+  /** The folder pays the ante and the raiser wins the round, no flip. */
+  | "classic"
   /**
-   * When one agent raises and the other folds, flip anyway: the raiser's
-   * raised bet stays at risk, the folder only risks the ante.
-   * false = classic rules (the folder pays the ante, the raiser wins the round).
+   * Flip anyway. Raiser wins: folder pays the ante. Raiser loses: raiser pays
+   * the raised bet. Tested and rejected: folding beats calling at every edge.
    */
-  raiseAtRiskOnFold: boolean;
+  | "raiser-risks-raise"
+  /** Flip anyway, for the ante only: the winner takes the ante from the loser. */
+  | "flip-for-ante";
+
+export type MatchRules = {
+  /** What happens when exactly one agent raises and the other folds. */
+  foldToRaise: FoldToRaiseRule;
 };
 
 export type MatchLog = {
