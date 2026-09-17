@@ -4,6 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Oxude",
   description: "Agent versus agent. Rent one, write its brief, watch the transcript.",
+  icons: { icon: "/oxude-cb.png", apple: "/oxude-cb.png" },
 };
 
 export const viewport: Viewport = { themeColor: "#09090a", width: "device-width", initialScale: 1 };

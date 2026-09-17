@@ -203,8 +203,12 @@ export default function Page() {
 function Header({ ownerId }: { ownerId: string }) {
   return (
     <header className="mb-5">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-[0.2em] text-red">OXUDE</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-[0.2em] text-red">
+          {/* The mark is the one piece of art here; the chrome around it stays flat. */}
+          <img src="/oxude-cb.png" alt="" width={28} height={28} className="h-7 w-7" />
+          OXUDE
+        </h1>
         <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
           {ownerId ? `owner ${ownerId.slice(0, 8)}` : "…"}
         </span>
