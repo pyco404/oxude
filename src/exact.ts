@@ -4,17 +4,25 @@ import {
   decideRound,
   EDGES,
   freezeStakes,
-  INITIAL_STATE,
+  initialState,
   isMatchOver,
   resolveActions,
   type MatchState,
   type Stakes,
+  type TurnOrder,
 } from "./round.js";
-import type { Agent } from "./types.js";
+import type { Agent, Seat } from "./types.js";
 
 export type ExactOptions = {
   /** Defaults to CLASSIC_STAKES. */
   stakes?: Readonly<Stakes>;
+  /** Defaults to "simultaneous". */
+  turnOrder?: TurnOrder;
+  /**
+   * Alternating play only: fix who leads round 1 instead of the fair coin
+   * the simulator uses. For measuring the value of position.
+   */
+  firstLeader?: Seat;
 };
 
 /**
@@ -49,7 +57,9 @@ export function expectedNet(agentA: Agent, agentB: Agent, options: ExactOptions 
     }
     return total / EDGES.length;
   };
-  return value(INITIAL_STATE);
+  if ((options.turnOrder ?? "simultaneous") === "simultaneous") return value(initialState(null));
+  if (options.firstLeader) return value(initialState(options.firstLeader));
+  return (value(initialState("A")) + value(initialState("B"))) / 2;
 }
 
 /** Exact expected net of `agent` against `opponent`, averaged over both seatings. */
