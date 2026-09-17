@@ -1,4 +1,4 @@
-import type { Stakes } from "./round.js";
+import type { Stakes, TurnOrder } from "./round.js";
 export type Action = "fold" | "call" | "raise";
 
 export type Seat = "A" | "B";
@@ -19,10 +19,15 @@ export type View = {
   /** Whether the opponent raised in the immediately previous round (false in round 1). */
   readonly oppRaisedLastRound: boolean;
   /**
-   * The match's public price table. The bet for this round is not included:
-   * it depends on the opponent's simultaneous action.
+   * The match's public price table. In simultaneous play the bet for this
+   * round is unknown when choosing; in turn-based play, oppActionThisRound
+   * shows whether a raise is already on the table.
    */
   readonly stakes: Readonly<Stakes>;
+  /** Turn-based only: what the opponent already did this round; null when acting first or in simultaneous play. */
+  readonly oppActionThisRound: Action | null;
+  /** Turn-based only: my earlier action this round (the leader answering a raise); otherwise null. */
+  readonly myActionThisRound: Action | null;
   readonly myNet: number;
 };
 
@@ -46,7 +51,15 @@ export type FlipLog = {
 
 export type RoundLog = {
   roundNumber: number;
+  /** Turn-based: who acted first this round. Null in simultaneous play. */
+  leader: Seat | null;
+  /** Decisions in the order they were made (both at once in simultaneous play). */
+  sequence: { seat: Seat; action: Action }[];
   edges: { A: number; B: number };
+  /**
+   * Final actions. In turn-based play these are effective: a re-raise counts
+   * as a call, and a responder who never acted (the leader folded) is "call".
+   */
   actions: { A: Action; B: Action };
   outcome: RoundOutcome;
   /**
@@ -67,6 +80,9 @@ export type RoundLog = {
 export type MatchLog = {
   seed: number;
   stakes: Stakes;
+  turnOrder: TurnOrder;
+  /** Turn-based: who led round 1 (then leadership alternates). Null in simultaneous play. */
+  firstLeader: Seat | null;
   names: { A: string; B: string };
   rounds: RoundLog[];
   roundsWon: { A: number; B: number };
