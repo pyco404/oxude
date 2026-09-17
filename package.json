@@ -14,7 +14,8 @@
     "sweep": "tsx scripts/sweep.ts",
     "search": "tsx scripts/search.ts",
     "inspect": "tsx scripts/inspect.ts",
-    "score-policies": "tsx scripts/score-policies.ts"
+    "score-policies": "tsx scripts/score-policies.ts",
+    "brief-sweep": "tsx scripts/brief-sweep.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",
