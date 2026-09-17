@@ -18,6 +18,9 @@ export type AgentView = {
   matchesPlayed?: number;
   cumulativeNet?: number;
   recentForm?: number;
+  balance?: number;
+  maxStake?: number;
+  retired?: boolean;
   trueRating?: number | null;
   trueRatingBasis?: string;
 };
@@ -29,12 +32,17 @@ export type LadderRow = {
   cumulativeNet: number;
   netPerMatch?: number;
   recentForm: number;
+  balance: number;
+  retired: boolean;
 };
 export type PlayResult = {
   matchId: string;
   opponent: { id: string; name: string };
   matchmaking: { path: string; candidates: number; ratingGap: number | null };
-  result: { winner: "A" | "B" | null; net: number; opponentNet: number; rounds: number };
+  stake: number;
+  result: { winner: "A" | "B" | null; net: number; opponentNet: number; rounds: number; uncappedNet: number };
+  balance: number;
+  retired: boolean;
 };
 
 export class ApiError extends Error {
@@ -73,9 +81,19 @@ export const api = {
   previewTable: (ownerId: string, policyTable: unknown) =>
     request<{ preview: Preview }>("/preview", { method: "POST", ownerId, body: JSON.stringify({ policyTable }) }),
   previewBrief: (ownerId: string, brief: string) =>
-    request<{ preview: Preview }>("/preview", { method: "POST", ownerId, body: JSON.stringify({ brief }) }),
-  rent: (ownerId: string, input: { name: string; presetName?: string; brief?: string }) =>
-    request<{ agent: AgentView }>("/agents", { method: "POST", ownerId, body: JSON.stringify(input) }),
+    request<{ preview: Preview; elicitation: { free: boolean } | null }>("/preview", {
+      method: "POST",
+      ownerId,
+      body: JSON.stringify({ brief }),
+    }),
+  rent: (ownerId: string, input: { name: string; presetName?: string; brief?: string; maxStake?: number }) =>
+    request<{ agent: AgentView; elicitation: { free: boolean } | null }>("/agents", {
+      method: "POST",
+      ownerId,
+      body: JSON.stringify(input),
+    }),
+  setCeiling: (ownerId: string, id: string, maxStake: number) =>
+    request<{ maxStake: number }>(`/agents/${id}/ceiling`, { method: "POST", ownerId, body: JSON.stringify({ maxStake }) }),
   agent: (ownerId: string, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { ownerId }),
   play: (ownerId: string, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", ownerId }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),

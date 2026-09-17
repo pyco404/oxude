@@ -23,6 +23,8 @@ export default function Page() {
   const [previewing, setPreviewing] = useState(false);
   const [autoPreview, setAutoPreview] = useState(true);
   const [paidCalls, setPaidCalls] = useState(0);
+  const [firstFreeUsed, setFirstFreeUsed] = useState(false);
+  const [ceiling, setCeiling] = useState(60);
   const [transcript, setTranscript] = useState<string>("");
   const [lastPlay, setLastPlay] = useState<PlayResult | null>(null);
   const [ladderTab, setLadderTab] = useState<"winnings" | "per-match">("winnings");
@@ -115,7 +117,8 @@ export default function Page() {
     try {
       const r = await api.previewBrief(ownerId, brief.trim());
       setPreview({ value: r.preview, paid: true });
-      setPaidCalls((n) => n + 1);
+      if (r.elicitation?.free) setFirstFreeUsed(true);
+      else setPaidCalls((n) => n + 1);
     } catch (e) {
       setPreview(null);
       setError(e instanceof ApiError && e.retryAfter ? `${e.message} — try again in ${e.retryAfter}s` : (e as Error).message);
@@ -127,10 +130,12 @@ export default function Page() {
   const rent = () =>
     run("rent", async () => {
       const label = name.trim() || (tab === "preset" ? `${chosen} rental` : "My agent");
-      const { agent: created } = await api.rent(ownerId, {
+      const { agent: created, elicitation } = await api.rent(ownerId, {
         name: label,
+        maxStake: ceiling,
         ...(tab === "preset" ? { presetName: chosen } : { brief: brief.trim() }),
       });
+      if (elicitation?.free) setFirstFreeUsed(true);
       const id = created.id ?? created.agentId!;
       localStorage.setItem(AGENT_KEY, id);
       setAgent({ ...created, id });
@@ -168,7 +173,21 @@ export default function Page() {
       ) : null}
 
       {agent ? (
-        <AgentCard agent={agent} onPlay={play} onRelease={release} busy={busy === "play"} lastPlay={lastPlay} />
+        <AgentCard
+          agent={agent}
+          onPlay={play}
+          onRelease={release}
+          busy={busy === "play"}
+          lastPlay={lastPlay}
+          onCeiling={(value) =>
+            run("ceiling", async () => {
+              const id = agent.id ?? agent.agentId;
+              if (!id) return;
+              await api.setCeiling(ownerId, id, value);
+              await refreshAgent(id, ownerId);
+            })
+          }
+        />
       ) : (
         <RentPanel
           tab={tab}
@@ -187,6 +206,9 @@ export default function Page() {
           onRateBrief={ratePaidBrief}
           previewing={previewing}
           paidCalls={paidCalls}
+          firstFree={!firstFreeUsed}
+          ceiling={ceiling}
+          setCeiling={setCeiling}
         />
       )}
 
@@ -265,6 +287,9 @@ function RentPanel(props: {
   onRateBrief: () => void;
   previewing: boolean;
   paidCalls: number;
+  firstFree: boolean;
+  ceiling: number;
+  setCeiling: (n: number) => void;
 }) {
   const ready = props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12;
   return (
@@ -318,7 +343,9 @@ function RentPanel(props: {
                 />
                 Rate as I type
               </label>
-              <span className="font-mono">{props.brief.trim().length} chars · {props.paidCalls} model calls</span>
+              <span className="font-mono">
+                {props.brief.trim().length} chars · {props.firstFree ? "first call free" : `${props.paidCalls} model calls`}
+              </span>
             </div>
             <button
               onClick={props.onRateBrief}
@@ -326,7 +353,9 @@ function RentPanel(props: {
               className="w-full border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
             >
               {props.previewing ? "Rating…" : "Rate this brief"}
-              <span className="ml-2 font-mono text-[10px] uppercase tracking-wider">costs a model call</span>
+              <span className="ml-2 font-mono text-[10px] uppercase tracking-wider">
+                {props.firstFree ? "first one free" : "costs a model call"}
+              </span>
             </button>
           </div>
         )}
@@ -337,6 +366,28 @@ function RentPanel(props: {
           placeholder="Name your agent (optional)"
           className="w-full border border-line bg-panel-2 px-3 py-2 text-[13px] placeholder:text-muted/60"
         />
+
+        <div className="border border-line px-3 py-2">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor="ceiling" className="text-[11px] uppercase tracking-wider text-muted">
+              Per-match ceiling
+            </label>
+            <span className="font-mono text-[13px] text-red">{props.ceiling}</span>
+          </div>
+          <input
+            id="ceiling"
+            type="range"
+            min={10}
+            max={60}
+            step={5}
+            value={props.ceiling}
+            onChange={(e) => props.setCeiling(Number(e.target.value))}
+            className="mt-2 w-full accent-[#ff2d2d]"
+          />
+          <p className="mt-1 text-[11px] leading-4 text-muted">
+            The most this agent can lose in one match. It starts with 200 to play with.
+          </p>
+        </div>
         <button
           onClick={props.onRent}
           disabled={!ready || props.busy}
@@ -370,13 +421,16 @@ function AgentCard({
   onRelease,
   busy,
   lastPlay,
+  onCeiling,
 }: {
   agent: AgentView;
   onPlay: () => void;
   onRelease: () => void;
   busy: boolean;
   lastPlay: PlayResult | null;
+  onCeiling: (value: number) => void;
 }) {
+  const retired = agent.retired === true;
   return (
     <section className="border border-line bg-panel">
       <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
@@ -392,10 +446,39 @@ function AgentCard({
         </div>
 
         <dl className="mt-3 grid grid-cols-3 gap-2 border border-line">
+          <Stat label="balance" value={String(agent.balance ?? 0)} accent={(agent.balance ?? 0) <= 20} />
+          <Stat label="net won" value={whole(agent.cumulativeNet ?? 0)} />
           <Stat label="matches" value={String(agent.matchesPlayed ?? 0)} />
-          <Stat label="net won" value={whole(agent.cumulativeNet ?? 0)} accent={(agent.cumulativeNet ?? 0) !== 0} />
-          <Stat label="recent form" value={money(agent.recentForm ?? 0)} />
         </dl>
+        <dl className="mt-2 grid grid-cols-2 gap-2 border border-line">
+          <Stat label="recent form" value={money(agent.recentForm ?? 0)} />
+          <Stat label="ceiling" value={String(agent.maxStake ?? 0)} />
+        </dl>
+
+        {retired ? (
+          <p className="mt-3 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
+            Out of money and retired. Its record is frozen at {whole(agent.cumulativeNet ?? 0)} over{" "}
+            {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
+          </p>
+        ) : (
+          <div className="mt-3 flex items-center gap-2">
+            <label htmlFor="ceiling-live" className="text-[11px] uppercase tracking-wider text-muted">
+              Ceiling
+            </label>
+            <input
+              id="ceiling-live"
+              type="range"
+              min={10}
+              max={60}
+              step={5}
+              defaultValue={agent.maxStake ?? 60}
+              onMouseUp={(e) => onCeiling(Number((e.target as HTMLInputElement).value))}
+              onTouchEnd={(e) => onCeiling(Number((e.target as HTMLInputElement).value))}
+              className="flex-1 accent-[#ff2d2d]"
+            />
+            <span className="w-6 text-right font-mono text-[12px]">{agent.maxStake ?? 60}</span>
+          </div>
+        )}
 
         {typeof agent.trueRating === "number" ? (
           <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
@@ -405,17 +488,20 @@ function AgentCard({
 
         <button
           onClick={onPlay}
-          disabled={busy}
+          disabled={busy || retired}
           className="mt-3 w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
-          {busy ? "Playing…" : "Play a match"}
+          {retired ? "Retired" : busy ? "Playing…" : "Play a match"}
         </button>
 
         {lastPlay ? (
           <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
-            vs {lastPlay.opponent.name} · {lastPlay.result.rounds} rounds ·{" "}
-            <span className={lastPlay.result.net >= 0 ? "text-text" : "text-red"}>{whole(lastPlay.result.net)}</span> ·
-            paired by {lastPlay.matchmaking.path.replace("-", " ")}
+            vs {lastPlay.opponent.name} · {lastPlay.result.rounds} rounds · staked {lastPlay.stake} ·{" "}
+            <span className={lastPlay.result.net >= 0 ? "text-text" : "text-red"}>{whole(lastPlay.result.net)}</span>
+            {lastPlay.result.net !== lastPlay.result.uncappedNet
+              ? ` (capped from ${whole(lastPlay.result.uncappedNet)})`
+              : ""}{" "}
+            · paired by {lastPlay.matchmaking.path.replace("-", " ")}
           </p>
         ) : null}
       </div>
@@ -564,8 +650,13 @@ function Ladder({
               }`}
             >
               <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
-              <span className="min-w-0 flex-1 truncate">{row.name}</span>
-              <span className="w-16 shrink-0 text-right font-mono text-[11px] text-muted">{row.matchesPlayed}m</span>
+              <span className={`min-w-0 flex-1 truncate ${row.retired ? "text-muted line-through" : ""}`}>{row.name}</span>
+              {row.retired ? (
+                <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+                  retired
+                </span>
+              ) : null}
+              <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted">{row.matchesPlayed}m</span>
               <span className="w-20 shrink-0 text-right font-mono">
                 {tab === "winnings" ? whole(row.cumulativeNet) : money(row.netPerMatch ?? 0)}
               </span>

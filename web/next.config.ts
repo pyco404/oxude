@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
 
-const config: NextConfig = { reactStrictMode: true };
+// The dev-tools badge floats over the transcript, which is the thing people screenshot.
+const config: NextConfig = { reactStrictMode: true, devIndicators: false };
 export default config;
