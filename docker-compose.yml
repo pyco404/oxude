@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: oxude
+      POSTGRES_PASSWORD: oxude
+      POSTGRES_DB: oxude
+    ports:
+      - "5432:5432"
+    volumes:
+      - oxude-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oxude"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  oxude-pgdata:
