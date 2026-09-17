@@ -87,8 +87,8 @@ describe("match length", () => {
 describe("determinism", () => {
   it("same seed and agents produce identical logs", () => {
     for (let seed = 0; seed < 500; seed++) {
-      const a = playMatch(PRESETS.Tricky, randomAgent(seed * 7), { seed });
-      const b = playMatch(PRESETS.Tricky, randomAgent(seed * 7), { seed });
+      const a = playMatch(PRESETS.Bully, randomAgent(seed * 7), { seed });
+      const b = playMatch(PRESETS.Bully, randomAgent(seed * 7), { seed });
       expect(b).toEqual(a);
     }
   });
@@ -105,7 +105,7 @@ describe("determinism", () => {
     // Presets diverge too, in discrete outcomes (edges, actions, winners), not just rolls.
     const outcomes = new Set<string>();
     for (let seed = 0; seed < 200; seed++) {
-      const log = playMatch(PRESETS.Steady, PRESETS.Patient, { seed });
+      const log = playMatch(PRESETS.Hammer, PRESETS.Mirage, { seed });
       outcomes.add(JSON.stringify(log.rounds.map((r) => [r.edges.A, r.actions, r.winner])));
     }
     expect(outcomes.size).toBeGreaterThan(20);
@@ -258,7 +258,7 @@ describe("log", () => {
   });
 
   it("round snapshots are not aliased to live engine state", () => {
-    const log = playMatch(PRESETS.Reckless, PRESETS.Steady, { seed: 77 });
+    const log = playMatch(PRESETS.Anchor, PRESETS.Hammer, { seed: 77 });
     const nets = log.rounds.map((r) => ({ ...r.nets }));
     expect(log.rounds.map((r) => r.nets)).toEqual(nets);
     expect(log.rounds[0]!.nets).not.toBe(log.nets);

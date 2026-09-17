@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLASSIC_STAKES,
   expectedNet,
+  makeStrategy,
   mulberry32,
   nextUint32,
   playMatch,
@@ -66,9 +67,20 @@ describe("exact calculator", () => {
     }
   });
 
-  it("AlwaysRaise never loses in expectation under classic stakes, and ties a never-folder exactly", () => {
-    for (const name of PRESET_NAMES) expect(seatAveragedNet(raise, PRESETS[name])).toBeGreaterThan(0);
+  it("AlwaysRaise never loses in expectation under classic rules", () => {
+    // Under simultaneous play with the classic ante nobody can answer a raise,
+    // so raising is free: it ties anyone who never folds and beats anyone who does.
+    const folder = makeStrategy({
+      foldBelow: 0.35,
+      raiseAtOrAbove: 0.55,
+      bluffAtOrBelow: null,
+      bluffUnderPressure: false,
+      pressureFoldBelow: 0.6,
+      foldToRaiseBelow: null,
+    });
+    expect(seatAveragedNet(raise, folder)).toBeGreaterThan(0);
     expect(seatAveragedNet(raise, call)).toBeCloseTo(0, 12);
+    for (const name of PRESET_NAMES) expect(seatAveragedNet(raise, PRESETS[name])).toBeGreaterThanOrEqual(-1e-12);
   });
 
   it("scales with stakes", () => {

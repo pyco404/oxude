@@ -25,10 +25,10 @@ const independent = { deal: "independent" } as const;
 
 describe("deals", () => {
   it("complementary is the default and is recorded in the log", () => {
-    const log = playMatch(PRESETS.Steady, PRESETS.Tricky, { seed: 1 });
+    const log = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 1 });
     expect(log.deal).toBe("complementary");
     expect(log.rounds.every((r) => r.edges.B === complementEdge(r.edges.A))).toBe(true);
-    expect(playMatch(PRESETS.Steady, PRESETS.Tricky, { seed: 1, ...independent }).deal).toBe("independent");
+    expect(playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 1, ...independent }).deal).toBe("independent");
   });
 
   it("outcome tables cover every pair once, with probabilities summing to 1", () => {
@@ -97,7 +97,7 @@ describe("deals", () => {
         expect(log.rounds.length).toBeLessThanOrEqual(3);
       }
       for (let seed = 0; seed < 100; seed++) {
-        const run = () => playMatch(PRESETS.Patient, PRESETS.Reckless, { seed, turnOrder: "alternating", ...independent });
+        const run = () => playMatch(PRESETS.Mirage, PRESETS.Anchor, { seed, turnOrder: "alternating", ...independent });
         expect(run()).toEqual(run());
       }
     });

@@ -78,11 +78,32 @@ export function makeStrategy(params: StrategyParams): Agent {
   };
 }
 
+/**
+ * The configuration these numbers are balanced for. They were found by an
+ * exact search over ante 3..5 and hold across that whole range; they are not
+ * balanced for simultaneous play or the complementary draw.
+ * See test/balance.test.ts, which re-verifies them.
+ */
+export const OXUDE_RULES = Object.freeze({
+  turnOrder: "alternating",
+  deal: "independent",
+  stakes: Object.freeze({ ante: 4, baseBet: 10, raisedBet: 20 }),
+} as const);
+
+/**
+ * Anchor calls down and raises only a strong edge; Hammer raises from even
+ * money up; Mirage raises its worst edge and its best (the bluffer); Bully
+ * raises almost everything and folds when raised at. All four fold to a raise
+ * below 0.45 except Bully, which needs 0.55.
+ *
+ * Do not edit these without re-running the balance criteria: test/balance.test.ts
+ * pins them and re-checks the loop, the spread and the probes at ante 3, 4 and 5.
+ */
 export const PRESET_PARAMS = {
-  Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
-  Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
-  Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
-  Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null, foldToRaiseBelow: null },
+  Anchor: { foldBelow: "pot-odds", raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: "pot-odds", foldToRaiseBelow: 0.45 },
+  Hammer: { foldBelow: "pot-odds", raiseAtOrAbove: 0.45, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: "pot-odds", foldToRaiseBelow: 0.45 },
+  Mirage: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null, foldToRaiseBelow: 0.45 },
+  Bully: { foldBelow: 0, raiseAtOrAbove: 0.35, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: null, foldToRaiseBelow: 0.55 },
 } as const satisfies Record<string, StrategyParams>;
 
 export type PresetName = keyof typeof PRESET_PARAMS;
@@ -90,8 +111,8 @@ export type PresetName = keyof typeof PRESET_PARAMS;
 export const PRESET_NAMES = Object.keys(PRESET_PARAMS) as PresetName[];
 
 export const PRESETS: Record<PresetName, Agent> = {
-  Reckless: makeStrategy(PRESET_PARAMS.Reckless),
-  Steady: makeStrategy(PRESET_PARAMS.Steady),
-  Patient: makeStrategy(PRESET_PARAMS.Patient),
-  Tricky: makeStrategy(PRESET_PARAMS.Tricky),
+  Anchor: makeStrategy(PRESET_PARAMS.Anchor),
+  Hammer: makeStrategy(PRESET_PARAMS.Hammer),
+  Mirage: makeStrategy(PRESET_PARAMS.Mirage),
+  Bully: makeStrategy(PRESET_PARAMS.Bully),
 };

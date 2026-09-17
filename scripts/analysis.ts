@@ -1,5 +1,6 @@
 import {
   CLASSIC_STAKES,
+  OXUDE_RULES,
   makeStrategy,
   PRESET_NAMES,
   PRESETS,
@@ -37,12 +38,12 @@ export const P = PRESET_NAMES.length;
 
 /** Relations the preset loop must show: [winner, loser]. */
 export const EXPECTED_LOOP: [string, string][] = [
-  ["Reckless", "Patient"],
-  ["Steady", "Reckless"],
-  ["Steady", "Patient"],
-  ["Patient", "Tricky"],
-  ["Tricky", "Reckless"],
-  ["Tricky", "Steady"],
+  ["Anchor", "Mirage"],
+  ["Hammer", "Anchor"],
+  ["Hammer", "Mirage"],
+  ["Mirage", "Bully"],
+  ["Bully", "Anchor"],
+  ["Bully", "Hammer"],
 ];
 
 export type FieldResult = { avg: number; beats: number };
@@ -109,8 +110,8 @@ export function stakesFromEnv(): Stakes {
     return v;
   };
   return {
-    ante: num("ANTE", CLASSIC_STAKES.ante),
-    baseBet: num("BASE_BET", CLASSIC_STAKES.baseBet),
-    raisedBet: num("RAISED_BET", CLASSIC_STAKES.raisedBet),
+    ante: num("ANTE", OXUDE_RULES.stakes.ante),
+    baseBet: num("BASE_BET", OXUDE_RULES.stakes.baseBet),
+    raisedBet: num("RAISED_BET", OXUDE_RULES.stakes.raisedBet),
   };
 }

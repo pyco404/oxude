@@ -80,7 +80,7 @@ describe("alternating turn order", () => {
 
   it("is deterministic per seed and round-trips through JSON", () => {
     for (let seed = 0; seed < 200; seed++) {
-      const run = () => playMatch(PRESETS.Tricky, PRESETS.Steady, { seed, ...turn });
+      const run = () => playMatch(PRESETS.Bully, PRESETS.Hammer, { seed, ...turn });
       expect(run()).toEqual(run());
       expect(JSON.parse(JSON.stringify(run()))).toEqual(run());
     }
@@ -168,7 +168,7 @@ describe("alternating turn order", () => {
   });
 
   it("simultaneous play is still the default", () => {
-    const log = playMatch(PRESETS.Steady, PRESETS.Tricky, { seed: 5 });
+    const log = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 5 });
     expect(log.turnOrder).toBe("simultaneous");
     expect(log.firstLeader).toBeNull();
     expect(log.rounds.every((r) => r.leader === null && r.sequence.length === 2)).toBe(true);
@@ -200,7 +200,7 @@ describe("exact calculator with alternating turns", () => {
   });
 
   it("averages the two fixed-leader values", () => {
-    const [a, b] = [PRESETS.Steady, PRESETS.Patient];
+    const [a, b] = [PRESETS.Hammer, PRESETS.Mirage];
     const fixedA = expectedNet(a, b, { ...turn, firstLeader: "A" });
     const fixedB = expectedNet(a, b, { ...turn, firstLeader: "B" });
     expect(expectedNet(a, b, turn)).toBeCloseTo((fixedA + fixedB) / 2, 12);

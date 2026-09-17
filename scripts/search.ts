@@ -26,7 +26,7 @@ import { selfCheck, tableFor, tableSeatAveraged, type DecisionTable } from "./ta
 //                          [--max-sets N: stop after N passing sets] [--save-limit N]
 //                          [--base 10] [--raise 20] [--top 3]
 // Env: ANY_BLUFF=1 drops the bluffer requirement; NOMINAL_BLUFF=1 accepts a bluffer whose bluffs never
-// fold anyone; ANY_TRICKY=1 lets Tricky react to pressure.
+// fold anyone; ANY_TRICKY=1 lets Bully react to pressure.
 const flag = (name: string) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -202,16 +202,16 @@ function probeAt(k: number, i: number, ante: number): number {
 }
 
 type Check = { ok: boolean; margin: number; binding: string };
-/** All five criteria for [Reckless, Steady, Patient, Tricky] at one ante. Margin = smallest slack. */
+/** All five criteria for [Anchor, Hammer, Mirage, Bully] at one ante. Margin = smallest slack. */
 function check(ids: number[], ante: number): Check {
   const [r, s, p, t] = ids as [number, number, number, number];
   const slacks: [string, number, "strict" | "weak"][] = [
-    ["Reckless>Patient", valueAt(r, p, ante), "strict"],
-    ["Steady>Reckless", valueAt(s, r, ante), "strict"],
-    ["Steady>Patient", valueAt(s, p, ante), "strict"],
-    ["Patient>Tricky", valueAt(p, t, ante), "strict"],
-    ["Tricky>Reckless", valueAt(t, r, ante), "strict"],
-    ["Tricky>Steady", valueAt(t, s, ante), "strict"],
+    ["Anchor>Mirage", valueAt(r, p, ante), "strict"],
+    ["Hammer>Anchor", valueAt(s, r, ante), "strict"],
+    ["Hammer>Mirage", valueAt(s, p, ante), "strict"],
+    ["Mirage>Bully", valueAt(p, t, ante), "strict"],
+    ["Bully>Anchor", valueAt(t, r, ante), "strict"],
+    ["Bully>Hammer", valueAt(t, s, ante), "strict"],
   ];
   const avgs = ids.map((i) => ids.reduce((acc, j) => acc + valueAt(i, j, ante), 0) / 4);
   const spread = Math.max(...avgs) - Math.min(...avgs);
@@ -347,7 +347,7 @@ for (let t = 0; t < N; t++) {
         if (INCREMENTAL) appendFileSync(INCREMENTAL, JSON.stringify(describe(sol)) + "\n");
         if (sols.length >= MAX_SETS) throw new EnoughSets();
         if (Date.now() > lastReport + 30_000) {
-          console.log(`  [${elapsed()}] ${loops} loops checked, ${sols.length} sets passing (Tricky ${t + 1}/${N})`);
+          console.log(`  [${elapsed()}] ${loops} loops checked, ${sols.length} sets passing (Bully ${t + 1}/${N})`);
           lastReport = Date.now();
         }
       });
@@ -368,7 +368,7 @@ sols.sort((a, b) => +b.allPass - +a.allPass || b.worst - a.worst || a.cost - b.c
 const robust = sols.filter((s) => s.allPass);
 
 console.log(`Turn order: ${TURNS}. Deal: ${DEAL}. Stakes base ${BASE} / raise ${RAISE}; ante ${HARD[0]}..${HARD[2]} around ${ANTE}.`);
-console.log(`Constraints: ${REQUIRE_LANDED ? "a bluffer whose bluff folds a stronger preset in the set" : REQUIRE_BLUFF ? "at least one (nominal) bluffer" : "no bluffer required"}; ${TRICKY_IGNORES_PRESSURE ? "Tricky ignores pressure" : "Tricky unconstrained"}.`);
+console.log(`Constraints: ${REQUIRE_LANDED ? "a bluffer whose bluff folds a stronger preset in the set" : REQUIRE_BLUFF ? "at least one (nominal) bluffer" : "no bluffer required"}; ${TRICKY_IGNORES_PRESSURE ? "Bully ignores pressure" : "Bully unconstrained"}.`);
 console.log(`${byKey.size} distinct behaviours; rejected ${rejected.degenerate} degenerate, ${rejected.probe} probe-identical; ${N} searched (${isBluffer.filter(Boolean).length} bluffers).`);
 console.log(`Fast evaluator verified against the exact calculator. Matrices ${matrixSeconds.toFixed(0)}s, total ${((Date.now() - started) / 1000).toFixed(0)}s.`);
 console.log(`${stoppedEarly ? "(partial, stopped early) " : ""}${loops} loops hold at antes ${HARD.join(", ")}; ${sols.length} sets pass all criteria there; ${robust.length} also pass at ${EXTRA.join(", ")}.`);

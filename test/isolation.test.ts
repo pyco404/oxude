@@ -15,7 +15,7 @@ describe("agent isolation", () => {
           seen[seat].push(view);
           return inner(view);
         };
-      const log = playMatch(record("A", randomAgent(nextUint32(master))), record("B", PRESETS.Tricky), {
+      const log = playMatch(record("A", randomAgent(nextUint32(master))), record("B", PRESETS.Bully), {
         seed: nextUint32(master),
       });
 
@@ -49,7 +49,7 @@ describe("agent isolation", () => {
       playMatch(spy, opp, { seed: 555 });
       return captured;
     };
-    expect(firstView(PRESETS.Patient)).toEqual(firstView(PRESETS.Reckless));
+    expect(firstView(PRESETS.Mirage)).toEqual(firstView(PRESETS.Anchor));
   });
 
   it("agents cannot mutate the view they are given, including its stakes", () => {
@@ -62,7 +62,7 @@ describe("agent isolation", () => {
       }).toThrow(TypeError);
       return "call";
     };
-    const log = playMatch(vandal, PRESETS.Steady, { seed: 9 });
+    const log = playMatch(vandal, PRESETS.Hammer, { seed: 9 });
     expect(log.nets.A + log.nets.B).toBe(0);
   });
 

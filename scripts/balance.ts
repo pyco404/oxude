@@ -1,4 +1,4 @@
-import { mulberry32, nextUint32, playMatch, PRESET_NAMES, PRESETS, type Deal, type TurnOrder } from "../src/index.js";
+import { mulberry32, nextUint32, OXUDE_RULES, playMatch, PRESET_NAMES, PRESETS, type Deal, type TurnOrder } from "../src/index.js";
 import { agentsFor, analyse, fmt, NAMES, P, PROBE_NOTES, stakesFromEnv } from "./analysis.js";
 
 // Usage: npm run balance [-- --no-sim]; ANTE=5 RAISED_BET=25 BASE_BET=10 BALANCE_SEED=1
@@ -8,8 +8,8 @@ const MASTER_SEED = Number(process.env.BALANCE_SEED ?? 0x0de5eed);
 const SIMULATE = !process.argv.includes("--no-sim");
 
 const stakes = stakesFromEnv();
-const turnOrder = (process.env.TURNS ?? "simultaneous") as TurnOrder;
-const deal = (process.env.DEAL ?? "complementary") as Deal;
+const turnOrder = (process.env.TURNS ?? OXUDE_RULES.turnOrder) as TurnOrder;
+const deal = (process.env.DEAL ?? OXUDE_RULES.deal) as Deal;
 const a = analyse(stakes, PRESETS, turnOrder, deal);
 const pad = (s: string, n = 12) => s.padStart(n);
 
