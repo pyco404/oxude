@@ -6,8 +6,11 @@ import {
   MAX_ROUNDS,
   RAISED_BET,
   ROUNDS_TO_WIN,
+  CLASSIC_RULES,
   mulberry32,
   nextUint32,
+  RAISE_AT_RISK_RULES,
+  type MatchRules,
   playMatch,
   PRESETS,
   type MatchLog,
@@ -15,30 +18,32 @@ import {
 import { agentPool, constantAgent, randomAgent } from "./helpers.js";
 
 /** Plays many matches across every pairing in the pool (fresh random agents each time). */
-function manyMatches(count: number, masterSeed: number): MatchLog[] {
+function manyMatches(count: number, masterSeed: number, rules: MatchRules = CLASSIC_RULES): MatchLog[] {
   const master = mulberry32(masterSeed);
   const logs: MatchLog[] = [];
   for (let k = 0; k < count; k++) {
     const pool = agentPool(nextUint32(master));
     const a = pool[k % pool.length]!;
     const b = pool[Math.floor(k / pool.length) % pool.length]!;
-    logs.push(playMatch(a, b, { seed: nextUint32(master) }));
+    logs.push(playMatch(a, b, { seed: nextUint32(master), rules }));
   }
   return logs;
 }
 
 const LOGS = manyMatches(10_000, 12345);
+const RISK_LOGS = manyMatches(10_000, 54321, RAISE_AT_RISK_RULES);
+const ALL_LOGS = [...LOGS, ...RISK_LOGS];
 
 describe("zero-sum", () => {
   it("nets sum to zero at the end of every match and after every round", () => {
-    for (const log of LOGS) {
+    for (const log of ALL_LOGS) {
       expect(log.nets.A + log.nets.B).toBe(0);
       for (const r of log.rounds) expect(r.nets.A + r.nets.B).toBe(0);
     }
   });
 
   it("final nets equal the last round's running nets and the sum of transfers", () => {
-    for (const log of LOGS) {
+    for (const log of ALL_LOGS) {
       const last = log.rounds[log.rounds.length - 1]!;
       expect(log.nets).toEqual(last.nets);
       const sumA = log.rounds.reduce((s, r) => s + (r.winner === "A" ? r.bet : r.winner === "B" ? -r.bet : 0), 0);
@@ -49,7 +54,7 @@ describe("zero-sum", () => {
 
 describe("match length", () => {
   it("never exceeds 3 rounds and ends as soon as someone has 2 round wins", () => {
-    for (const log of LOGS) {
+    for (const log of ALL_LOGS) {
       expect(log.rounds.length).toBeGreaterThanOrEqual(1);
       expect(log.rounds.length).toBeLessThanOrEqual(MAX_ROUNDS);
       log.rounds.forEach((r, i) => {
@@ -138,7 +143,7 @@ describe("determinism", () => {
 describe("round resolution", () => {
   it("edges come from the fixed set and B's edge is exactly the complement literal", () => {
     const seen = new Set<number>();
-    for (const log of LOGS) {
+    for (const log of ALL_LOGS) {
       for (const r of log.rounds) {
         expect(EDGES).toContain(r.edges.A);
         expect(EDGES).toContain(r.edges.B);
@@ -151,7 +156,7 @@ describe("round resolution", () => {
 
   it("both-fold rounds move no money, flip nothing and award nothing", () => {
     let count = 0;
-    for (const log of LOGS) {
+    for (const log of ALL_LOGS) {
       log.rounds.forEach((r, i) => {
         if (r.actions.A !== "fold" || r.actions.B !== "fold") return;
         count++;
@@ -225,9 +230,87 @@ describe("round resolution", () => {
   });
 });
 
+describe("raise-at-risk rules", () => {
+  it("defaults to classic rules and records the rules in the log", () => {
+    expect(playMatch(constantAgent("raise"), constantAgent("fold"), { seed: 1 }).rules).toEqual(CLASSIC_RULES);
+    expect(
+      playMatch(constantAgent("raise"), constantAgent("fold"), { seed: 1, rules: RAISE_AT_RISK_RULES }).rules,
+    ).toEqual(RAISE_AT_RISK_RULES);
+  });
+
+  it("classic rules: folding to a raise pays the ante with no flip", () => {
+    const r = playMatch(constantAgent("raise"), constantAgent("fold"), { seed: 1 }).rounds[0]!;
+    expect(r.outcome).toBe("one-folded");
+    expect(r.flip).toBeNull();
+    expect(r.winner).toBe("A");
+    expect(r.bet).toBe(ANTE);
+  });
+
+  it("folding to a raise still flips: raiser wins the ante or loses the raised bet", () => {
+    const seen = { raiserWon: 0, raiserLost: 0 };
+    for (let seed = 0; seed < 400; seed++) {
+      for (const raiserSeat of ["A", "B"] as const) {
+        const [a, b] = raiserSeat === "A" ? (["raise", "fold"] as const) : (["fold", "raise"] as const);
+        const log = playMatch(constantAgent(a), constantAgent(b), { seed, rules: RAISE_AT_RISK_RULES });
+        let expectedA = 0;
+        for (const r of log.rounds) {
+          expect(r.outcome).toBe("folded-to-raise");
+          expect(r.flip).not.toBeNull();
+          expect(r.flip!.winner).toBe(r.flip!.roll < r.edges.A ? "A" : "B");
+          expect(r.winner).toBe(r.flip!.winner);
+          const raiserWon = r.winner === raiserSeat;
+          expect(r.bet).toBe(raiserWon ? ANTE : RAISED_BET);
+          seen[raiserWon ? "raiserWon" : "raiserLost"]++;
+          expectedA += r.winner === "A" ? r.bet : -r.bet;
+          expect(r.nets.A).toBe(expectedA);
+        }
+      }
+    }
+    expect(seen.raiserWon).toBeGreaterThan(0);
+    expect(seen.raiserLost).toBeGreaterThan(0);
+  });
+
+  it("only fold-versus-raise changes; every other round resolves as in classic rules", () => {
+    for (const log of RISK_LOGS) {
+      for (const r of log.rounds) {
+        const { A, B } = r.actions;
+        const foldVsRaise = (A === "fold" && B === "raise") || (A === "raise" && B === "fold");
+        if (foldVsRaise) {
+          expect(r.outcome).toBe("folded-to-raise");
+        } else if (A === "fold" && B === "fold") {
+          expect(r.outcome).toBe("both-folded");
+        } else if (A === "fold" || B === "fold") {
+          expect(r.outcome).toBe("one-folded");
+          expect(r.bet).toBe(ANTE);
+          expect(r.flip).toBeNull();
+          expect(r.winner).toBe(A === "fold" ? "B" : "A");
+        } else {
+          expect(r.outcome).toBe("flipped");
+          expect(r.bet).toBe(A === "raise" || B === "raise" ? RAISED_BET : BASE_BET);
+        }
+      }
+    }
+    expect(RISK_LOGS.some((l) => l.rounds.some((r) => r.outcome === "folded-to-raise"))).toBe(true);
+  });
+
+  it("is deterministic per seed", () => {
+    for (let seed = 0; seed < 200; seed++) {
+      const run = () => playMatch(PRESETS.Tricky, PRESETS.Reckless, { seed, rules: RAISE_AT_RISK_RULES });
+      expect(run()).toEqual(run());
+    }
+  });
+
+  it("does not alias the caller's rules object", () => {
+    const rules = { raiseAtRiskOnFold: true };
+    const log = playMatch(constantAgent("raise"), constantAgent("fold"), { seed: 1, rules });
+    rules.raiseAtRiskOnFold = false;
+    expect(log.rules.raiseAtRiskOnFold).toBe(true);
+  });
+});
+
 describe("log", () => {
   it("round-trips through JSON unchanged", () => {
-    for (const log of LOGS.slice(0, 500)) {
+    for (const log of [...LOGS.slice(0, 250), ...RISK_LOGS.slice(0, 250)]) {
       expect(JSON.parse(JSON.stringify(log))).toEqual(log);
     }
   });
