@@ -18,7 +18,8 @@
     "brief-sweep": "tsx scripts/brief-sweep.ts",
     "seed-roster": "tsx scripts/seed-roster.ts",
     "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "serve": "tsx scripts/serve.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

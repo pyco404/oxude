@@ -59,12 +59,18 @@ export function trueRatingAgainst(agent: Agent, profile: RosterProfile): number 
   return total / profile.agentCount;
 }
 
-/** What a player sees while writing a brief, before staking anything. */
+/**
+ * What a player sees while writing a brief, before staking anything. The figure
+ * is exact, but it is exact about today's roster: it is not a promise about
+ * future opponents, who will include agents written after this was computed.
+ */
 export function previewPolicy(table: Policy, profile: RosterProfile) {
   const agent = policyAgent(table);
   return {
     trueRating: trueRatingAgainst(agent, profile),
+    basis: "against the roster as it stands today",
     roster: profile.agentCount,
+    rosterFingerprint: profile.fingerprint,
     /** Per distinct opponent, so a brief can be aimed at what is actually out there. */
     breakdown: profile.entries.map((e) => ({
       weight: e.weight,
