@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLASSIC_RULES,
   expectedNet,
   makeStrategy,
   OXUDE_RULES,
   PRESET_NAMES,
   PRESET_PARAMS,
+  playMatch,
   PRESETS,
   seatAveragedNet,
   type Agent,
@@ -59,6 +61,16 @@ describe("shipped presets", () => {
   it("parameters match the snapshot", () => {
     expect(PRESET_PARAMS).toEqual(SNAPSHOT);
     expect(PRESET_NAMES).toEqual(["Anchor", "Hammer", "Mirage", "Bully"]);
+  });
+
+  it("a match with no options is the shipped game", () => {
+    const log = playMatch(PRESETS.Anchor, PRESETS.Bully, { seed: 1 });
+    expect(log.turnOrder).toBe(OXUDE_RULES.turnOrder);
+    expect(log.deal).toBe(OXUDE_RULES.deal);
+    expect(log.stakes).toEqual(OXUDE_RULES.stakes);
+    // The classic configuration is still reachable for the dead-end variants.
+    const classic = playMatch(PRESETS.Anchor, PRESETS.Bully, { seed: 1, ...CLASSIC_RULES });
+    expect([classic.turnOrder, classic.deal, classic.stakes.ante]).toEqual(["simultaneous", "complementary", 10]);
   });
 
   it("are balanced for the rules they claim", () => {

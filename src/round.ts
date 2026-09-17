@@ -18,6 +18,24 @@ export type Stakes = {
 
 export const CLASSIC_STAKES: Readonly<Stakes> = Object.freeze({ ante: ANTE, baseBet: BASE_BET, raisedBet: RAISED_BET });
 
+/**
+ * The game as shipped, and the default for playMatch and expectedNet. The
+ * presets are balanced for exactly this configuration; see test/balance.test.ts.
+ * The classic configuration (simultaneous play, complementary draw, ante 10)
+ * is still reachable by passing it explicitly.
+ */
+export const OXUDE_RULES = Object.freeze({
+  turnOrder: "alternating",
+  deal: "independent",
+  stakes: Object.freeze({ ante: 4, baseBet: 10, raisedBet: 20 }),
+} as const);
+
+export const CLASSIC_RULES = Object.freeze({
+  turnOrder: "simultaneous",
+  deal: "complementary",
+  stakes: CLASSIC_STAKES,
+} as const);
+
 /** Frozen copy, safe to hand to agents inside views. */
 export function freezeStakes(stakes: Readonly<Stakes>): Readonly<Stakes> {
   return Object.freeze({ ante: stakes.ante, baseBet: stakes.baseBet, raisedBet: stakes.raisedBet });

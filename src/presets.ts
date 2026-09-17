@@ -1,3 +1,4 @@
+import { OXUDE_RULES } from "./round.js";
 import type { Agent } from "./types.js";
 
 /** A fold threshold: a fixed edge, or "pot-odds" to derive it from the stakes. */
@@ -79,23 +80,12 @@ export function makeStrategy(params: StrategyParams): Agent {
 }
 
 /**
- * The configuration these numbers are balanced for. They were found by an
- * exact search over ante 3..5 and hold across that whole range; they are not
- * balanced for simultaneous play or the complementary draw.
- * See test/balance.test.ts, which re-verifies them.
- */
-export const OXUDE_RULES = Object.freeze({
-  turnOrder: "alternating",
-  deal: "independent",
-  stakes: Object.freeze({ ante: 4, baseBet: 10, raisedBet: 20 }),
-} as const);
-
-/**
  * Anchor calls down and raises only a strong edge; Hammer raises from even
  * money up; Mirage raises its worst edge and its best (the bluffer); Bully
  * raises almost everything and folds when raised at. All four fold to a raise
  * below 0.45 except Bully, which needs 0.55.
  *
+ * Balanced for OXUDE_RULES (alternating turns, independent draw, ante 4).
  * Do not edit these without re-running the balance criteria: test/balance.test.ts
  * pins them and re-checks the loop, the spread and the probes at ante 3, 4 and 5.
  */
@@ -109,6 +99,9 @@ export const PRESET_PARAMS = {
 export type PresetName = keyof typeof PRESET_PARAMS;
 
 export const PRESET_NAMES = Object.keys(PRESET_PARAMS) as PresetName[];
+
+/** Re-exported for callers that reach for the rules through the presets. */
+export { OXUDE_RULES };
 
 export const PRESETS: Record<PresetName, Agent> = {
   Anchor: makeStrategy(PRESET_PARAMS.Anchor),

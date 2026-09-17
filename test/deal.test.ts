@@ -6,6 +6,7 @@ import {
   EDGES,
   expectedNet,
   freezeStakes,
+  CLASSIC_RULES,
   CLASSIC_STAKES,
   initialState,
   mulberry32,
@@ -24,11 +25,13 @@ import { agentPool, constantAgent } from "./helpers.js";
 const independent = { deal: "independent" } as const;
 
 describe("deals", () => {
-  it("complementary is the default and is recorded in the log", () => {
-    const log = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 1 });
-    expect(log.deal).toBe("complementary");
-    expect(log.rounds.every((r) => r.edges.B === complementEdge(r.edges.A))).toBe(true);
-    expect(playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 1, ...independent }).deal).toBe("independent");
+  it("the independent draw is the default; the complementary draw is still reachable", () => {
+    const shipped = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 1 });
+    expect(shipped.deal).toBe("independent");
+
+    const classic = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 1, ...CLASSIC_RULES });
+    expect(classic.deal).toBe("complementary");
+    expect(classic.rounds.every((r) => r.edges.B === complementEdge(r.edges.A))).toBe(true);
   });
 
   it("outcome tables cover every pair once, with probabilities summing to 1", () => {

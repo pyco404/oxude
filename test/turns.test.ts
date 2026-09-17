@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ANTE,
+  CLASSIC_RULES,
+  CLASSIC_STAKES,
   BASE_BET,
   expectedNet,
   mulberry32,
@@ -17,7 +19,7 @@ import {
 } from "../src/index.js";
 import { agentPool, constantAgent } from "./helpers.js";
 
-const turn = { turnOrder: "alternating" } as const;
+const turn = { turnOrder: "alternating", deal: "complementary", stakes: CLASSIC_STAKES } as const;
 
 /** Agent scripted by situation: what to do when leading, responding to a call/raise, and answering a raise. */
 function scripted(lead: Action, vsCall: Action, vsRaise: Action, answer: Action = "call"): Agent {
@@ -167,11 +169,15 @@ describe("alternating turn order", () => {
     expect(seenB[0]!.myActionThisRound).toBeNull();
   });
 
-  it("simultaneous play is still the default", () => {
-    const log = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 5 });
-    expect(log.turnOrder).toBe("simultaneous");
-    expect(log.firstLeader).toBeNull();
-    expect(log.rounds.every((r) => r.leader === null && r.sequence.length === 2)).toBe(true);
+  it("alternating play is the default; simultaneous play is still reachable", () => {
+    const shipped = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 5 });
+    expect(shipped.turnOrder).toBe("alternating");
+    expect(shipped.firstLeader).not.toBeNull();
+
+    const classic = playMatch(PRESETS.Hammer, PRESETS.Bully, { seed: 5, ...CLASSIC_RULES });
+    expect(classic.turnOrder).toBe("simultaneous");
+    expect(classic.firstLeader).toBeNull();
+    expect(classic.rounds.every((r) => r.leader === null && r.sequence.length === 2)).toBe(true);
   });
 });
 

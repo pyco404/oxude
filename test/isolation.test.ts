@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLASSIC_STAKES, exactView, mulberry32, nextUint32, playMatch, PRESETS, type Agent, type View } from "../src/index.js";
+import { CLASSIC_RULES as CLASSIC, CLASSIC_STAKES, exactView, mulberry32, nextUint32, playMatch, PRESETS, type Agent, type View } from "../src/index.js";
 import { randomAgent } from "./helpers.js";
 
 const VIEW_KEYS = ["myActionThisRound", "myEdge", "myNet", "myRoundsWon", "oppActionThisRound", "oppRaiseCount", "oppRaisedLastRound", "oppRoundsWon", "roundNumber", "stakes"];
@@ -15,9 +15,7 @@ describe("agent isolation", () => {
           seen[seat].push(view);
           return inner(view);
         };
-      const log = playMatch(record("A", randomAgent(nextUint32(master))), record("B", PRESETS.Bully), {
-        seed: nextUint32(master),
-      });
+      const log = playMatch(record("A", randomAgent(nextUint32(master))), record("B", PRESETS.Bully), { ...CLASSIC, seed: nextUint32(master) });
 
       log.rounds.forEach((r, i) => {
         const va = seen.A[i]!;
@@ -46,7 +44,7 @@ describe("agent isolation", () => {
         captured ??= v;
         return "call";
       };
-      playMatch(spy, opp, { seed: 555 });
+      playMatch(spy, opp, { ...CLASSIC, seed: 555 });
       return captured;
     };
     expect(firstView(PRESETS.Mirage)).toEqual(firstView(PRESETS.Anchor));
@@ -62,7 +60,7 @@ describe("agent isolation", () => {
       }).toThrow(TypeError);
       return "call";
     };
-    const log = playMatch(vandal, PRESETS.Hammer, { seed: 9 });
+    const log = playMatch(vandal, PRESETS.Hammer, { ...CLASSIC, seed: 9 });
     expect(log.nets.A + log.nets.B).toBe(0);
   });
 

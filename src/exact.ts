@@ -1,12 +1,12 @@
 import {
   advanceState,
-  CLASSIC_STAKES,
   decideRound,
   dealOutcomes,
   winProbabilityA,
   freezeStakes,
   initialState,
   isMatchOver,
+  OXUDE_RULES,
   resolveActions,
   type MatchState,
   type Deal,
@@ -16,11 +16,11 @@ import {
 import type { Agent, Seat } from "./types.js";
 
 export type ExactOptions = {
-  /** Defaults to CLASSIC_STAKES. */
+  /** Defaults to OXUDE_RULES.stakes. */
   stakes?: Readonly<Stakes>;
-  /** Defaults to "simultaneous". */
+  /** Defaults to OXUDE_RULES.turnOrder. */
   turnOrder?: TurnOrder;
-  /** Defaults to "complementary". */
+  /** Defaults to OXUDE_RULES.deal. */
   deal?: Deal;
   /**
    * Alternating play only: fix who leads round 1 instead of the fair coin
@@ -38,8 +38,8 @@ export type ExactOptions = {
  * `makeStrategy` agent is.
  */
 export function expectedNet(agentA: Agent, agentB: Agent, options: ExactOptions = {}): number {
-  const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
-  const deal = options.deal ?? "complementary";
+  const stakes = freezeStakes(options.stakes ?? OXUDE_RULES.stakes);
+  const deal = options.deal ?? OXUDE_RULES.deal;
   const outcomes = dealOutcomes(deal);
   // Agents are pure functions of their view, and a view depends only on the
   // state and this round's draw, so each distinct state is evaluated once.
@@ -72,7 +72,7 @@ export function expectedNet(agentA: Agent, agentB: Agent, options: ExactOptions 
     memo.set(key, total);
     return total;
   };
-  if ((options.turnOrder ?? "simultaneous") === "simultaneous") return value(initialState(null));
+  if ((options.turnOrder ?? OXUDE_RULES.turnOrder) === "simultaneous") return value(initialState(null));
   if (options.firstLeader) return value(initialState(options.firstLeader));
   return (value(initialState("A")) + value(initialState("B"))) / 2;
 }

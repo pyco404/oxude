@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLASSIC_RULES as CLASSIC,
   ANTE,
   BASE_BET,
   EDGES,
@@ -22,7 +23,7 @@ function manyMatches(count: number, masterSeed: number): MatchLog[] {
     const pool = agentPool(nextUint32(master));
     const a = pool[k % pool.length]!;
     const b = pool[Math.floor(k / pool.length) % pool.length]!;
-    logs.push(playMatch(a, b, { seed: nextUint32(master) }));
+    logs.push(playMatch(a, b, { ...CLASSIC, seed: nextUint32(master) }));
   }
   return logs;
 }
@@ -70,14 +71,14 @@ describe("match length", () => {
   });
 
   it("a 2-0 sweep ends after round 2", () => {
-    const log = playMatch(constantAgent("call"), constantAgent("fold"), { seed: 1 });
+    const log = playMatch(constantAgent("call"), constantAgent("fold"), { ...CLASSIC, seed: 1 });
     expect(log.rounds).toHaveLength(2);
     expect(log.winner).toBe("A");
     expect(log.nets).toEqual({ A: 2 * ANTE, B: -2 * ANTE });
   });
 
   it("all-fold matches still stop after 3 rounds", () => {
-    const log = playMatch(constantAgent("fold"), constantAgent("fold"), { seed: 1 });
+    const log = playMatch(constantAgent("fold"), constantAgent("fold"), { ...CLASSIC, seed: 1 });
     expect(log.rounds).toHaveLength(MAX_ROUNDS);
     expect(log.winner).toBeNull();
     expect(log.endReason).toBe("max-rounds");
@@ -170,7 +171,7 @@ describe("round resolution", () => {
 
   it("a single fold costs exactly the ante, regardless of raises, and awards the round", () => {
     for (const opp of ["call", "raise"] as const) {
-      const log = playMatch(constantAgent("fold"), constantAgent(opp), { seed: 3 });
+      const log = playMatch(constantAgent("fold"), constantAgent(opp), { ...CLASSIC, seed: 3 });
       const r = log.rounds[0]!;
       expect(r.outcome).toBe("one-folded");
       expect(r.bet).toBe(ANTE);
@@ -213,7 +214,7 @@ describe("round resolution", () => {
       return "call" as const;
     };
     // B's view in round n must show the n-1 raises A made in earlier rounds, never the current one.
-    const log = playMatch(constantAgent("raise"), spy, { seed: 8 });
+    const log = playMatch(constantAgent("raise"), spy, { ...CLASSIC, seed: 8 });
     expect(views[0]).toBe(0);
     views.forEach((c, i) => expect(c).toBe(i));
     expect(log.rounds.map((r) => r.raiseCounts.A)).toEqual(views.map((_, i) => i + 1));
@@ -229,7 +230,7 @@ describe("round resolution", () => {
         seen.push(v.oppRaisedLastRound);
         return "call" as const;
       };
-      const log = playMatch(a, b, { seed });
+      const log = playMatch(a, b, { ...CLASSIC, seed });
       expect(seen).toEqual([false, true, false].slice(0, log.rounds.length));
     }
   });
@@ -240,13 +241,13 @@ describe("round resolution", () => {
     playMatch(a, (v) => {
       seen.push(v.oppRaisedLastRound);
       return "fold";
-    }, { seed: 4 });
+    }, { ...CLASSIC, seed: 4 });
     expect(seen).toEqual([false, true, false]);
   });
 
   it("rejects invalid actions from an agent", () => {
     const bad = (() => "allin") as unknown as () => "call";
-    expect(() => playMatch(bad, constantAgent("call"), { seed: 1 })).toThrow(/invalid action/);
+    expect(() => playMatch(bad, constantAgent("call"), { ...CLASSIC, seed: 1 })).toThrow(/invalid action/);
   });
 });
 
@@ -258,7 +259,7 @@ describe("log", () => {
   });
 
   it("round snapshots are not aliased to live engine state", () => {
-    const log = playMatch(PRESETS.Anchor, PRESETS.Hammer, { seed: 77 });
+    const log = playMatch(PRESETS.Anchor, PRESETS.Hammer, { ...CLASSIC, seed: 77 });
     const nets = log.rounds.map((r) => ({ ...r.nets }));
     expect(log.rounds.map((r) => r.nets)).toEqual(nets);
     expect(log.rounds[0]!.nets).not.toBe(log.nets);

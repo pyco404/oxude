@@ -1,11 +1,11 @@
 import { mulberry32 } from "./rng.js";
 import {
   advanceState,
-  CLASSIC_STAKES,
   decideRound,
   EDGES,
   freezeStakes,
   initialState,
+  OXUDE_RULES,
   isMatchOver,
   matchWinner,
   resolveActions,
@@ -20,11 +20,11 @@ import type { Agent, MatchLog, RoundLog, Seat } from "./types.js";
 export type MatchOptions = {
   seed: number;
   names?: { A: string; B: string };
-  /** Defaults to CLASSIC_STAKES (ante 10, base 10, raised 20). */
+  /** Defaults to OXUDE_RULES.stakes (ante 4, base 10, raised 20). */
   stakes?: Readonly<Stakes>;
-  /** Defaults to "simultaneous". */
+  /** Defaults to OXUDE_RULES.turnOrder ("alternating"). */
   turnOrder?: TurnOrder;
-  /** Defaults to "complementary". */
+  /** Defaults to OXUDE_RULES.deal ("independent"). */
   deal?: Deal;
 };
 
@@ -37,9 +37,9 @@ function drawEdge(rng: () => number): number {
 
 export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): MatchLog {
   const { seed } = options;
-  const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
-  const turnOrder = options.turnOrder ?? "simultaneous";
-  const deal = options.deal ?? "complementary";
+  const stakes = freezeStakes(options.stakes ?? OXUDE_RULES.stakes);
+  const turnOrder = options.turnOrder ?? OXUDE_RULES.turnOrder;
+  const deal = options.deal ?? OXUDE_RULES.deal;
   const rng = mulberry32(seed);
   // Alternating play draws the round-1 leader first; simultaneous play draws nothing extra.
   const firstLeader: Seat | null = turnOrder === "alternating" ? (rng() < 0.5 ? "A" : "B") : null;
