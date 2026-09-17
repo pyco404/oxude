@@ -6,8 +6,11 @@ import { renderTranscript } from "../transcript.js";
 import { PRESET_NAMES, type PresetName } from "../presets.js";
 import type { Db } from "../db/client.js";
 import { agents, matches } from "../db/schema.js";
+import { isFirstElicitationFree, recordElicitation, StakeError, statement } from "../db/ledger.js";
 import {
+  clampCeiling,
   createAgent,
+  setCeiling,
   snapshotPreset,
   leaderboard,
   ownerAgent,
@@ -80,6 +83,8 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents$/, postAgent],
     ["GET", /^\/agents\/([^/]+)$/, getAgent],
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
+    ["POST", /^\/agents\/([^/]+)\/ceiling$/, postCeiling],
+    ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
     ["GET", /^\/ladder$/, getLadder],
     ["GET", /^\/presets$/, getPresets],
@@ -93,8 +98,11 @@ export function createApp(options: AppOptions): Server {
     ownerId: string | null;
     /** Throws 401 unless the caller presented an owner id. */
     requireOwner: () => string;
-    /** Throws 429 when the caller has spent its allowance on model-touching endpoints. */
-    spend: () => void;
+    /**
+     * Charges a model call against the caller's allowance, unless this is the
+     * owner's first: nobody should have to spend one before seeing a transcript.
+     */
+    spend: (kind: "preview" | "rent") => Promise<boolean>;
     /** Throws 429 when the caller has played too many matches this minute. */
     spendPlay: () => void;
     refund: () => void;
@@ -112,8 +120,9 @@ export function createApp(options: AppOptions): Server {
     }
 
     let table: Policy | undefined;
+    let freeCall = false;
     if (!presetName) {
-      ctx.spend();
+      freeCall = await ctx.spend("rent");
       const result = await elicit({ brief });
       if (!result.table) {
         // The model could not be reached or answered unusably: no agent, no charge.
@@ -122,26 +131,29 @@ export function createApp(options: AppOptions): Server {
       table = validatePolicy(result.table);
     }
 
+    const ceiling = ctx.body["maxStake"];
     const row = await createAgent(db, {
       name,
       ownerId,
       ...(presetName ? { presetName } : {}),
       ...(brief ? { brief } : {}),
       ...(table ? { policyTable: table } : {}),
+      ...(typeof ceiling === "number" ? { maxStake: clampCeiling(ceiling) } : {}),
     });
     await refreshTrueRatings(db);
+    const view = await publicAgent(db, row.id);
     const [fresh] = await db.select().from(agents).where(eq(agents.id, row.id)).limit(1);
     return {
       agent: {
+        ...view,
         id: fresh!.id,
-        name: fresh!.name,
-        presetName: fresh!.presetName,
         brief: fresh!.brief,
         ownerId: fresh!.ownerId,
         createdAt: fresh!.createdAt,
         trueRating: fresh!.trueRating,
         trueRatingBasis: "against the roster as it stands today",
       },
+      elicitation: presetName ? null : { free: freeCall },
     };
   }
 
@@ -174,15 +186,59 @@ export function createApp(options: AppOptions): Server {
     if (row.retiredAt !== null) throw new HttpError(409, "that agent is retired");
     ctx.spendPlay();
 
-    const pick = await pickOpponent(db, id);
-    const { match, log } = await runMatch(db, id, pick.opponentId);
+    let pick;
+    let played;
+    try {
+      pick = await pickOpponent(db, id);
+      played = await runMatch(db, id, pick.opponentId);
+    } catch (error) {
+      // Cannot cover a stake, or the opponent pool is empty: not a server fault.
+      if (error instanceof StakeError) throw new HttpError(409, error.message);
+      if (error instanceof Error && /no preset agent available/.test(error.message)) {
+        throw new HttpError(409, "no opponent could cover a stake right now");
+      }
+      throw error;
+    }
+    const { match, log, stake, settled, retired } = played;
     const [opponent] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, pick.opponentId)).limit(1);
+    const after = await publicAgent(db, id);
     return {
       matchId: match.id,
       opponent: { id: pick.opponentId, name: opponent?.name },
       matchmaking: { path: pick.path, candidates: pick.candidates, ratingGap: pick.ratingGap },
-      result: { winner: log.winner, net: log.nets.A, opponentNet: log.nets.B, rounds: log.rounds.length },
+      stake,
+      result: {
+        winner: log.winner,
+        net: settled.A,
+        opponentNet: settled.B,
+        rounds: log.rounds.length,
+        /** What the play was worth before the stake capped it. */
+        uncappedNet: log.nets.A,
+      },
+      balance: after?.balance ?? 0,
+      retired: retired.includes(id),
     };
+  }
+
+  async function postCeiling(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    const value = ctx.body["maxStake"];
+    if (typeof value !== "number" || !Number.isFinite(value)) throw new HttpError(400, "maxStake must be a number");
+    try {
+      return { maxStake: await setCeiling(db, id, ownerId, value) };
+    } catch (error) {
+      if (error instanceof Error && /another owner/.test(error.message)) throw new HttpError(403, error.message);
+      throw error;
+    }
+  }
+
+  /** An agent's money, movement by movement. Public: the ladder shows balances anyway. */
+  async function getLedger(ctx: Ctx) {
+    const id = requireUuid(ctx.params[0]);
+    const row = await publicAgent(db, id);
+    if (!row) throw new HttpError(404, "no such agent");
+    return { balance: row.balance, maxStake: row.maxStake, retired: row.retired, movements: await statement(db, id) };
   }
 
   async function getMatch(ctx: Ctx) {
@@ -236,16 +292,17 @@ export function createApp(options: AppOptions): Server {
     if (!brief && !supplied) throw new HttpError(400, "brief or policyTable is required");
 
     let table: Policy;
+    let freeCall = false;
     if (supplied) {
       table = validatePolicy(supplied);
     } else {
-      ctx.spend();
+      freeCall = await ctx.spend("preview");
       const result = await elicit({ brief });
       if (!result.table) throw new HttpError(503, "could not elicit a table for that brief", { reason: result.reason });
       table = validatePolicy(result.table);
     }
     const preview = previewPolicy(table, await rosterProfile(db));
-    return { preview, policyTable: table };
+    return { preview, policyTable: table, elicitation: supplied ? null : { free: freeCall } };
   }
 
   function requireUuid(value: string | undefined): string {
@@ -308,14 +365,20 @@ export function createApp(options: AppOptions): Server {
         if (!ownerId) throw new HttpError(401, "x-owner-id header required");
         return ownerId;
       },
-      spend: () => {
-        const result = limiter.take(limitKey);
-        spent = true;
-        if (!result.ok) {
-          throw new HttpError(429, "rate limit reached for model-backed requests", {
-            retryAfterSeconds: result.retryAfterSeconds,
-          });
+      spend: async (kind) => {
+        // The owner's first model call is on the house.
+        const free = ownerId ? await isFirstElicitationFree(db, ownerId) : false;
+        if (!free) {
+          const result = limiter.take(limitKey);
+          spent = true;
+          if (!result.ok) {
+            throw new HttpError(429, "rate limit reached for model-backed requests", {
+              retryAfterSeconds: result.retryAfterSeconds,
+            });
+          }
         }
+        if (ownerId) await recordElicitation(db, { ownerId, kind, free });
+        return free;
       },
       spendPlay: () => {
         const result = playLimiter.take(limitKey);

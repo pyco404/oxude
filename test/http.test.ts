@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { listen, type Elicit } from "../src/http/server.js";
 import { createAgent, snapshotPreset } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { PRESET_NAMES } from "../src/index.js";
+import { MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
+import { balanceOf } from "../src/db/ledger.js";
 
 // Over real HTTP: the tests start a server and use fetch, so routing, headers,
 // status codes and JSON parsing are all exercised.
@@ -196,7 +199,8 @@ describe("POST /preview", () => {
   it("rate limits the model-backed path per owner, and says when to retry", async () => {
     const owner = "dddddddd-4444-4444-8444-dddddddddddd";
     const attempt = () => api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: "aggressive" }) });
-    for (let i = 0; i < 3; i++) expect((await attempt()).status).toBe(201);
+    // One free call for a new owner, then the allowance of three.
+    for (let i = 0; i < 4; i++) expect((await attempt()).status).toBe(201);
 
     const limited = await attempt();
     expect(limited.status).toBe(429);
@@ -270,5 +274,90 @@ describe("CORS", () => {
     expect(get.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
     // retry-after must be readable by the browser for the rate-limit message to work.
     expect(get.headers.get("access-control-expose-headers")).toContain("retry-after");
+  });
+});
+
+describe("staking over HTTP", () => {
+  const owner = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f";
+
+  it("seeds a balance on renting and reports it with the ceiling", async () => {
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Banked", presetName: "Anchor", maxStake: 25 }) }),
+    );
+    expect(created.agent.balance).toBe(STARTING_BALANCE);
+    expect(created.agent.maxStake).toBe(25);
+    expect(created.agent.retired).toBe(false);
+
+    const seen = await readBody(await api(`/agents/${created.agent.id}`, { owner: OTHER }));
+    expect(seen.agent.balance).toBe(STARTING_BALANCE);
+    expect(seen.agent.maxStake).toBe(25);
+  });
+
+  it("stakes a match, settles it against balances, and reports both", async () => {
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Stakes", presetName: "Bully" }) }),
+    );
+    const played = await readBody(await api(`/agents/${created.agent.id}/play`, { method: "POST", owner }));
+    expect(played.stake).toBeGreaterThanOrEqual(MIN_STAKE);
+    expect(played.stake).toBeLessThanOrEqual(MAX_EXPOSURE);
+    expect(Math.abs(played.result.net)).toBeLessThanOrEqual(played.stake);
+    expect(played.balance).toBe(STARTING_BALANCE + played.result.net);
+    expect(played.balance).toBe(await balanceOf(db, created.agent.id));
+
+    const ledgerView = await readBody(await api(`/agents/${created.agent.id}/ledger`, { owner: null }));
+    expect(ledgerView.movements[ledgerView.movements.length - 1].reason).toBe("rental-seed");
+    expect(ledgerView.balance).toBe(played.balance);
+  });
+
+  it("lets the owner change the ceiling, and refuses anyone else", async () => {
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Ceilinged", presetName: "Hammer" }) }),
+    );
+    const set = await readBody(
+      await api(`/agents/${created.agent.id}/ceiling`, { method: "POST", owner, body: JSON.stringify({ maxStake: 1000 }) }),
+    );
+    expect(set.maxStake).toBe(MAX_EXPOSURE); // clamped
+
+    const theirs = await api(`/agents/${created.agent.id}/ceiling`, {
+      method: "POST",
+      owner: OTHER,
+      body: JSON.stringify({ maxStake: 10 }),
+    });
+    expect(theirs.status).toBe(403);
+
+    const bad = await api(`/agents/${created.agent.id}/ceiling`, { method: "POST", owner, body: JSON.stringify({}) });
+    expect(bad.status).toBe(400);
+  });
+
+  it("refuses to play an agent that cannot cover a stake", async () => {
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Skint", presetName: "Mirage" }) }),
+    );
+    // Drain it to below the minimum stake.
+    await db.execute(
+      sql`insert into ledger (agent_id, amount, reason) values (${created.agent.id}::uuid, ${-(STARTING_BALANCE - 2)}, 'adjustment')`,
+    );
+    const res = await api(`/agents/${created.agent.id}/play`, { method: "POST", owner });
+    expect(res.status).toBe(409);
+    expect((await readBody(res)).error).toMatch(/cannot cover a stake/);
+  });
+});
+
+describe("first elicitation", () => {
+  it("is free for a new owner and charged after that", async () => {
+    const owner = "1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a";
+    const first = await readBody(await api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: "play tight" }) }));
+    expect(first.elicitation.free).toBe(true);
+
+    const second = await readBody(await api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: "play loose" }) }));
+    expect(second.elicitation.free).toBe(false);
+
+    // The free one did not consume the allowance: three charged calls still fit.
+    for (let i = 0; i < 2; i++) {
+      const res = await api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: `variation ${i}` }) });
+      expect(res.status).toBe(201);
+    }
+    const limited = await api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: "one too many" }) });
+    expect(limited.status).toBe(429);
   });
 });
