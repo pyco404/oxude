@@ -1,4 +1,5 @@
 import { mulberry32, nextUint32, PRESET_NAMES } from "../src/index.js";
+import { nameFactory } from "./names.js";
 import { connect, migrate } from "../src/db/client.js";
 import { createAgent, leaderboard, runMatch, updateRating } from "../src/db/runner.js";
 import { refreshTrueRatings, rosterProfile, trueRatingAgainst } from "../src/db/rating.js";
@@ -14,10 +15,7 @@ const AGENTS = arg("--agents", 200);
 const MATCHES = arg("--matches", 5000);
 const rng = mulberry32(arg("--seed", 1));
 
-const FIRST = ["Quiet", "Iron", "Amber", "Swift", "Hollow", "Bright", "Salt", "Copper", "Grey", "Rapid", "Still", "North"];
-const SECOND = ["Fox", "Anvil", "Harbor", "Lantern", "Falcon", "Ledger", "Crow", "Mint", "Spire", "Drift", "Ash", "Vale"];
-const name = (i: number) =>
-  `${FIRST[Math.floor(rng() * FIRST.length)]}${SECOND[Math.floor(rng() * SECOND.length)]}-${String(i).padStart(3, "0")}`;
+const nextName = nameFactory(rng);
 
 const { db, close } = await connect();
 if (process.argv.includes("--migrate")) await migrate(db);
@@ -26,7 +24,7 @@ const started = Date.now();
 const rows = [];
 for (let i = 0; i < AGENTS; i++) {
   // Equal numbers of each preset, each carrying its own snapshotted table.
-  rows.push(await createAgent(db, { name: name(i), presetName: PRESET_NAMES[i % PRESET_NAMES.length]! }));
+  rows.push(await createAgent(db, { name: nextName(), presetName: PRESET_NAMES[i % PRESET_NAMES.length]! }));
 }
 console.log(`true ratings: ${await refreshTrueRatings(db)} agents rated against the roster`);
 console.log(`${rows.length} agents created (${PRESET_NAMES.join(", ")} in equal numbers)`);
