@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import {
   advanceState,
+  dealOutcomes,
   decideRound,
-  EDGES,
   expectedNet,
   freezeStakes,
   initialState,
@@ -18,7 +18,9 @@ import {
   type Seat,
   type Stakes,
   type StrategyParams,
+  type Deal,
   type TurnOrder,
+  winProbabilityA,
 } from "../src/index.js";
 import { analyse, fmt, NAMES, TIE } from "./analysis.js";
 
@@ -30,6 +32,7 @@ if (!file) throw new Error("usage: inspect <sets.json> [--index n]");
 const idxFlag = process.argv.indexOf("--index");
 const saved = JSON.parse(readFileSync(file, "utf8")) as {
   turns: TurnOrder;
+  deal?: Deal;
   ante: number;
   range: number;
   base: number;
@@ -38,6 +41,7 @@ const saved = JSON.parse(readFileSync(file, "utf8")) as {
 };
 const set = saved.sets[idxFlag >= 0 ? Number(process.argv[idxFlag + 1]) : 0]!;
 const turnOrder = saved.turns;
+const deal: Deal = saved.deal ?? "complementary";
 const stakesAt = (ante: number): Stakes => ({ ante, baseBet: saved.base, raisedBet: saved.raise });
 const stakes = stakesAt(saved.ante);
 const presets = Object.fromEntries(PRESET_NAMES.map((n) => [n, makeStrategy(set.presets[n])])) as Record<PresetName, Agent>;
@@ -48,11 +52,12 @@ type Tally = {
   rounds: number;
   bluffs: number; // raises made while holding the weaker edge (< 0.5), not as an answer
   bluffFolds: number; // ... that the opponent folded to in the same round
+  bluffFoldsWhileAhead: number; // ... where the folder held the higher edge
   bluffFoldWinnings: number; // what those folds paid the bluffer
   bluffCalledEV: number; // expected result of bluffs that were not folded to
   leaderTransfer: number; // expected money moved to the round's leader
 };
-const zero = (): Tally => ({ rounds: 0, bluffs: 0, bluffFolds: 0, bluffFoldWinnings: 0, bluffCalledEV: 0, leaderTransfer: 0 });
+const zero = (): Tally => ({ rounds: 0, bluffs: 0, bluffFolds: 0, bluffFoldsWhileAhead: 0, bluffFoldWinnings: 0, bluffCalledEV: 0, leaderTransfer: 0 });
 
 /** Probability-weighted event counts for `bluffer` (seat A) against B. */
 function walk(a: Agent, b: Agent, s: Stakes, firstLeader: Seat | null, maxRounds = Infinity): Tally {
@@ -60,21 +65,23 @@ function walk(a: Agent, b: Agent, s: Stakes, firstLeader: Seat | null, maxRounds
   const t = zero();
   const go = (state: MatchState, prob: number) => {
     if (isMatchOver(state) || state.roundNumber > maxRounds) return;
-    for (const edgeA of EDGES) {
-      const p = prob / EDGES.length;
-      const { edgeB, actions, sequence } = decideRound(a, b, state, edgeA, frozen);
+    for (const outcome of dealOutcomes(deal)) {
+      const p = prob * outcome.p;
+      const edges = { A: outcome.A, B: outcome.B };
+      const { actions, sequence } = decideRound(a, b, state, edges, frozen);
       const res = resolveActions(actions, frozen);
+      const pWin = winProbabilityA(edges, deal);
       t.rounds += p;
-      const edges = { A: edgeA, B: edgeB };
       // A's bluff: a raise by A with the weaker edge that is not an answer to B's raise.
       const bluffIdx = sequence.findIndex((x, i) => x.seat === "A" && x.action === "raise" && sequence[i - 1]?.action !== "raise");
-      const isBluff = bluffIdx >= 0 && edges.A < 0.5;
+      const isBluff = bluffIdx >= 0 && edges.A < 0.5; // raising while more likely to lose than win
       const leader = state.nextLeader;
       const branch = (winner: Seat | null, bet: number, q: number) => {
         const toA = winner === "A" ? bet : winner === "B" ? -bet : 0;
         if (isBluff) {
           if (res.outcome === "one-folded" && winner === "A") {
             t.bluffFolds += p * q;
+            if (edges.B > edges.A) t.bluffFoldsWhileAhead += p * q;
             t.bluffFoldWinnings += p * q * toA;
           } else t.bluffCalledEV += p * q * toA;
         }
@@ -85,8 +92,8 @@ function walk(a: Agent, b: Agent, s: Stakes, firstLeader: Seat | null, maxRounds
       if (res.outcome === "both-folded") branch(null, 0, 1);
       else if (res.outcome === "one-folded") branch(res.winner, res.bet, 1);
       else {
-        branch("A", res.bet, edgeA);
-        branch("B", res.bet, 1 - edgeA);
+        branch("A", res.bet, pWin);
+        branch("B", res.bet, 1 - pWin);
       }
     }
   };
@@ -101,12 +108,14 @@ function walk(a: Agent, b: Agent, s: Stakes, firstLeader: Seat | null, maxRounds
   return t;
 }
 
-console.log(`Turn order ${turnOrder}, stakes ante ${stakes.ante} / base ${stakes.baseBet} / raise ${stakes.raisedBet}`);
+console.log(`Turn order ${turnOrder}, deal ${deal}, stakes ante ${stakes.ante} / base ${stakes.baseBet} / raise ${stakes.raisedBet}`);
 for (const n of PRESET_NAMES) console.log(`  ${pad(n, 8)} ${JSON.stringify(set.presets[n])}  ${set.codes[n]}`);
 
 // ---- 1. Bluffs ----
-console.log("\n1. Bluffs (raises with the weaker edge), per match, exact:");
-console.log(`${pad("bluffer", 10)}${pad("vs", 10)}${pad("bluffs", 9)}${pad("folded", 9)}${pad("fold %", 9)}${pad("won/fold", 10)}${pad("EV called", 11)}`);
+console.log("\n1. Bluffs (raises with an edge below 0.5, not answering a raise), per match, exact:");
+console.log("   folded = opponent folded in the same round; ahead % = share of those folds where the folder held the higher edge;");
+console.log("   won/fold = what a fold paid the bluffer; EV called = average result of bluffs that were not folded to.");
+console.log(`${pad("bluffer", 10)}${pad("vs", 10)}${pad("bluffs", 9)}${pad("folded", 9)}${pad("fold %", 9)}${pad("ahead %", 9)}${pad("won/fold", 10)}${pad("EV called", 11)}`);
 const bluffers: PresetName[] = [];
 for (const x of PRESET_NAMES) {
   for (const y of PRESET_NAMES) {
@@ -118,6 +127,7 @@ for (const x of PRESET_NAMES) {
     console.log(
       pad(x, 10) + pad(y, 10) + pad(t.bluffs.toFixed(3), 9) + pad(t.bluffFolds.toFixed(3), 9) +
         pad(((100 * t.bluffFolds) / t.bluffs).toFixed(1) + "%", 9) +
+        pad(t.bluffFolds > 0 ? ((100 * t.bluffFoldsWhileAhead) / t.bluffFolds).toFixed(0) + "%" : "-", 9) +
         pad(t.bluffFolds > 0 ? (t.bluffFoldWinnings / t.bluffFolds).toFixed(2) : "-", 10) +
         pad(called > 0 ? (t.bluffCalledEV / called).toFixed(2) : "-", 11),
     );
@@ -127,7 +137,7 @@ for (const x of PRESET_NAMES) {
 for (const x of bluffers) {
   const honest = makeStrategy({ ...set.presets[x], bluffAtOrBelow: null });
   const field = (agent: Agent) =>
-    PRESET_NAMES.filter((y) => y !== x).reduce((acc, y) => acc + seatAveragedNet(agent, presets[y], { stakes, turnOrder }), 0) / 3;
+    PRESET_NAMES.filter((y) => y !== x).reduce((acc, y) => acc + seatAveragedNet(agent, presets[y], { stakes, turnOrder, deal }), 0) / 3;
   const withBluff = field(presets[x]);
   const without = field(honest);
   console.log(`  ${x}: avg vs other presets ${fmt(withBluff)} with bluffs, ${fmt(without)} with bluffAtOrBelow off -> bluffing is worth ${fmt(withBluff - without)} per match`);
@@ -142,8 +152,8 @@ if (turnOrder === "alternating") {
     const one = walk(presets[n], presets[n], stakes, "A", 1);
     const full = walk(presets[n], presets[n], stakes, "A");
     // Seat-A-leads-first full match, and the fair-coin match the engine plays.
-    const fixed = expectedNet(presets[n], presets[n], { stakes, turnOrder, firstLeader: "A" });
-    const coin = expectedNet(presets[n], presets[n], { stakes, turnOrder });
+    const fixed = expectedNet(presets[n], presets[n], { stakes, turnOrder, deal, firstLeader: "A" });
+    const coin = expectedNet(presets[n], presets[n], { stakes, turnOrder, deal });
     console.log(
       pad(n, 10) + pad(fmt(one.leaderTransfer), 10) + pad(fmt(full.leaderTransfer / full.rounds), 11) + pad(fmt(fixed), 13) + pad(fmt(coin), 12),
     );
@@ -154,8 +164,8 @@ if (turnOrder === "alternating") {
   console.log(pad("row vs col") + PRESET_NAMES.map((n) => pad(n)).join(""));
   for (const x of PRESET_NAMES) {
     const cells = PRESET_NAMES.map((y) => {
-      const lead = expectedNet(presets[x], presets[y], { stakes, turnOrder, firstLeader: "A" });
-      const follow = expectedNet(presets[x], presets[y], { stakes, turnOrder, firstLeader: "B" });
+      const lead = expectedNet(presets[x], presets[y], { stakes, turnOrder, deal, firstLeader: "A" });
+      const follow = expectedNet(presets[x], presets[y], { stakes, turnOrder, deal, firstLeader: "B" });
       return pad(fmt((lead - follow) / 2));
     });
     console.log(pad(x) + cells.join(""));
@@ -163,7 +173,7 @@ if (turnOrder === "alternating") {
 }
 
 // ---- 3. Matrix, probes, baselines, sweep ----
-const a = analyse(stakes, presets, turnOrder);
+const a = analyse(stakes, presets, turnOrder, deal);
 console.log(`\n3. Exact matrix at ante ${stakes.ante} (row vs column, both seatings):`);
 console.log(pad("row vs col") + PRESET_NAMES.map((n) => pad(n)).join("") + pad("vs presets"));
 const always = (act: Action): Agent => () => act;
@@ -171,7 +181,7 @@ const rows: [string, number[]][] = [
   ...a.matrix.map((r, i): [string, number[]] => [NAMES[i]!, r]),
   ...(["fold", "call"] as const).map((act): [string, number[]] => [
     act === "fold" ? "AlwaysFold" : "AlwaysCall",
-    PRESET_NAMES.map((n) => seatAveragedNet(always(act), presets[n], { stakes, turnOrder })),
+    PRESET_NAMES.map((n) => seatAveragedNet(always(act), presets[n], { stakes, turnOrder, deal })),
   ]),
 ];
 rows.forEach(([name, r], i) => {
@@ -185,7 +195,7 @@ console.log(`\nAnte sweep ${saved.ante - saved.range}..${saved.ante + saved.rang
 console.log(`${pad("ante", 6)}  result  ${pad("AlwaysRaise", 12)}${pad("probe .3", 10)}${pad("probe .5", 10)}${pad("spread", 8)}  weakest loop link`);
 for (let k = 0; k <= Math.round(saved.range * 20); k++) {
   const ante = Math.round((saved.ante - saved.range + k * 0.1) * 100) / 100;
-  const r = analyse(stakesAt(ante), presets, turnOrder);
+  const r = analyse(stakesAt(ante), presets, turnOrder, deal);
   const ok = r.checks.every((c) => c.ok);
   const f = r.field.slice(PRESET_NAMES.length);
   const weakest = r.loop.reduce((w, x) => (x.margin < w.margin ? x : w));

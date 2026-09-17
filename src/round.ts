@@ -90,7 +90,37 @@ export function complementEdge(edge: number): number {
   return Math.round((1 - edge) * 100) / 100;
 }
 
-type Decision = { edgeB: number; actions: PerSeat<Action>; sequence: { seat: Seat; action: Action }[] };
+/**
+ * How edges are dealt each round.
+ * "complementary" (classic): A draws an edge, B's is 1 - A's, and the flip
+ *   uses A's edge. Each agent can infer the other's edge exactly.
+ * "independent": each agent draws its own edge from EDGES; A wins the flip
+ *   with probability 0.5 + edgeA - edgeB (0.1..0.9). Averaged over the
+ *   opponent's unknown draw, an agent's chance of winning is its own edge.
+ */
+export type Deal = "complementary" | "independent";
+
+export type EdgePair = { A: number; B: number };
+
+/** Every edge pair a deal can produce, with its probability. */
+export function dealOutcomes(deal: Deal): readonly (EdgePair & { p: number })[] {
+  return deal === "complementary" ? COMPLEMENTARY_OUTCOMES : INDEPENDENT_OUTCOMES;
+}
+const COMPLEMENTARY_OUTCOMES = Object.freeze(
+  EDGES.map((A) => Object.freeze({ A, B: complementEdge(A), p: 1 / EDGES.length })),
+);
+const INDEPENDENT_OUTCOMES = Object.freeze(
+  EDGES.flatMap((A) => EDGES.map((B) => Object.freeze({ A, B, p: 1 / EDGES.length ** 2 }))),
+);
+
+/** Probability that A wins the flip. Computed in whole percent so values are exact 2dp doubles. */
+export function winProbabilityA(edges: EdgePair, deal: Deal): number {
+  if (deal === "complementary") return edges.A;
+  const pct = (e: number) => Math.round(e * 100);
+  return (50 + pct(edges.A) - pct(edges.B)) / 100;
+}
+
+type Decision = { actions: PerSeat<Action>; sequence: { seat: Seat; action: Action }[] };
 
 function viewFor(
   seat: Seat,
@@ -126,11 +156,9 @@ export function decideRound(
   agentA: Agent,
   agentB: Agent,
   state: MatchState,
-  edgeA: number,
+  edges: EdgePair,
   stakes: Readonly<Stakes>,
 ): Decision {
-  const edgeB = complementEdge(edgeA);
-  const edges = { A: edgeA, B: edgeB };
   const agents = { A: agentA, B: agentB };
   const ask = (seat: Seat, mine: Action | null, opp: Action | null) =>
     checkAction(agents[seat](viewFor(seat, state, edges[seat], stakes, mine, opp)), seat);
@@ -138,7 +166,7 @@ export function decideRound(
   const leader = state.nextLeader;
   if (leader === null) {
     const actions = { A: ask("A", null, null), B: ask("B", null, null) };
-    return { edgeB, actions, sequence: [{ seat: "A", action: actions.A }, { seat: "B", action: actions.B }] };
+    return { actions, sequence: [{ seat: "A", action: actions.A }, { seat: "B", action: actions.B }] };
   }
 
   const responder = other(leader);
@@ -146,7 +174,7 @@ export function decideRound(
   const sequence: Decision["sequence"] = [{ seat: leader, action: first }];
   if (first === "fold") {
     // The responder never acts; recorded as a call so resolution awards it the ante.
-    return { edgeB, actions: seatActions(leader, "fold", "call"), sequence };
+    return { actions: seatActions(leader, "fold", "call"), sequence };
   }
   const reply = ask(responder, null, first);
   const second: Action = first === "raise" && reply === "raise" ? "call" : reply; // one raise per round
@@ -154,9 +182,9 @@ export function decideRound(
   if (first === "call" && second === "raise") {
     const answer: Action = ask(leader, first, second) === "fold" ? "fold" : "call"; // no re-raise
     sequence.push({ seat: leader, action: answer });
-    return { edgeB, actions: seatActions(leader, answer, "raise"), sequence };
+    return { actions: seatActions(leader, answer, "raise"), sequence };
   }
-  return { edgeB, actions: seatActions(leader, first, second), sequence };
+  return { actions: seatActions(leader, first, second), sequence };
 }
 
 function seatActions(leader: Seat, leaderAction: Action, responderAction: Action): PerSeat<Action> {

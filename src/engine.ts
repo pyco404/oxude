@@ -9,6 +9,9 @@ import {
   isMatchOver,
   matchWinner,
   resolveActions,
+  winProbabilityA,
+  complementEdge,
+  type Deal,
   type Stakes,
   type TurnOrder,
 } from "./round.js";
@@ -21,12 +24,22 @@ export type MatchOptions = {
   stakes?: Readonly<Stakes>;
   /** Defaults to "simultaneous". */
   turnOrder?: TurnOrder;
+  /** Defaults to "complementary". */
+  deal?: Deal;
 };
+
+function drawEdge(rng: () => number): number {
+  const index = Math.floor(rng() * EDGES.length);
+  const edge = EDGES[index];
+  if (edge === undefined) throw new Error(`edge index out of range: ${index}`);
+  return edge;
+}
 
 export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): MatchLog {
   const { seed } = options;
   const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
   const turnOrder = options.turnOrder ?? "simultaneous";
+  const deal = options.deal ?? "complementary";
   const rng = mulberry32(seed);
   // Alternating play draws the round-1 leader first; simultaneous play draws nothing extra.
   const firstLeader: Seat | null = turnOrder === "alternating" ? (rng() < 0.5 ? "A" : "B") : null;
@@ -34,13 +47,14 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
   let state = initialState(firstLeader);
 
   while (!isMatchOver(state)) {
-    // RNG draw order is fixed: edge first, then (only if needed) the flip.
-    const edgeIndex = Math.floor(rng() * EDGES.length);
-    const edgeA = EDGES[edgeIndex];
-    if (edgeA === undefined) throw new Error(`edge index out of range: ${edgeIndex}`);
+    // RNG draw order is fixed: A's edge, then B's (independent deal only), then (only if needed) the flip.
+    const edgeA = drawEdge(rng);
+    const edgeB = deal === "independent" ? drawEdge(rng) : complementEdge(edgeA);
+    const edges = { A: edgeA, B: edgeB };
+    const pWin = winProbabilityA(edges, deal);
 
     const leader = state.nextLeader;
-    const { edgeB, actions, sequence } = decideRound(agentA, agentB, state, edgeA, stakes);
+    const { actions, sequence } = decideRound(agentA, agentB, state, edges, stakes);
     const resolution = resolveActions(actions, stakes);
 
     let winner: Seat | null = null;
@@ -50,9 +64,9 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
       ({ winner, bet } = resolution);
     } else if (resolution.outcome === "flipped") {
       const roll = rng();
-      winner = roll < edgeA ? "A" : "B";
+      winner = roll < pWin ? "A" : "B";
       bet = resolution.bet;
-      flip = { probabilityAWins: edgeA, roll, winner };
+      flip = { probabilityAWins: pWin, roll, winner };
     }
 
     const roundNumber = state.roundNumber;
@@ -61,7 +75,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
       roundNumber,
       leader,
       sequence,
-      edges: { A: edgeA, B: edgeB },
+      edges,
       actions,
       outcome: resolution.outcome,
       bet,
@@ -78,6 +92,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
     seed,
     stakes: { ...stakes },
     turnOrder,
+    deal,
     firstLeader,
     names: options.names ?? { A: "A", B: "B" },
     rounds,

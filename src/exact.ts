@@ -2,12 +2,14 @@ import {
   advanceState,
   CLASSIC_STAKES,
   decideRound,
-  EDGES,
+  dealOutcomes,
+  winProbabilityA,
   freezeStakes,
   initialState,
   isMatchOver,
   resolveActions,
   type MatchState,
+  type Deal,
   type Stakes,
   type TurnOrder,
 } from "./round.js";
@@ -18,6 +20,8 @@ export type ExactOptions = {
   stakes?: Readonly<Stakes>;
   /** Defaults to "simultaneous". */
   turnOrder?: TurnOrder;
+  /** Defaults to "complementary". */
+  deal?: Deal;
   /**
    * Alternating play only: fix who leads round 1 instead of the fair coin
    * the simulator uses. For measuring the value of position.
@@ -35,11 +39,20 @@ export type ExactOptions = {
  */
 export function expectedNet(agentA: Agent, agentB: Agent, options: ExactOptions = {}): number {
   const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
+  const deal = options.deal ?? "complementary";
+  const outcomes = dealOutcomes(deal);
+  // Agents are pure functions of their view, and a view depends only on the
+  // state and this round's draw, so each distinct state is evaluated once.
+  const memo = new Map<string, number>();
   const value = (state: MatchState): number => {
     if (isMatchOver(state)) return 0;
+    const key = stateKey(state);
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
     let total = 0;
-    for (const edgeA of EDGES) {
-      const { actions } = decideRound(agentA, agentB, state, edgeA, stakes);
+    for (const outcome of outcomes) {
+      const edges = { A: outcome.A, B: outcome.B };
+      const { actions } = decideRound(agentA, agentB, state, edges, stakes);
       const resolution = resolveActions(actions, stakes);
       let ev: number;
       if (resolution.outcome === "both-folded") {
@@ -51,15 +64,32 @@ export function expectedNet(agentA: Agent, agentB: Agent, options: ExactOptions 
         const { bet } = resolution;
         const aWins = bet + value(advanceState(state, actions, "A", bet));
         const bWins = -bet + value(advanceState(state, actions, "B", bet));
-        ev = edgeA * aWins + (1 - edgeA) * bWins;
+        const pWin = winProbabilityA(edges, deal);
+        ev = pWin * aWins + (1 - pWin) * bWins;
       }
-      total += ev;
+      total += outcome.p * ev;
     }
-    return total / EDGES.length;
+    memo.set(key, total);
+    return total;
   };
   if ((options.turnOrder ?? "simultaneous") === "simultaneous") return value(initialState(null));
   if (options.firstLeader) return value(initialState(options.firstLeader));
   return (value(initialState("A")) + value(initialState("B"))) / 2;
+}
+
+function stateKey(s: MatchState): string {
+  return [
+    s.roundNumber,
+    s.nets.A,
+    s.nets.B,
+    s.roundsWon.A,
+    s.roundsWon.B,
+    s.raiseCounts.A,
+    s.raiseCounts.B,
+    +s.raisedLastRound.A,
+    +s.raisedLastRound.B,
+    s.nextLeader ?? "-",
+  ].join(",");
 }
 
 /** Exact expected net of `agent` against `opponent`, averaged over both seatings. */

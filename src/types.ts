@@ -1,4 +1,4 @@
-import type { Stakes, TurnOrder } from "./round.js";
+import type { Deal, Stakes, TurnOrder } from "./round.js";
 export type Action = "fold" | "call" | "raise";
 
 export type Seat = "A" | "B";
@@ -42,7 +42,7 @@ export type RoundOutcome =
   | "flipped";
 
 export type FlipLog = {
-  /** Probability that A wins; equal to A's edge. */
+  /** Probability that A wins: A's edge (complementary deal) or 0.5 + edgeA - edgeB (independent). */
   probabilityAWins: number;
   /** PRNG draw in [0, 1). A wins when roll < probabilityAWins. */
   roll: number;
@@ -81,6 +81,7 @@ export type MatchLog = {
   seed: number;
   stakes: Stakes;
   turnOrder: TurnOrder;
+  deal: Deal;
   /** Turn-based: who led round 1 (then leadership alternates). Null in simultaneous play. */
   firstLeader: Seat | null;
   names: { A: string; B: string };

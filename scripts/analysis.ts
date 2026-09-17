@@ -7,6 +7,7 @@ import {
   type Agent,
   type PresetName,
   type Stakes,
+  type Deal,
   type TurnOrder,
 } from "../src/index.js";
 
@@ -62,9 +63,10 @@ export function analyse(
   stakes: Stakes = CLASSIC_STAKES,
   presets: Record<PresetName, Agent> = PRESETS,
   turnOrder: TurnOrder = "simultaneous",
+  deal: Deal = "complementary",
 ): Analysis {
   const matrix = agentsFor(presets).map(([, a]) =>
-    PRESET_NAMES.map((n) => seatAveragedNet(a, presets[n], { stakes, turnOrder })),
+    PRESET_NAMES.map((n) => seatAveragedNet(a, presets[n], { stakes, turnOrder, deal })),
   );
   const field = matrix.map((row) => ({
     avg: row.reduce((s, x) => s + x, 0) / P,
