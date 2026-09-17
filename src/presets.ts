@@ -10,15 +10,15 @@ export type StrategyParams = {
   raiseAtOrAbove: number;
   /** Bluff-raise when myEdge <= bluffAtOrBelow; null disables bluffing. */
   bluffAtOrBelow: number | null;
-  /** Fold (with a weak edge) once the opponent has raised this many times. */
-  foldAfterOppRaises: number;
+  /** Fold (with a weak edge) when the opponent raised in the previous round. */
+  foldIfOppRaisedLastRound: boolean;
 };
 
 /** Shared factory for presets and, later, custom player strategies. The rule order matters. */
 export function makeStrategy(params: StrategyParams): Agent {
-  const { foldBelow, raiseAtOrAbove, bluffAtOrBelow, foldAfterOppRaises } = params;
+  const { foldBelow, raiseAtOrAbove, bluffAtOrBelow, foldIfOppRaisedLastRound } = params;
   return (view) => {
-    if (view.oppRaiseCount >= foldAfterOppRaises && view.myEdge < INTIMIDATION_EDGE) return "fold";
+    if (foldIfOppRaisedLastRound && view.oppRaisedLastRound && view.myEdge < INTIMIDATION_EDGE) return "fold";
     if (bluffAtOrBelow !== null && view.myEdge <= bluffAtOrBelow) return "raise";
     if (view.myEdge < foldBelow) return "fold";
     if (view.myEdge >= raiseAtOrAbove) return "raise";
@@ -27,10 +27,10 @@ export function makeStrategy(params: StrategyParams): Agent {
 }
 
 export const PRESET_PARAMS = {
-  Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, foldAfterOppRaises: 1 },
-  Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, foldAfterOppRaises: 1 },
-  Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, foldAfterOppRaises: 2 },
-  Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, foldAfterOppRaises: 99 },
+  Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, foldIfOppRaisedLastRound: true },
+  Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, foldIfOppRaisedLastRound: true },
+  Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, foldIfOppRaisedLastRound: true },
+  Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, foldIfOppRaisedLastRound: false },
 } as const satisfies Record<string, StrategyParams>;
 
 export type PresetName = keyof typeof PRESET_PARAMS;

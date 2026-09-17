@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { exactView, mulberry32, nextUint32, playMatch, PRESETS, type Agent, type View } from "../src/index.js";
 import { randomAgent } from "./helpers.js";
 
-const VIEW_KEYS = ["myEdge", "myNet", "myRoundsWon", "oppRaiseCount", "oppRoundsWon", "roundNumber"];
+const VIEW_KEYS = ["myEdge", "myNet", "myRoundsWon", "oppRaiseCount", "oppRaisedLastRound", "oppRoundsWon", "roundNumber"];
 
 describe("agent isolation", () => {
   it("views contain exactly the allowed keys, with the agent's own edge only", () => {
@@ -61,7 +61,7 @@ describe("agent isolation", () => {
   });
 
   it("exactView rejects extra keys at compile time", () => {
-    const base = { myEdge: 0.3, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 1, oppRaiseCount: 0, myNet: 0 };
+    const base = { myEdge: 0.3, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 1, oppRaiseCount: 0, oppRaisedLastRound: false, myNet: 0 };
     // @ts-expect-error -- oppEdge is not part of View
     exactView({ ...base, oppEdge: 0.7 });
     // @ts-expect-error -- View has no opponent-edge field to read

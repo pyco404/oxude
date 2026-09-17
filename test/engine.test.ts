@@ -219,6 +219,31 @@ describe("round resolution", () => {
     expect(log.rounds.map((r) => r.raiseCounts.A)).toEqual(views.map((_, i) => i + 1));
   });
 
+  it("oppRaisedLastRound reflects only the immediately previous round", () => {
+    // A raises in round 1, calls in round 2, raises in round 3 (if reached).
+    const pattern = ["raise", "call", "raise"] as const;
+    const a = (v: { roundNumber: number }) => pattern[v.roundNumber - 1]!;
+    for (let seed = 0; seed < 300; seed++) {
+      const seen: boolean[] = [];
+      const b = (v: { oppRaisedLastRound: boolean }) => {
+        seen.push(v.oppRaisedLastRound);
+        return "call" as const;
+      };
+      const log = playMatch(a, b, { seed });
+      expect(seen).toEqual([false, true, false].slice(0, log.rounds.length));
+    }
+  });
+
+  it("oppRaisedLastRound is false after a round where the opponent folded", () => {
+    const seen: boolean[] = [];
+    const a = (v: { roundNumber: number }) => (v.roundNumber === 1 ? "raise" : "fold");
+    playMatch(a, (v) => {
+      seen.push(v.oppRaisedLastRound);
+      return "fold";
+    }, { seed: 4 });
+    expect(seen).toEqual([false, true, false]);
+  });
+
   it("rejects invalid actions from an agent", () => {
     const bad = (() => "allin") as unknown as () => "call";
     expect(() => playMatch(bad, constantAgent("call"), { seed: 1 })).toThrow(/invalid action/);

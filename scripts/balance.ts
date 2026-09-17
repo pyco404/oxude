@@ -15,8 +15,8 @@ const SPREAD_LIMIT = 1.5;
 /** Simple non-preset strategies used to look for exploits. */
 const PROBES: [string, Agent][] = [
   ["AlwaysRaise", () => "raise"],
-  ["Fold0.3Call", makeStrategy({ foldBelow: 0.35, raiseAtOrAbove: Infinity, bluffAtOrBelow: null, foldAfterOppRaises: Infinity })],
-  ["Fold<.5R.7", makeStrategy({ foldBelow: 0.45, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, foldAfterOppRaises: Infinity })],
+  ["Fold0.3Call", makeStrategy({ foldBelow: 0.35, raiseAtOrAbove: Infinity, bluffAtOrBelow: null, foldIfOppRaisedLastRound: false })],
+  ["Fold<.5R.7", makeStrategy({ foldBelow: 0.45, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, foldIfOppRaisedLastRound: false })],
 ];
 const PROBE_NOTES: Record<string, string> = {
   "Fold0.3Call": "fold on 0.3, otherwise call, never raise",

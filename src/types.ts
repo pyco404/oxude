@@ -15,6 +15,8 @@ export type View = {
   readonly roundNumber: number;
   /** Raises the opponent made in earlier rounds (not the current one). */
   readonly oppRaiseCount: number;
+  /** Whether the opponent raised in the immediately previous round (false in round 1). */
+  readonly oppRaisedLastRound: boolean;
   readonly myNet: number;
 };
 

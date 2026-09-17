@@ -36,6 +36,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
   const nets = { A: 0, B: 0 };
   const roundsWon = { A: 0, B: 0 };
   const raiseCounts = { A: 0, B: 0 };
+  const raisedLastRound = { A: false, B: false };
   const rounds: RoundLog[] = [];
 
   for (let roundNumber = 1; roundNumber <= MAX_ROUNDS; roundNumber++) {
@@ -51,6 +52,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
       oppRoundsWon: roundsWon.B,
       roundNumber,
       oppRaiseCount: raiseCounts.B,
+      oppRaisedLastRound: raisedLastRound.B,
       myNet: nets.A,
     });
     const viewB = exactView({
@@ -59,6 +61,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
       oppRoundsWon: roundsWon.A,
       roundNumber,
       oppRaiseCount: raiseCounts.A,
+      oppRaisedLastRound: raisedLastRound.A,
       myNet: nets.B,
     });
 
@@ -68,6 +71,8 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
     const actionB = checkAction(agentB(Object.freeze(viewB)), "B");
     if (actionA === "raise") raiseCounts.A++;
     if (actionB === "raise") raiseCounts.B++;
+    raisedLastRound.A = actionA === "raise";
+    raisedLastRound.B = actionB === "raise";
 
     let outcome: RoundLog["outcome"];
     let bet = 0;
