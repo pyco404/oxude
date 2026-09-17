@@ -5,3 +5,4 @@ export * from "./engine.js";
 export * from "./exact.js";
 export * from "./presets.js";
 export * from "./agents/policy.js";
+export * from "./transcript.js";

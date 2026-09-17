@@ -38,6 +38,12 @@ export const agents = pgTable(
      */
     policyTable: jsonb("policy_table").$type<Policy>(),
     /**
+     * The stakes the table was built for. A table is priced: a pot-odds fold at
+     * ante 4 is not the same decision at ante 8, so playing it at other stakes
+     * would misrepresent the agent. The runner refuses rather than mispricing.
+     */
+    policyStakes: jsonb("policy_stakes").$type<Stakes>(),
+    /**
      * Exact expected net against the roster, from the calculator. Private: shown
      * to the agent's owner while writing a brief, never on the ladder and never
      * on someone else's agent. Null until computed.

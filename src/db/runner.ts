@@ -1,9 +1,10 @@
-import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
-import { OXUDE_RULES } from "../round.js";
+import { OXUDE_RULES, type Stakes } from "../round.js";
 import { playMatch } from "../engine.js";
 import { PRESETS, PRESET_VERSION, type PresetName } from "../presets.js";
+import { renderTranscript } from "../transcript.js";
 import type { Agent, MatchLog } from "../types.js";
 import type { PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
 import type { TablesRelationalConfig } from "drizzle-orm";
@@ -39,12 +40,32 @@ const snapshotView = {
 /** A preset's table, frozen at the shipped stakes, so transcripts replay for good. */
 export const snapshotPreset = (name: PresetName): Policy => policyFromAgent(PRESETS[name], snapshotView);
 
+const sameStakes = (a: Stakes, b: Stakes) =>
+  a.ante === b.ante && a.baseBet === b.baseBet && a.raisedBet === b.raisedBet;
+
+/**
+ * A stored table encodes decisions taken at particular prices. Playing it at
+ * other stakes would silently misprice every fold, so refuse instead.
+ */
+export function assertStakesMatch(row: Pick<AgentRow, "name" | "policyStakes">, stakes: Stakes): void {
+  const built = row.policyStakes ?? DEFAULT_RULES.stakes;
+  if (!sameStakes(built, stakes)) {
+    throw new Error(
+      `agent ${row.name} has a table built for ante ${built.ante}/${built.baseBet}/${built.raisedBet}, ` +
+        `but this match is at ante ${stakes.ante}/${stakes.baseBet}/${stakes.raisedBet}; ` +
+        `re-elicit or re-snapshot the table for these stakes`,
+    );
+  }
+}
+
 export type CreateAgentInput = {
   name: string;
   ownerId?: string | null;
   presetName?: PresetName;
   brief?: string;
   policyTable?: Policy;
+  /** Defaults to the shipped stakes; must match the stakes matches are played at. */
+  policyStakes?: Stakes;
 };
 
 /** Writes an agent with its table already snapshotted, and a ratings row. */
@@ -59,6 +80,7 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
       brief: input.brief ?? null,
       ownerId: input.ownerId ?? null,
       policyTable: table,
+      policyStakes: input.policyStakes ?? DEFAULT_RULES.stakes,
     })
     .returning();
   await db.insert(ratings).values({ agentId: row!.id });
@@ -101,6 +123,8 @@ export type RunMatchOptions = { seed?: number; rules?: RulesConfig };
 export async function runMatch(db: Db, agentAId: string, agentBId: string, options: RunMatchOptions = {}) {
   const [rowA, rowB] = await Promise.all([loadAgent(db, agentAId), loadAgent(db, agentBId)]);
   const rules = options.rules ?? DEFAULT_RULES;
+  assertStakesMatch(rowA, rules.stakes);
+  assertStakesMatch(rowB, rules.stakes);
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
   // name-free log is exactly what a replay reproduces.
@@ -228,21 +252,43 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
  * there is no minimum. recentForm rides along for display and is not ranked on.
  * trueRating is deliberately absent: it is private to an agent's owner.
  */
-export async function leaderboard(db: Db, limit = 50) {
-  return db
+export type LadderTab = "winnings" | "per-match";
+
+export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings") {
+  const netPerMatch = sql<number>`case when ${ratings.matchesPlayed} = 0 then 0
+    else ${ratings.cumulativeNet}::double precision / ${ratings.matchesPlayed} end`;
+  const rows = db
     .select({
       agentId: agents.id,
       name: agents.name,
       presetName: agents.presetName,
       matchesPlayed: ratings.matchesPlayed,
       cumulativeNet: ratings.cumulativeNet,
+      netPerMatch,
       recentForm: ratings.rollingNet50,
     })
     .from(ratings)
-    .innerJoin(agents, eq(agents.id, ratings.agentId))
-    .where(isNull(agents.retiredAt))
-    .orderBy(desc(ratings.cumulativeNet))
-    .limit(limit);
+    .innerJoin(agents, eq(agents.id, ratings.agentId));
+
+  // "Per match" needs a match to divide by; that is arithmetic, not a skill bar.
+  return tab === "winnings"
+    ? rows.where(isNull(agents.retiredAt)).orderBy(desc(ratings.cumulativeNet)).limit(limit)
+    : rows
+        .where(and(isNull(agents.retiredAt), gt(ratings.matchesPlayed, 0)))
+        .orderBy(desc(netPerMatch))
+        .limit(limit);
+}
+
+/**
+ * A stored match as prose. Loads the log and the two names; the renderer sees
+ * nothing else, so a transcript cannot leak a brief or a table.
+ */
+export async function renderStoredTranscript(db: Db, matchId: string): Promise<string> {
+  const [row] = await db.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+  if (!row) throw new Error(`no match ${matchId}`);
+  const [a] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, row.agentA)).limit(1);
+  const [b] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, row.agentB)).limit(1);
+  return renderTranscript(row.log, { A: a?.name ?? "A", B: b?.name ?? "B" });
 }
 
 /** What anyone may see about someone else's agent: no true rating, no brief. */

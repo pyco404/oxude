@@ -3,10 +3,12 @@ import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { agents, matches, ratings, RATING_WINDOW } from "../src/db/schema.js";
 import {
+  assertStakesMatch,
   createAgent,
   DEFAULT_RULES,
   leaderboard,
   ownerAgent,
+  renderStoredTranscript,
   pickOpponent,
   publicAgent,
   replayMatch,
@@ -351,3 +353,77 @@ describe("transcript permanence", () => {
   });
 });
 
+describe("variable stakes", () => {
+  it("refuses to play a table at stakes it was not built for", async () => {
+    const a = await createAgent(db, { name: "Priced", presetName: "Anchor" });
+    const b = await createAgent(db, { name: "Also priced", presetName: "Bully" });
+    const otherStakes = { ...DEFAULT_RULES.stakes, ante: 8 };
+
+    await expect(runMatch(db, a.id, b.id, { rules: { ...DEFAULT_RULES, stakes: otherStakes } })).rejects.toThrow(
+      /table built for ante 4\/10\/20, but this match is at ante 8\/10\/20/,
+    );
+    // The same agents at the stakes they were built for are fine.
+    await expect(runMatch(db, a.id, b.id)).resolves.toBeDefined();
+    expect(() => assertStakesMatch({ name: "x", policyStakes: DEFAULT_RULES.stakes }, otherStakes)).toThrow(
+      /re-elicit or re-snapshot/,
+    );
+  });
+});
+
+describe("ladder tabs", () => {
+  it("offers winnings and net per match, and both are facts", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    const make = async (name: string, nets: number[]) => {
+      const row = await createAgent(fresh, { name, presetName: "Anchor" });
+      const opp = await createAgent(fresh, { name: `${name}-opp`, presetName: "Bully" });
+      for (const [i, net] of nets.entries()) {
+        await fresh.insert(matches).values({
+          agentA: row.id,
+          agentB: opp.id,
+          seed: i,
+          rulesConfig: DEFAULT_RULES,
+          winner: net > 0 ? "A" : "B",
+          netA: net,
+          netB: -net,
+          log: { rounds: [] } as never,
+        });
+      }
+      await updateRating(fresh, row.id);
+      await updateRating(fresh, opp.id);
+      return row;
+    };
+    // Volume player: more won in total, less per match.
+    await make("Grinder", Array.from({ length: 40 }, () => 5));
+    // Sharp: fewer matches, far better per match.
+    await make("Sharp", [30, 30, 30]);
+    const idle = await createAgent(fresh, { name: "Idle", presetName: "Mirage" });
+
+    const winnings = await leaderboard(fresh, 50, "winnings");
+    expect(winnings[0]!.name).toBe("Grinder");
+    expect(winnings[0]!.cumulativeNet).toBe(200);
+    expect(winnings.map((r) => r.name)).toContain(idle.name); // no minimum to appear
+
+    const perMatch = await leaderboard(fresh, 50, "per-match");
+    expect(perMatch[0]!.name).toBe("Sharp");
+    expect(perMatch[0]!.netPerMatch).toBeCloseTo(30, 9);
+    expect(perMatch.find((r) => r.name === "Grinder")!.netPerMatch).toBeCloseTo(5, 9);
+    // Nothing to divide by, so an agent with no matches is absent from this tab only.
+    expect(perMatch.map((r) => r.name)).not.toContain(idle.name);
+    for (const row of [...winnings, ...perMatch]) expect(Object.keys(row)).not.toContain("trueRating");
+    await closeFresh();
+  });
+});
+
+describe("stored transcripts", () => {
+  it("render from the log with the agents' names and nothing private", async () => {
+    const mine = await createAgent(db, { name: "Teller", brief: "bluff a lot", policyTable: snapshotPreset("Mirage") });
+    const foe = await createAgent(db, { name: "Listener", presetName: "Anchor" });
+    const { match } = await runMatch(db, mine.id, foe.id, { seed: 4242 });
+    const text = await renderStoredTranscript(db, match.id);
+    expect(text.split("\n")[0]).toBe("Teller vs Listener");
+    expect(text).toContain("Round 1.");
+    expect(text.toLowerCase()).not.toContain("bluff a lot");
+    await expect(renderStoredTranscript(db, "00000000-0000-0000-0000-000000000000")).rejects.toThrow(/no match/);
+  });
+});
