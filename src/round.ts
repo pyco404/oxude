@@ -25,6 +25,16 @@ export function freezeStakes(stakes: Readonly<Stakes>): Readonly<Stakes> {
 
 type PerSeat<T> = { A: T; B: T };
 
+/**
+ * "simultaneous": both agents choose at once (classic).
+ * "alternating": one agent leads each round and the other responds, with at
+ * most one raise per round; if the responder raises after a call the leader
+ * answers with fold or call. Leadership alternates every round.
+ */
+export type TurnOrder = "simultaneous" | "alternating";
+
+export const other = (seat: Seat): Seat => (seat === "A" ? "B" : "A");
+
 /** State between rounds. Shared by the simulator and the exact calculator so they cannot drift. */
 export type MatchState = {
   /** The next round to play, 1-based. */
@@ -33,6 +43,8 @@ export type MatchState = {
   roundsWon: PerSeat<number>;
   raiseCounts: PerSeat<number>;
   raisedLastRound: PerSeat<boolean>;
+  /** Alternating play: who leads the next round. Null in simultaneous play. */
+  nextLeader: Seat | null;
 };
 
 export const INITIAL_STATE: MatchState = Object.freeze({
@@ -41,7 +53,12 @@ export const INITIAL_STATE: MatchState = Object.freeze({
   roundsWon: { A: 0, B: 0 },
   raiseCounts: { A: 0, B: 0 },
   raisedLastRound: { A: false, B: false },
+  nextLeader: null,
 });
+
+export function initialState(firstLeader: Seat | null): MatchState {
+  return firstLeader === null ? INITIAL_STATE : Object.freeze({ ...INITIAL_STATE, nextLeader: firstLeader });
+}
 
 export function isMatchOver(state: MatchState): boolean {
   return (
@@ -73,9 +90,37 @@ export function complementEdge(edge: number): number {
   return Math.round((1 - edge) * 100) / 100;
 }
 
+type Decision = { edgeB: number; actions: PerSeat<Action>; sequence: { seat: Seat; action: Action }[] };
+
+function viewFor(
+  seat: Seat,
+  state: MatchState,
+  edge: number,
+  stakes: Readonly<Stakes>,
+  mine: Action | null,
+  opp: Action | null,
+): View {
+  const o = other(seat);
+  return Object.freeze(
+    exactView({
+      myEdge: edge,
+      myRoundsWon: state.roundsWon[seat],
+      oppRoundsWon: state.roundsWon[o],
+      roundNumber: state.roundNumber,
+      oppRaiseCount: state.raiseCounts[o],
+      oppRaisedLastRound: state.raisedLastRound[o],
+      myNet: state.nets[seat],
+      stakes,
+      oppActionThisRound: opp,
+      myActionThisRound: mine,
+    }),
+  );
+}
+
 /**
- * Asks both agents for their action. Simultaneous: each sees only its own
- * edge and the state before this round.
+ * Asks the agents for their actions this round. Each view carries only the
+ * agent's own edge, the state before this round, and (turn-based) what the
+ * opponent has already done this round.
  */
 export function decideRound(
   agentA: Agent,
@@ -83,36 +128,41 @@ export function decideRound(
   state: MatchState,
   edgeA: number,
   stakes: Readonly<Stakes>,
-): { edgeB: number; actions: PerSeat<Action> } {
+): Decision {
   const edgeB = complementEdge(edgeA);
-  const { roundNumber, nets, roundsWon, raiseCounts, raisedLastRound } = state;
-  const viewA = exactView({
-    myEdge: edgeA,
-    myRoundsWon: roundsWon.A,
-    oppRoundsWon: roundsWon.B,
-    roundNumber,
-    oppRaiseCount: raiseCounts.B,
-    oppRaisedLastRound: raisedLastRound.B,
-    myNet: nets.A,
-    stakes,
-  });
-  const viewB = exactView({
-    myEdge: edgeB,
-    myRoundsWon: roundsWon.B,
-    oppRoundsWon: roundsWon.A,
-    roundNumber,
-    oppRaiseCount: raiseCounts.A,
-    oppRaisedLastRound: raisedLastRound.A,
-    myNet: nets.B,
-    stakes,
-  });
-  return {
-    edgeB,
-    actions: {
-      A: checkAction(agentA(Object.freeze(viewA)), "A"),
-      B: checkAction(agentB(Object.freeze(viewB)), "B"),
-    },
-  };
+  const edges = { A: edgeA, B: edgeB };
+  const agents = { A: agentA, B: agentB };
+  const ask = (seat: Seat, mine: Action | null, opp: Action | null) =>
+    checkAction(agents[seat](viewFor(seat, state, edges[seat], stakes, mine, opp)), seat);
+
+  const leader = state.nextLeader;
+  if (leader === null) {
+    const actions = { A: ask("A", null, null), B: ask("B", null, null) };
+    return { edgeB, actions, sequence: [{ seat: "A", action: actions.A }, { seat: "B", action: actions.B }] };
+  }
+
+  const responder = other(leader);
+  const first = ask(leader, null, null);
+  const sequence: Decision["sequence"] = [{ seat: leader, action: first }];
+  if (first === "fold") {
+    // The responder never acts; recorded as a call so resolution awards it the ante.
+    return { edgeB, actions: seatActions(leader, "fold", "call"), sequence };
+  }
+  const reply = ask(responder, null, first);
+  const second: Action = first === "raise" && reply === "raise" ? "call" : reply; // one raise per round
+  sequence.push({ seat: responder, action: second });
+  if (first === "call" && second === "raise") {
+    const answer: Action = ask(leader, first, second) === "fold" ? "fold" : "call"; // no re-raise
+    sequence.push({ seat: leader, action: answer });
+    return { edgeB, actions: seatActions(leader, answer, "raise"), sequence };
+  }
+  return { edgeB, actions: seatActions(leader, first, second), sequence };
+}
+
+function seatActions(leader: Seat, leaderAction: Action, responderAction: Action): PerSeat<Action> {
+  return leader === "A"
+    ? { A: leaderAction, B: responderAction }
+    : { A: responderAction, B: leaderAction };
 }
 
 export type Resolution =
@@ -154,6 +204,7 @@ export function advanceState(
       B: state.raiseCounts.B + (actions.B === "raise" ? 1 : 0),
     },
     raisedLastRound: { A: actions.A === "raise", B: actions.B === "raise" },
+    nextLeader: state.nextLeader === null ? null : other(state.nextLeader),
   };
 }
 
