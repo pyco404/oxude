@@ -1,18 +1,31 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { agents, matches, ratings, MIN_RANKED_MATCHES, RATING_WINDOW } from "../src/db/schema.js";
+import { agents, matches, ratings, RATING_WINDOW } from "../src/db/schema.js";
 import {
+  createAgent,
   DEFAULT_RULES,
   leaderboard,
+  ownerAgent,
   pickOpponent,
+  publicAgent,
   replayMatch,
   resolveAgent,
   runMatch,
+  snapshotPreset,
   updateRating,
   type OpponentPick,
 } from "../src/db/runner.js";
-import { policyFromAgent, PRESETS, OXUDE_RULES, type View } from "../src/index.js";
+import { previewPolicy, refreshTrueRatings, rosterProfile, trueRatingAgainst } from "../src/db/rating.js";
+import {
+  policyAgent,
+  policyFromAgent,
+  PRESETS,
+  PRESET_VERSION,
+  OXUDE_RULES,
+  seatAveragedNet,
+  type View,
+} from "../src/index.js";
 
 let db: Db;
 let close: () => Promise<void>;
@@ -24,9 +37,14 @@ beforeAll(async () => {
 afterAll(async () => close());
 
 const addAgent = async (values: Partial<typeof agents.$inferInsert> & { name: string }) => {
+  const preset = values.presetName === undefined ? "Anchor" : values.presetName;
   const [row] = await db
     .insert(agents)
-    .values({ presetName: "Anchor", ...values })
+    .values({
+      presetName: preset,
+      policyTable: values.policyTable ?? (preset ? snapshotPreset(preset as "Anchor") : undefined),
+      ...values,
+    })
     .returning();
   await db.insert(ratings).values({ agentId: row!.id });
   return row!;
@@ -64,9 +82,13 @@ describe("match runner", () => {
     }
   });
 
-  it("resolves presets by name and player agents from their stored table", async () => {
+  it("resolves every agent from its stored table, preset or not", async () => {
     const preset = await addAgent({ name: "P", presetName: "Bully" });
-    expect(resolveAgent(preset)).toBe(PRESETS.Bully);
+    const resolved = resolveAgent(preset);
+    for (const edge of [0.3, 0.4, 0.5, 0.6, 0.7]) {
+      const v = { ...blankView, myEdge: edge, oppActionThisRound: null, oppRaisedLastRound: false };
+      expect(resolved(v)).toBe(PRESETS.Bully(v));
+    }
     const policy = await addAgent({
       name: "Q",
       presetName: null,
@@ -78,6 +100,7 @@ describe("match runner", () => {
       expect(agent(view)).toBe(PRESETS.Anchor(view));
     }
     expect(() => resolveAgent({ name: "X", presetName: "Nobody", policyTable: null })).toThrow(/unknown preset/);
+    expect(() => resolveAgent({ name: "X", presetName: null, policyTable: null })).toThrow(/neither/);
   });
 });
 
@@ -137,9 +160,12 @@ describe("matchmaking", () => {
         log: { rounds: [] } as never,
       });
     }
-    await db.update(ratings).set({ rollingNet50: 5 }).where(eq(ratings.agentId, me.id));
-    await db.update(ratings).set({ rollingNet50: 5 }).where(eq(ratings.agentId, sibling.id));
-    await db.update(ratings).set({ rollingNet50: 4.5 }).where(eq(ratings.agentId, rivals[2]!.id));
+    // Matchmaking pairs on the exact rating, so set those.
+    await db.update(agents).set({ trueRating: 0.5 }).where(eq(agents.id, me.id));
+    await db.update(agents).set({ trueRating: 0.5 }).where(eq(agents.id, sibling.id));
+    for (const [i, rival] of rivals.entries()) {
+      await db.update(agents).set({ trueRating: i === 2 ? 0.45 : 3 + i }).where(eq(agents.id, rival.id));
+    }
 
     for (let i = 0; i < 25; i++) {
       const pick = await pickOpponent(db, me.id);
@@ -167,26 +193,161 @@ describe("matchmaking", () => {
   });
 });
 
-describe("leaderboard", () => {
-  it("hides agents with fewer than the minimum matches, and retired ones", async () => {
+describe("ladder", () => {
+  it("ranks all-time net won, with no minimum, and shows recent form separately", async () => {
     const { db: fresh, close: closeFresh } = await connect();
     await migrate(fresh);
-    const make = async (name: string, played: number, net: number, retired = false) => {
+    const make = async (name: string, nets: number[], retired = false) => {
       const [row] = await fresh
         .insert(agents)
-        .values({ name, presetName: "Anchor", retiredAt: retired ? new Date() : null })
+        .values({ name, presetName: "Anchor", policyTable: snapshotPreset("Anchor"), retiredAt: retired ? new Date() : null })
         .returning();
-      await fresh.insert(ratings).values({ agentId: row!.id, matchesPlayed: played, rollingNet50: net });
+      await fresh.insert(ratings).values({ agentId: row!.id });
+      const [opp] = await fresh
+        .insert(agents)
+        .values({ name: `${name}-opp`, presetName: "Bully", policyTable: snapshotPreset("Bully") })
+        .returning();
+      await fresh.insert(ratings).values({ agentId: opp!.id });
+      for (const [i, net] of nets.entries()) {
+        await fresh.insert(matches).values({
+          agentA: row!.id,
+          agentB: opp!.id,
+          seed: i,
+          rulesConfig: DEFAULT_RULES,
+          winner: net > 0 ? "A" : "B",
+          netA: net,
+          netB: -net,
+          log: { rounds: [] } as never,
+        });
+      }
+      await updateRating(fresh, row!.id);
       return row!;
     };
-    await make("Rookie", MIN_RANKED_MATCHES - 1, 99);
-    const ranked = await make("Veteran", MIN_RANKED_MATCHES, 1.5);
-    await make("Retired ace", 500, 50, true);
-    const board = await fresh.select().from(ratings);
-    expect(board).toHaveLength(3);
+    // Three matches, +30 total: fewer than the old 20-match threshold, still ranked.
+    const sprinter = await make("Sprinter", [10, 10, 10]);
+    // Ten matches, +50 total, poor recent form.
+    await make("Grinder", [20, 20, 20, 20, 20, -10, -10, -10, -10, -10]);
+    await make("Retired", [100, 100], true);
 
-    const shown = await leaderboard(fresh);
-    expect(shown.map((r) => r.name)).toEqual([ranked.name]);
+    const board = await leaderboard(fresh);
+    // Every active agent appears, opponents included; ranking is all-time net won.
+    expect(board.map((r) => r.name).slice(0, 2)).toEqual(["Grinder", "Sprinter"]);
+    expect(board.map((r) => r.name)).not.toContain("Retired");
+    expect(board.every((r, i) => i === 0 || board[i - 1]!.cumulativeNet >= r.cumulativeNet)).toBe(true);
+    expect(board[0]!.cumulativeNet).toBe(50);
+    expect(board[0]!.recentForm).toBeCloseTo(5, 9);
+    expect(board[1]!.cumulativeNet).toBe(30);
+    expect(board.find((r) => r.name === sprinter.name)!.matchesPlayed).toBe(3);
+    // The private rating is not in the ladder at all.
+    expect(Object.keys(board[0]!)).not.toContain("trueRating");
+    await closeFresh();
+  });
+
+  it("orders the recent-form window by seq, not by a shared timestamp", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    const a = (await fresh.insert(agents).values({ name: "A", presetName: "Anchor", policyTable: snapshotPreset("Anchor") }).returning())[0]!;
+    const b = (await fresh.insert(agents).values({ name: "B", presetName: "Bully", policyTable: snapshotPreset("Bully") }).returning())[0]!;
+    await fresh.insert(ratings).values([{ agentId: a.id }, { agentId: b.id }]);
+    const stamp = new Date("2026-01-01T00:00:00Z");
+    // 60 matches sharing one timestamp: only seq distinguishes them.
+    for (let i = 0; i < 60; i++) {
+      await fresh.insert(matches).values({
+        agentA: a.id,
+        agentB: b.id,
+        seed: i,
+        rulesConfig: DEFAULT_RULES,
+        winner: "A",
+        netA: i < 10 ? 100 : 2,
+        netB: i < 10 ? -100 : -2,
+        log: { rounds: [] } as never,
+        createdAt: stamp,
+      });
+    }
+    await updateRating(fresh, a.id);
+    const [row] = await fresh.select().from(ratings).where(eq(ratings.agentId, a.id));
+    // The last 50 are all +2; the +100s are outside the window.
+    expect(row!.rollingNet50).toBeCloseTo(2, 9);
+    expect(row!.cumulativeNet).toBe(10 * 100 + 50 * 2);
     await closeFresh();
   });
 });
+
+describe("true rating", () => {
+  it("is the exact expected net against the roster, and matches the calculator", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    for (let i = 0; i < 8; i++) {
+      await createAgent(fresh, { name: `R${i}`, presetName: i % 2 === 0 ? "Anchor" : "Bully" });
+    }
+    const mine = await createAgent(fresh, { name: "Mine", brief: "aim at bullies", policyTable: snapshotPreset("Mirage") });
+    await refreshTrueRatings(fresh);
+
+    const [row] = await fresh.select().from(agents).where(eq(agents.id, mine.id));
+    const half = (a: "Anchor" | "Bully") => seatAveragedNet(policyAgent(snapshotPreset("Mirage")), PRESETS[a], OXUDE_RULES);
+    // Roster is 4 Anchors, 4 Bullys and Mirage itself.
+    const profile = await rosterProfile(fresh);
+    const expected = (4 * half("Anchor") + 4 * half("Bully") + 0) / 9;
+    expect(row!.trueRating).toBeCloseTo(expected, 9);
+    expect(trueRatingAgainst(policyAgent(snapshotPreset("Mirage")), profile)).toBeCloseTo(expected, 9);
+
+    // A preview needs no agent row and no match.
+    const preview = previewPolicy(snapshotPreset("Bully"), profile);
+    expect(preview.roster).toBe(9);
+    expect(preview.breakdown).toHaveLength(3);
+    expect(preview.trueRating).toBeCloseTo(trueRatingAgainst(PRESETS.Bully, profile), 9);
+    await closeFresh();
+  });
+
+  it("is recomputed when the roster changes materially, and skipped when it has not", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    for (let i = 0; i < 4; i++) await createAgent(fresh, { name: `A${i}`, presetName: "Anchor" });
+    const mine = await createAgent(fresh, { name: "Mine", presetName: "Mirage" });
+    expect(await refreshTrueRatings(fresh)).toBe(5);
+    const before = (await fresh.select().from(agents).where(eq(agents.id, mine.id)))[0]!;
+    // Nothing changed: no work, same rating.
+    expect(await refreshTrueRatings(fresh)).toBe(0);
+
+    for (let i = 0; i < 6; i++) await createAgent(fresh, { name: `B${i}`, presetName: "Bully" });
+    expect(await refreshTrueRatings(fresh)).toBe(11);
+    const after = (await fresh.select().from(agents).where(eq(agents.id, mine.id)))[0]!;
+    expect(after.trueRating).not.toBeCloseTo(before.trueRating!, 6);
+    expect(after.trueRatingRoster).not.toBe(before.trueRatingRoster);
+    await closeFresh();
+  });
+
+  it("is private: absent from the public view of an agent, and owner-gated", async () => {
+    const owner = "33333333-3333-3333-3333-333333333333";
+    const mine = await createAgent(db, { name: "Private", ownerId: owner, brief: "secret sauce", presetName: "Hammer" });
+    await refreshTrueRatings(db, { force: true });
+
+    const seen = await publicAgent(db, mine.id);
+    expect(seen).toBeDefined();
+    expect(Object.keys(seen!)).not.toContain("trueRating");
+    expect(Object.keys(seen!)).not.toContain("brief");
+    expect(Object.keys(seen!)).not.toContain("policyTable");
+
+    const own = await ownerAgent(db, mine.id, owner);
+    expect(own!.trueRating).toBeTypeOf("number");
+    expect(own!.brief).toBe("secret sauce");
+    await expect(ownerAgent(db, mine.id, "44444444-4444-4444-4444-444444444444")).rejects.toThrow(/another owner/);
+  });
+});
+
+describe("transcript permanence", () => {
+  it("replays from the stored table even when the named preset would now play differently", async () => {
+    // The row names a preset but stores a different table: the stored one must win.
+    const drifted = await addAgent({ name: "Drifted", presetName: "Anchor", policyTable: snapshotPreset("Bully") });
+    const opponent = await addAgent({ name: "Opp", presetName: "Mirage" });
+    const { match, log } = await runMatch(db, drifted.id, opponent.id);
+    const [stored] = await db.select().from(matches).where(eq(matches.id, match.id));
+
+    expect(replayMatch(stored!, resolveAgent(drifted), resolveAgent(opponent))).toEqual(log);
+    // Resolution ignores the preset name in favour of the snapshot.
+    const view = { myEdge: 0.4, oppActionThisRound: null, oppRaisedLastRound: false, ...blankView };
+    expect(resolveAgent(drifted)(view)).toBe(PRESETS.Bully(view));
+    expect(stored!.rulesConfig.presetVersion).toBe(PRESET_VERSION);
+  });
+});
+

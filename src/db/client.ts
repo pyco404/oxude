@@ -3,7 +3,8 @@ import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { Pool } from "pg";
 import * as schema from "./schema.js";
 
@@ -23,11 +24,15 @@ export async function connect(url = process.env["DATABASE_URL"]): Promise<{ db: 
   return { db: drizzlePglite(client, { schema }), close: () => client.close() };
 }
 
-/** Applies the schema. Drizzle-kit owns the SQL; this just runs it. */
-export async function migrate(db: Db, file = "drizzle/0000_init.sql"): Promise<void> {
-  const ddl = readFileSync(file, "utf8");
-  for (const statement of ddl.split("--> statement-breakpoint")) {
-    const trimmed = statement.trim();
-    if (trimmed) await db.execute(sql.raw(trimmed));
+/** Applies every migration in order. Drizzle-kit owns the SQL; this just runs it. */
+export async function migrate(db: Db, dir = "drizzle"): Promise<void> {
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  for (const file of files) {
+    for (const statement of readFileSync(join(dir, file), "utf8").split("--> statement-breakpoint")) {
+      const trimmed = statement.trim();
+      if (trimmed) await db.execute(sql.raw(trimmed));
+    }
   }
 }

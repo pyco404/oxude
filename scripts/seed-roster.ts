@@ -1,7 +1,8 @@
 import { mulberry32, nextUint32, PRESET_NAMES } from "../src/index.js";
 import { connect, migrate } from "../src/db/client.js";
-import { agents, ratings } from "../src/db/schema.js";
-import { leaderboard, runMatch, updateRating } from "../src/db/runner.js";
+import { createAgent, leaderboard, runMatch, updateRating } from "../src/db/runner.js";
+import { refreshTrueRatings, rosterProfile, trueRatingAgainst } from "../src/db/rating.js";
+import { policyAgent } from "../src/agents/policy.js";
 
 // Builds a roster with real records so the first player meets a populated
 // ladder. Usage: npm run seed-roster [-- --agents 200 --matches 5000 --seed 1]
@@ -22,17 +23,12 @@ const { db, close } = await connect();
 if (process.argv.includes("--migrate")) await migrate(db);
 
 const started = Date.now();
-const rows = await db
-  .insert(agents)
-  .values(
-    Array.from({ length: AGENTS }, (_, i) => ({
-      name: name(i),
-      // Equal numbers of each preset, so the roster spans the loop.
-      presetName: PRESET_NAMES[i % PRESET_NAMES.length]!,
-    })),
-  )
-  .returning({ id: agents.id, name: agents.name, presetName: agents.presetName });
-await db.insert(ratings).values(rows.map((r) => ({ agentId: r.id })));
+const rows = [];
+for (let i = 0; i < AGENTS; i++) {
+  // Equal numbers of each preset, each carrying its own snapshotted table.
+  rows.push(await createAgent(db, { name: name(i), presetName: PRESET_NAMES[i % PRESET_NAMES.length]! }));
+}
+console.log(`true ratings: ${await refreshTrueRatings(db)} agents rated against the roster`);
 console.log(`${rows.length} agents created (${PRESET_NAMES.join(", ")} in equal numbers)`);
 
 // Random pairing for the seed run: matchmaking needs ratings that do not exist yet.
@@ -46,23 +42,33 @@ for (let k = 0; k < MATCHES; k++) {
 
 for (const r of rows) await updateRating(db, r.id);
 const board = await leaderboard(db, 10);
-console.log(`\nTop of the ladder after ${MATCHES} matches:`);
+console.log(`\nLadder after ${MATCHES} matches (ranked on all-time net won):`);
 for (const [i, row] of board.entries()) {
   console.log(
     `${String(i + 1).padStart(3)}. ${row.name.padEnd(18)} ${(row.presetName ?? "policy").padEnd(8)} ` +
-      `${row.rollingNet50 >= 0 ? "+" : ""}${row.rollingNet50.toFixed(2)} over ${row.matchesPlayed} matches`,
+      `${row.cumulativeNet >= 0 ? "+" : ""}${row.cumulativeNet} net over ${row.matchesPlayed} matches ` +
+      `(recent form ${row.recentForm >= 0 ? "+" : ""}${row.recentForm.toFixed(2)})`,
   );
 }
 
-const byPreset = new Map<string, { n: number; sum: number }>();
+const byPreset = new Map<string, { n: number; sum: number; matches: number }>();
 for (const row of await leaderboard(db, AGENTS)) {
   const k = row.presetName ?? "policy";
-  const e = byPreset.get(k) ?? { n: 0, sum: 0 };
+  const e = byPreset.get(k) ?? { n: 0, sum: 0, matches: 0 };
   e.n++;
-  e.sum += row.rollingNet50;
+  e.sum += row.cumulativeNet;
+  e.matches += row.matchesPlayed;
   byPreset.set(k, e);
 }
-console.log(`\nMean rolling net by preset (what the ladder thinks of each):`);
-for (const [preset, { n, sum }] of byPreset) console.log(`  ${preset.padEnd(8)} ${(sum / n).toFixed(3)} across ${n} agents`);
+const profile = await rosterProfile(db);
+console.log(`\nBy preset: what they won, next to what they are worth (exact):`);
+for (const [preset, { n, sum, matches }] of byPreset) {
+  const table = rows.find((r) => r.presetName === preset)!.policyTable!;
+  const exact = trueRatingAgainst(policyAgent(table), profile);
+  console.log(
+    `  ${preset.padEnd(8)} net per match ${(sum / matches).toFixed(3)} over ${matches} matches, ` +
+      `true rating ${exact >= 0 ? "+" : ""}${exact.toFixed(3)} (${n} agents)`,
+  );
+}
 console.log(`\n${((Date.now() - started) / 1000).toFixed(0)}s total`);
 await close();

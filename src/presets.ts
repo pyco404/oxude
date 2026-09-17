@@ -103,6 +103,23 @@ export const PRESET_NAMES = Object.keys(PRESET_PARAMS) as PresetName[];
 /** Re-exported for callers that reach for the rules through the presets. */
 export { OXUDE_RULES };
 
+/**
+ * Fingerprint of the shipped numbers, recorded with every match as provenance.
+ * A replay does not depend on it: matches replay from each agent's stored
+ * table, so a retune changes this string without breaking old transcripts.
+ */
+export const PRESET_VERSION = `p${fnv1a(JSON.stringify(PRESET_PARAMS)).toString(16).padStart(8, "0")}`;
+
+/** Small non-cryptographic hash, inline so the core stays dependency-free. */
+function fnv1a(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}
+
 export const PRESETS: Record<PresetName, Agent> = {
   Anchor: makeStrategy(PRESET_PARAMS.Anchor),
   Hammer: makeStrategy(PRESET_PARAMS.Hammer),
