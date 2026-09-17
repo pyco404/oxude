@@ -41,6 +41,12 @@ export type AppOptions = {
   rateLimit?: RateLimitRule;
   /** Applies to playing matches: no model call, but it writes rows. Default 30 a minute. */
   playRateLimit?: RateLimitRule;
+  /**
+   * Browser origins allowed to call this API. The web app runs on its own
+   * origin, so without this every request from it fails before it is sent.
+   * Defaults to CORS_ORIGIN or localhost:3000.
+   */
+  corsOrigin?: string;
   now?: () => number;
 };
 
@@ -247,28 +253,47 @@ export function createApp(options: AppOptions): Server {
     return value;
   }
 
+  const corsOrigin = options.corsOrigin ?? process.env["CORS_ORIGIN"] ?? "http://localhost:3000";
+  const corsHeaders = {
+    "access-control-allow-origin": corsOrigin,
+    "access-control-allow-headers": "content-type, x-owner-id",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-expose-headers": "retry-after",
+    "access-control-max-age": "600",
+    vary: "origin",
+  };
+
   return createServer((req, res) => {
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, corsHeaders);
+      res.end();
+      return;
+    }
     void handle(req, res).catch((error: unknown) => {
-      send(res, 500, { error: error instanceof Error ? error.message : "unknown error" });
+      send(res, 500, { error: error instanceof Error ? error.message : "unknown error" }, corsHeaders);
     });
   });
+
+  function reply(res: ServerResponse, status: number, payload: unknown, headers: Record<string, string> = {}): void {
+    send(res, status, payload, { ...corsHeaders, ...headers });
+  }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
     const route = routes.find(([method, pattern]) => method === req.method && pattern.test(url.pathname));
-    if (!route) return send(res, 404, { error: "no such route" });
+    if (!route) return reply(res, 404, { error: "no such route" });
 
     const ownerHeader = req.headers["x-owner-id"];
     const ownerId = typeof ownerHeader === "string" && UUID.test(ownerHeader) ? ownerHeader : null;
     if (typeof ownerHeader === "string" && ownerId === null) {
-      return send(res, 400, { error: "x-owner-id must be a uuid" });
+      return reply(res, 400, { error: "x-owner-id must be a uuid" });
     }
 
     let body: Record<string, unknown> = {};
     try {
       body = await readJson(req);
     } catch (error) {
-      return send(res, 400, { error: error instanceof Error ? error.message : "bad body" });
+      return reply(res, 400, { error: error instanceof Error ? error.message : "bad body" });
     }
 
     // Charged against the caller, or the connection when there is none.
@@ -305,13 +330,13 @@ export function createApp(options: AppOptions): Server {
 
     try {
       const payload = await route[2](ctx);
-      send(res, req.method === "POST" ? 201 : 200, payload as Record<string, unknown>);
+      reply(res, req.method === "POST" ? 201 : 200, payload as Record<string, unknown>);
     } catch (error) {
       if (error instanceof HttpError) {
         // A request that failed before the model answered should not cost an allowance slot.
         if (spent && error.status >= 500) ctx.refund();
         const headers = error.status === 429 ? { "retry-after": String(error.extra["retryAfterSeconds"] ?? 60) } : {};
-        return send(res, error.status, { error: error.message, ...error.extra }, headers);
+        return reply(res, error.status, { error: error.message, ...error.extra }, headers);
       }
       throw error;
     }

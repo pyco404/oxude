@@ -255,3 +255,20 @@ describe("GET /presets", () => {
     expect(elicitCalls).toBe(before);
   });
 });
+
+describe("CORS", () => {
+  it("answers the browser preflight and allows the web app's origin", async () => {
+    const preflight = await fetch(`${url}/preview`, {
+      method: "OPTIONS",
+      headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("x-owner-id");
+
+    const get = await api("/presets", { owner: null });
+    expect(get.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    // retry-after must be readable by the browser for the rate-limit message to work.
+    expect(get.headers.get("access-control-expose-headers")).toContain("retry-after");
+  });
+});
