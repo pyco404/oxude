@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { exactView, mulberry32, nextUint32, playMatch, PRESETS, type Agent, type View } from "../src/index.js";
+import { CLASSIC_STAKES, exactView, mulberry32, nextUint32, playMatch, PRESETS, type Agent, type View } from "../src/index.js";
 import { randomAgent } from "./helpers.js";
 
-const VIEW_KEYS = ["myEdge", "myNet", "myRoundsWon", "oppRaiseCount", "oppRaisedLastRound", "oppRoundsWon", "roundNumber"];
+const VIEW_KEYS = ["myEdge", "myNet", "myRoundsWon", "oppRaiseCount", "oppRaisedLastRound", "oppRoundsWon", "roundNumber", "stakes"];
 
 describe("agent isolation", () => {
   it("views contain exactly the allowed keys, with the agent's own edge only", () => {
@@ -27,6 +27,9 @@ describe("agent isolation", () => {
           expect(Reflect.ownKeys(v).map(String).sort()).toEqual(VIEW_KEYS);
           expect(Object.getPrototypeOf(v)).toBe(Object.prototype);
           expect(Object.isFrozen(v)).toBe(true);
+          expect(Object.isFrozen(v.stakes)).toBe(true);
+          expect(v.stakes).toEqual(log.stakes);
+          expect(Reflect.ownKeys(v.stakes).map(String).sort()).toEqual(["ante", "baseBet", "raisedBet"]);
         }
         expect(va.myEdge).toBe(r.edges.A);
         expect(vb.myEdge).toBe(r.edges.B);
@@ -49,10 +52,13 @@ describe("agent isolation", () => {
     expect(firstView(PRESETS.Patient)).toEqual(firstView(PRESETS.Reckless));
   });
 
-  it("agents cannot mutate the view they are given", () => {
+  it("agents cannot mutate the view they are given, including its stakes", () => {
     const vandal: Agent = (v) => {
       expect(() => {
         (v as { myNet: number }).myNet = 1_000;
+      }).toThrow(TypeError);
+      expect(() => {
+        (v.stakes as { ante: number }).ante = 0;
       }).toThrow(TypeError);
       return "call";
     };
@@ -61,7 +67,7 @@ describe("agent isolation", () => {
   });
 
   it("exactView rejects extra keys at compile time", () => {
-    const base = { myEdge: 0.3, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 1, oppRaiseCount: 0, oppRaisedLastRound: false, myNet: 0 };
+    const base = { myEdge: 0.3, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 1, oppRaiseCount: 0, oppRaisedLastRound: false, myNet: 0, stakes: CLASSIC_STAKES };
     // @ts-expect-error -- oppEdge is not part of View
     exactView({ ...base, oppEdge: 0.7 });
     // @ts-expect-error -- View has no opponent-edge field to read

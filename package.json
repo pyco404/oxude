@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "balance": "tsx scripts/balance.ts",
     "check": "npm run typecheck && npm run test",
-    "sweep": "tsx scripts/sweep.ts"
+    "sweep": "tsx scripts/sweep.ts",
+    "search": "tsx scripts/search.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

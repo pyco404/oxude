@@ -18,6 +18,11 @@ export type View = {
   readonly oppRaiseCount: number;
   /** Whether the opponent raised in the immediately previous round (false in round 1). */
   readonly oppRaisedLastRound: boolean;
+  /**
+   * The match's public price table. The bet for this round is not included:
+   * it depends on the opponent's simultaneous action.
+   */
+  readonly stakes: Readonly<Stakes>;
   readonly myNet: number;
 };
 

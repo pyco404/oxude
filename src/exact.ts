@@ -3,6 +3,7 @@ import {
   CLASSIC_STAKES,
   decideRound,
   EDGES,
+  freezeStakes,
   INITIAL_STATE,
   isMatchOver,
   resolveActions,
@@ -13,7 +14,7 @@ import type { Agent } from "./types.js";
 
 export type ExactOptions = {
   /** Defaults to CLASSIC_STAKES. */
-  stakes?: Stakes;
+  stakes?: Readonly<Stakes>;
 };
 
 /**
@@ -25,12 +26,12 @@ export type ExactOptions = {
  * `makeStrategy` agent is.
  */
 export function expectedNet(agentA: Agent, agentB: Agent, options: ExactOptions = {}): number {
-  const stakes = options.stakes ?? CLASSIC_STAKES;
+  const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
   const value = (state: MatchState): number => {
     if (isMatchOver(state)) return 0;
     let total = 0;
     for (const edgeA of EDGES) {
-      const { actions } = decideRound(agentA, agentB, state, edgeA);
+      const { actions } = decideRound(agentA, agentB, state, edgeA, stakes);
       const resolution = resolveActions(actions, stakes);
       let ev: number;
       if (resolution.outcome === "both-folded") {

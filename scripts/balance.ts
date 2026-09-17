@@ -1,5 +1,5 @@
 import { mulberry32, nextUint32, playMatch, PRESET_NAMES, PRESETS } from "../src/index.js";
-import { AGENTS, analyse, fmt, NAMES, P, PROBE_NOTES, stakesFromEnv } from "./analysis.js";
+import { agentsFor, analyse, fmt, NAMES, P, PROBE_NOTES, stakesFromEnv } from "./analysis.js";
 
 // Usage: npm run balance [-- --no-sim]; ANTE=5 RAISED_BET=25 BASE_BET=10 BALANCE_SEED=1 to vary.
 const MATCHES = 20_000;
@@ -27,7 +27,7 @@ if (SIMULATE) {
   // Cross-check: simulated seat-averaged means should sit within a few standard errors of exact.
   const master = mulberry32(MASTER_SEED);
   let worst = { z: 0, label: "" };
-  for (const [i, [rowName, agent]] of AGENTS.entries()) {
+  for (const [i, [rowName, agent]] of agentsFor(PRESETS).entries()) {
     for (const [j, colName] of PRESET_NAMES.entries()) {
       if (rowName === colName) continue;
       let sum = 0;

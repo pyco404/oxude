@@ -16,7 +16,12 @@ export type Stakes = {
   raisedBet: number;
 };
 
-export const CLASSIC_STAKES: Stakes = { ante: ANTE, baseBet: BASE_BET, raisedBet: RAISED_BET };
+export const CLASSIC_STAKES: Readonly<Stakes> = Object.freeze({ ante: ANTE, baseBet: BASE_BET, raisedBet: RAISED_BET });
+
+/** Frozen copy, safe to hand to agents inside views. */
+export function freezeStakes(stakes: Readonly<Stakes>): Readonly<Stakes> {
+  return Object.freeze({ ante: stakes.ante, baseBet: stakes.baseBet, raisedBet: stakes.raisedBet });
+}
 
 type PerSeat<T> = { A: T; B: T };
 
@@ -77,6 +82,7 @@ export function decideRound(
   agentB: Agent,
   state: MatchState,
   edgeA: number,
+  stakes: Readonly<Stakes>,
 ): { edgeB: number; actions: PerSeat<Action> } {
   const edgeB = complementEdge(edgeA);
   const { roundNumber, nets, roundsWon, raiseCounts, raisedLastRound } = state;
@@ -88,6 +94,7 @@ export function decideRound(
     oppRaiseCount: raiseCounts.B,
     oppRaisedLastRound: raisedLastRound.B,
     myNet: nets.A,
+    stakes,
   });
   const viewB = exactView({
     myEdge: edgeB,
@@ -97,6 +104,7 @@ export function decideRound(
     oppRaiseCount: raiseCounts.A,
     oppRaisedLastRound: raisedLastRound.A,
     myNet: nets.B,
+    stakes,
   });
   return {
     edgeB,

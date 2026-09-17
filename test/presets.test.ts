@@ -1,9 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { makeStrategy, PRESET_PARAMS, PRESETS, type Action, type PresetName, type View } from "../src/index.js";
+import {
+  callIsWorseThanFold,
+  CLASSIC_STAKES,
+  EDGES,
+  makeStrategy,
+  playMatch,
+  PRESET_PARAMS,
+  PRESETS,
+  type Action,
+  type PresetName,
+  type Stakes,
+  type StrategyParams,
+  type View,
+} from "../src/index.js";
 
-function view(myEdge: number, oppRaisedLastRound = false, oppRaiseCount = oppRaisedLastRound ? 1 : 0): View {
-  return { myEdge, oppRaisedLastRound, oppRaiseCount, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 2, myNet: 0 };
+function view(
+  myEdge: number,
+  oppRaisedLastRound = false,
+  oppRaiseCount = oppRaisedLastRound ? 1 : 0,
+  stakes: Stakes = CLASSIC_STAKES,
+): View {
+  return { myEdge, oppRaisedLastRound, oppRaiseCount, myRoundsWon: 0, oppRoundsWon: 0, roundNumber: 2, myNet: 0, stakes };
 }
+
+const BASE: StrategyParams = {
+  foldBelow: 0,
+  raiseAtOrAbove: 1,
+  bluffAtOrBelow: null,
+  bluffUnderPressure: false,
+  pressureFoldBelow: null,
+};
 
 type Case = [edge: number, oppRaisedLast: boolean, expected: Action, rule: string];
 
@@ -73,10 +99,10 @@ describe("presets", () => {
 
   it("parameters are exactly as specified", () => {
     expect(PRESET_PARAMS).toEqual({
-      Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, foldIfOppRaisedLastRound: true },
-      Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, foldIfOppRaisedLastRound: true },
-      Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, foldIfOppRaisedLastRound: true },
-      Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, foldIfOppRaisedLastRound: false },
+      Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
+      Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
+      Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
+      Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null },
     });
   });
 
@@ -92,12 +118,71 @@ describe("presets", () => {
   });
 
   it("rule order: when both bluff and fold-below match, bluff wins", () => {
-    const agent = makeStrategy({ foldBelow: 0.5, raiseAtOrAbove: 0.9, bluffAtOrBelow: 0.4, foldIfOppRaisedLastRound: false });
+    const agent = makeStrategy({ ...BASE, foldBelow: 0.5, raiseAtOrAbove: 0.9, bluffAtOrBelow: 0.4 });
     expect(agent(view(0.3))).toBe("raise");
   });
 
   it("rule order: when both fold-below and raise match, fold wins", () => {
-    const agent = makeStrategy({ foldBelow: 0.8, raiseAtOrAbove: 0.5, bluffAtOrBelow: null, foldIfOppRaisedLastRound: false });
+    const agent = makeStrategy({ ...BASE, foldBelow: 0.8, raiseAtOrAbove: 0.5 });
     expect(agent(view(0.7))).toBe("fold");
+  });
+
+  it("the pressure threshold is a parameter", () => {
+    const agent = makeStrategy({ ...BASE, pressureFoldBelow: 0.45 });
+    expect(EDGES.map((e) => agent(view(e, true)))).toEqual(["fold", "fold", "call", "call", "call"]);
+    expect(EDGES.map((e) => agent(view(e, false)))).toEqual(["call", "call", "call", "call", "call"]);
+  });
+
+  it("bluffUnderPressure puts the bluff ahead of the pressure fold", () => {
+    const params: StrategyParams = { ...BASE, bluffAtOrBelow: 0.32, pressureFoldBelow: 0.6 };
+    expect(makeStrategy(params)(view(0.3, true))).toBe("fold");
+    expect(makeStrategy({ ...params, bluffUnderPressure: true })(view(0.3, true))).toBe("raise");
+    // Only the bluff edge moves; other pressured edges still fold.
+    expect(makeStrategy({ ...params, bluffUnderPressure: true })(view(0.4, true))).toBe("fold");
+  });
+});
+
+describe("pot odds", () => {
+  it("callIsWorseThanFold compares (2e - 1) * bet with -ante, ties call", () => {
+    expect(callIsWorseThanFold(0.3, 20, 10)).toBe(false); // -8 vs -10
+    expect(callIsWorseThanFold(0.3, 20, 4)).toBe(true); // -8 vs -4
+    expect(callIsWorseThanFold(0.4, 20, 4)).toBe(false); // -4 vs -4: tie calls
+    expect(callIsWorseThanFold(0.3, 10, 4)).toBe(false); // -4 vs -4: tie calls
+    expect(callIsWorseThanFold(0.3, 10, 3)).toBe(true); // -4 vs -3
+    expect(callIsWorseThanFold(0.4, 20, 3)).toBe(true); // -4 vs -3
+    expect(callIsWorseThanFold(0.5, 20, 0)).toBe(false);
+  });
+
+  it("pot-odds folds follow the stakes, not a fixed edge", () => {
+    const agent = makeStrategy({ ...BASE, foldBelow: "pot-odds", pressureFoldBelow: "pot-odds" });
+    const at = (ante: number, pressured: boolean) =>
+      EDGES.map((e) => agent(view(e, pressured, 1, { ante, baseBet: 10, raisedBet: 20 })));
+    // Classic ante 10: folding never beats calling.
+    expect(at(10, false)).toEqual(["call", "call", "call", "call", "call"]);
+    expect(at(10, true)).toEqual(["call", "call", "call", "call", "call"]);
+    // Ante 3: base bet break-even is 0.35, raised is 0.425.
+    expect(at(3, false)).toEqual(["fold", "call", "call", "call", "call"]);
+    expect(at(3, true)).toEqual(["fold", "fold", "call", "call", "call"]);
+    // Ante 5: base break-even 0.25, raised 0.375.
+    expect(at(5, false)).toEqual(["call", "call", "call", "call", "call"]);
+    expect(at(5, true)).toEqual(["fold", "call", "call", "call", "call"]);
+  });
+
+  it("pot-odds pressure fold is ignored when the opponent did not raise", () => {
+    const agent = makeStrategy({ ...BASE, pressureFoldBelow: "pot-odds" });
+    expect(agent(view(0.3, false, 0, { ante: 3, baseBet: 10, raisedBet: 20 }))).toBe("call");
+    expect(agent(view(0.3, true, 1, { ante: 3, baseBet: 10, raisedBet: 20 }))).toBe("fold");
+  });
+
+  it("agents read the stakes the match was played with", () => {
+    const stakes: Stakes = { ante: 3, baseBet: 10, raisedBet: 20 };
+    const seen: Stakes[] = [];
+    const spy = (v: View): Action => {
+      seen.push(v.stakes);
+      return "call";
+    };
+    playMatch(spy, spy, { seed: 1, stakes });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((s) => s.ante === 3 && s.baseBet === 10 && s.raisedBet === 20)).toBe(true);
   });
 });

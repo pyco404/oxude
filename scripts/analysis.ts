@@ -5,26 +5,32 @@ import {
   PRESETS,
   seatAveragedNet,
   type Agent,
+  type PresetName,
   type Stakes,
 } from "../src/index.js";
 
 export const SPREAD_LIMIT = 1.5;
 /** Exact values within this of zero count as ties. */
 export const TIE = 1e-9;
+/** A probe may beat at most this many presets. */
+export const MAX_PROBE_BEATS = 2;
 
 /** Simple non-preset strategies used to look for exploits. */
 export const PROBES: [string, Agent][] = [
   ["AlwaysRaise", () => "raise"],
-  ["Fold0.3Call", makeStrategy({ foldBelow: 0.35, raiseAtOrAbove: Infinity, bluffAtOrBelow: null, foldIfOppRaisedLastRound: false })],
-  ["Fold<.5R.7", makeStrategy({ foldBelow: 0.45, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, foldIfOppRaisedLastRound: false })],
+  ["Fold0.3Call", makeStrategy({ foldBelow: 0.35, raiseAtOrAbove: 1, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: null })],
+  ["Fold<.5R.7", makeStrategy({ foldBelow: 0.45, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: null })],
 ];
 export const PROBE_NOTES: Record<string, string> = {
   "Fold0.3Call": "fold on 0.3, otherwise call, never raise",
   "Fold<.5R.7": "fold below 0.5, call on 0.5 and 0.6, raise on 0.7",
 };
 
-export const AGENTS: [string, Agent][] = [...PRESET_NAMES.map((n): [string, Agent] => [n, PRESETS[n]]), ...PROBES];
-export const NAMES = AGENTS.map(([n]) => n);
+export const NAMES = [...PRESET_NAMES, ...PROBES.map(([n]) => n)];
+export const agentsFor = (presets: Record<PresetName, Agent>): [string, Agent][] => [
+  ...PRESET_NAMES.map((n): [string, Agent] => [n, presets[n]]),
+  ...PROBES,
+];
 export const P = PRESET_NAMES.length;
 
 /** Relations the preset loop must show: [winner, loser]. */
@@ -51,8 +57,8 @@ export type Analysis = {
 
 export const fmt = (x: number) => (Math.abs(x) < TIE ? " 0.000" : (x >= 0 ? "+" : "") + x.toFixed(3));
 
-export function analyse(stakes: Stakes = CLASSIC_STAKES): Analysis {
-  const matrix = AGENTS.map(([, a]) => PRESET_NAMES.map((n) => seatAveragedNet(a, PRESETS[n], { stakes })));
+export function analyse(stakes: Stakes = CLASSIC_STAKES, presets: Record<PresetName, Agent> = PRESETS): Analysis {
+  const matrix = agentsFor(presets).map(([, a]) => PRESET_NAMES.map((n) => seatAveragedNet(a, presets[n], { stakes })));
   const field = matrix.map((row) => ({
     avg: row.reduce((s, x) => s + x, 0) / P,
     beats: row.filter((x) => x > TIE).length,
@@ -69,7 +75,11 @@ export function analyse(stakes: Stakes = CLASSIC_STAKES): Analysis {
     { label: "1. AlwaysRaise does not beat the presets", ok: ar.avg <= TIE, detail: describe(ar) },
     ...PROBES.slice(1).map(([name]) => {
       const f = field[idx(name)]!;
-      return { label: `2. ${name} does not beat the preset field`, ok: f.avg <= TIE && f.beats < P, detail: describe(f) };
+      return {
+        label: `2. ${name} averages <= 0 and beats at most ${MAX_PROBE_BEATS}/${P}`,
+        ok: f.avg <= TIE && f.beats <= MAX_PROBE_BEATS,
+        detail: describe(f),
+      };
     }),
     {
       label: "3a. Preset loop holds",

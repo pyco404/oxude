@@ -4,6 +4,7 @@ import {
   CLASSIC_STAKES,
   decideRound,
   EDGES,
+  freezeStakes,
   INITIAL_STATE,
   isMatchOver,
   matchWinner,
@@ -16,12 +17,12 @@ export type MatchOptions = {
   seed: number;
   names?: { A: string; B: string };
   /** Defaults to CLASSIC_STAKES (ante 10, base 10, raised 20). */
-  stakes?: Stakes;
+  stakes?: Readonly<Stakes>;
 };
 
 export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): MatchLog {
   const { seed } = options;
-  const stakes: Stakes = { ...(options.stakes ?? CLASSIC_STAKES) };
+  const stakes = freezeStakes(options.stakes ?? CLASSIC_STAKES);
   const rng = mulberry32(seed);
   const rounds: RoundLog[] = [];
   let state = INITIAL_STATE;
@@ -32,7 +33,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
     const edgeA = EDGES[edgeIndex];
     if (edgeA === undefined) throw new Error(`edge index out of range: ${edgeIndex}`);
 
-    const { edgeB, actions } = decideRound(agentA, agentB, state, edgeA);
+    const { edgeB, actions } = decideRound(agentA, agentB, state, edgeA, stakes);
     const resolution = resolveActions(actions, stakes);
 
     let winner: Seat | null = null;
@@ -66,7 +67,7 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
   const winner = matchWinner(state);
   return {
     seed,
-    stakes,
+    stakes: { ...stakes },
     names: options.names ?? { A: "A", B: "B" },
     rounds,
     roundsWon: { ...state.roundsWon },
