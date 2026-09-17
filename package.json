@@ -12,7 +12,8 @@
     "balance": "tsx scripts/balance.ts",
     "check": "npm run typecheck && npm run test",
     "sweep": "tsx scripts/sweep.ts",
-    "search": "tsx scripts/search.ts"
+    "search": "tsx scripts/search.ts",
+    "inspect": "tsx scripts/inspect.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

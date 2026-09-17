@@ -14,6 +14,7 @@ import {
   type TurnOrder,
 } from "../src/index.js";
 import { analyse, fmt, MAX_PROBE_BEATS, NAMES, PROBES, SPREAD_LIMIT, TIE } from "./analysis.js";
+import { writeFileSync } from "node:fs";
 import { selfCheck, tableFor, tableSeatAveraged, type DecisionTable } from "./table-eval.js";
 
 // Exact search for preset parameters that meet the ship criteria across an
@@ -35,6 +36,7 @@ const RANGE = num("--range", 1);
 const BASE = num("--base", CLASSIC_STAKES.baseBet);
 const RAISE = num("--raise", CLASSIC_STAKES.raisedBet);
 const TOP = num("--top", 3);
+const SAVE = flag("--save");
 const REQUIRE_BLUFF = !process.env.ANY_BLUFF;
 const TRICKY_IGNORES_PRESSURE = !process.env.ANY_TRICKY;
 
@@ -266,6 +268,48 @@ console.log(`${byKey.size} distinct behaviours; rejected ${rejected.degenerate} 
 console.log(`Fast evaluator verified against the exact calculator. Matrices ${matrixSeconds.toFixed(0)}s, total ${((Date.now() - started) / 1000).toFixed(0)}s.`);
 console.log(`${loops} loops hold at antes ${HARD.join(", ")}; ${sols.length} sets pass all criteria there; ${robust.length} also pass at ${EXTRA.join(", ")}.`);
 
+// A bluff "lands" when an opponent in the set folds to it in the same round
+// while holding the stronger edge (the complement of the bluffer's edge).
+function landedBluffs(ids: number[]): string[] {
+  if (TURNS !== "alternating") return [];
+  const out: string[] = [];
+  ids.forEach((x, xi) => {
+    const tx = tableAt(cands[x]!, ANTE);
+    [0, 1].forEach((pressured) => {
+      const r = row(tx, pressured, 0);
+      r.forEach((a, e) => {
+        if (a !== 2 || !r.slice(e + 1).some((b) => b !== 2)) return;
+        ids.forEach((y, yi) => {
+          if (y === x) return;
+          const opp = 4 - e;
+          if (opp > 2 && row(tableAt(cands[y]!, ANTE), 0, 2)[opp] === 0) {
+            out.push(`${PRESET_NAMES[xi]} bluff@${(0.3 + e / 10).toFixed(1)}${pressured ? "(pressured)" : ""} folds ${PRESET_NAMES[yi]}@${(0.3 + opp / 10).toFixed(1)}`);
+          }
+        });
+      });
+    });
+  });
+  return out;
+}
+const landing = sols.map((s) => landedBluffs(s.ids));
+console.log(`${landing.filter((l) => l.length > 0).length} of ${sols.length} passing sets contain a bluff that folds an opponent holding the stronger edge.`);
+
+if (SAVE) {
+  const bestParams = (id: number, role: PresetName) =>
+    cands[id]!.params.reduce((b, q) => (changedKeys(q, PRESET_PARAMS[role]).length < changedKeys(b, PRESET_PARAMS[role]).length ? q : b));
+  const out = sols.map((sol, i) => ({
+    cost: sol.cost,
+    worst: sol.worst,
+    allPass: sol.allPass,
+    landedBluffs: landing[i],
+    presets: Object.fromEntries(PRESET_NAMES.map((role, k) => [role, bestParams(sol.ids[k]!, role)])),
+    codes: Object.fromEntries(PRESET_NAMES.map((role, k) => [role, code(tableAt(cands[sol.ids[k]!]!, ANTE))])),
+    bluffers: PRESET_NAMES.filter((_, k) => isBluffer[sol.ids[k]!]),
+  }));
+  writeFileSync(SAVE, JSON.stringify({ turns: TURNS, ante: ANTE, range: RANGE, base: BASE, raise: RAISE, loops, sets: out }, null, 1));
+  console.log(`Saved ${out.length} sets to ${SAVE}`);
+}
+
 // ---- Report ----
 const pad = (s: string, n = 12) => s.padStart(n);
 const fmtT = (x: FoldThreshold | null) => (x === null ? "off" : x === "pot-odds" ? "pot-odds" : String(x));
@@ -290,6 +334,8 @@ function report(sol: Sol, rank: number) {
     console.log(`  ${pad(role, 8)} ${fmtParams(p)}${tags.length ? `  [${tags.join(", ")}]` : ""}`);
     console.log(`  ${pad("", 8)} @${ANTE}: ${code(tableAt(c, ANTE))}   changed: ${changedKeys(p, PRESET_PARAMS[role]).join(", ") || "none"}`);
   });
+  const landed = landedBluffs(sol.ids);
+  console.log(`  Bluffs that fold an opponent holding the stronger edge: ${landed.length ? landed.join("; ") : "none"}`);
   const a = analyse(stakes, presets, TURNS);
   console.log(`  Exact matrix at ante ${ANTE} (general calculator):`);
   console.log(pad("row vs col") + PRESET_NAMES.map((n) => pad(n)).join("") + pad("vs presets"));
