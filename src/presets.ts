@@ -21,6 +21,12 @@ export type StrategyParams = {
    * the ante. null: ignore pressure.
    */
   pressureFoldBelow: FoldThreshold | null;
+  /**
+   * Turn-based only: when the opponent has already raised this round, fold if
+   * myEdge is below this, otherwise call. "pot-odds": fold when calling the
+   * raised bet is worth less than paying the ante. null: always call a raise.
+   */
+  foldToRaiseBelow: FoldThreshold | null;
 };
 
 /**
@@ -39,6 +45,7 @@ function isBelow(edge: number, threshold: FoldThreshold, bet: number, ante: numb
 
 /**
  * Shared factory for presets and custom strategies. Rule order:
+ *   0. facing a raise this round (turn-based): fold below foldToRaiseBelow, else call
  *   1. bluff, if bluffUnderPressure                       -> raise
  *   2. opponent raised last round and edge below pressureFoldBelow -> fold
  *   3. bluff                                              -> raise
@@ -48,8 +55,13 @@ function isBelow(edge: number, threshold: FoldThreshold, bet: number, ante: numb
  * With bluffUnderPressure false and numeric thresholds this is the original order.
  */
 export function makeStrategy(params: StrategyParams): Agent {
-  const { foldBelow, raiseAtOrAbove, bluffAtOrBelow, bluffUnderPressure, pressureFoldBelow } = params;
-  return ({ myEdge, oppRaisedLastRound, stakes }) => {
+  const { foldBelow, raiseAtOrAbove, bluffAtOrBelow, bluffUnderPressure, pressureFoldBelow, foldToRaiseBelow } =
+    params;
+  return ({ myEdge, oppRaisedLastRound, oppActionThisRound, stakes }) => {
+    if (oppActionThisRound === "raise") {
+      const folds = foldToRaiseBelow !== null && isBelow(myEdge, foldToRaiseBelow, stakes.raisedBet, stakes.ante);
+      return folds ? "fold" : "call";
+    }
     const bluff = bluffAtOrBelow !== null && myEdge <= bluffAtOrBelow;
     if (bluff && bluffUnderPressure) return "raise";
     if (
@@ -67,10 +79,10 @@ export function makeStrategy(params: StrategyParams): Agent {
 }
 
 export const PRESET_PARAMS = {
-  Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
-  Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
-  Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6 },
-  Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null },
+  Reckless: { foldBelow: 0.0, raiseAtOrAbove: 0.55, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
+  Steady: { foldBelow: 0.35, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
+  Patient: { foldBelow: 0.35, raiseAtOrAbove: 0.65, bluffAtOrBelow: null, bluffUnderPressure: false, pressureFoldBelow: 0.6, foldToRaiseBelow: null },
+  Tricky: { foldBelow: 0.45, raiseAtOrAbove: 0.55, bluffAtOrBelow: 0.32, bluffUnderPressure: false, pressureFoldBelow: null, foldToRaiseBelow: null },
 } as const satisfies Record<string, StrategyParams>;
 
 export type PresetName = keyof typeof PRESET_PARAMS;
