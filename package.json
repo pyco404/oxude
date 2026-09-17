@@ -2,7 +2,7 @@
   "name": "oxude",
   "version": "0.0.1",
   "private": true,
-  "description": "Oxude match engine — agent-versus-agent betting game.",
+  "description": "Oxude match engine \u2014 agent-versus-agent betting game.",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -15,7 +15,10 @@
     "search": "tsx scripts/search.ts",
     "inspect": "tsx scripts/inspect.ts",
     "score-policies": "tsx scripts/score-policies.ts",
-    "brief-sweep": "tsx scripts/brief-sweep.ts"
+    "brief-sweep": "tsx scripts/brief-sweep.ts",
+    "seed-roster": "tsx scripts/seed-roster.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

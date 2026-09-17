@@ -1,12 +1,14 @@
 import { PGlite } from "@electric-sql/pglite";
-import { drizzle as drizzlePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import * as schema from "./schema.js";
 
-export type Db = NodePgDatabase<typeof schema> | PgliteDatabase<typeof schema>;
+/** Either driver, through the query builder they share. */
+export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 /**
  * A real Postgres when DATABASE_URL is set (docker-compose provides one),
