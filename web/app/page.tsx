@@ -227,8 +227,8 @@ function Header({ ownerId }: { ownerId: string }) {
     <header className="mb-5">
       <div className="flex items-center justify-between">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-[0.2em] text-red">
-          {/* The mark is the one piece of art here; the chrome around it stays flat. */}
-          <img src="/oxude-cb.png" alt="" width={28} height={28} className="h-7 w-7" />
+          {/* The mark on its transparent field; the chrome around it stays flat. */}
+          <img src="/oxude-tb.png" alt="" width={32} height={32} className="h-8 w-8" />
           OXUDE
         </h1>
         <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
