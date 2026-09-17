@@ -47,7 +47,12 @@ beforeAll(async () => {
     await createAgent(db, { name: `Roster-${i}`, presetName: PRESET_NAMES[i % PRESET_NAMES.length]! });
   }
   await refreshTrueRatings(db);
-  ({ url, close: closeServer } = await listen({ db, elicit, rateLimit: { limit: 3, windowMs: 60_000 } }));
+  ({ url, close: closeServer } = await listen({
+    db,
+    elicit,
+    rateLimit: { limit: 3, windowMs: 60_000 },
+    playRateLimit: { limit: 4, windowMs: 60_000 },
+  }));
 });
 afterAll(async () => {
   await closeServer();
@@ -215,5 +220,38 @@ describe("transport", () => {
     const bad = await api("/preview", { method: "POST", body: "{not json" });
     expect(bad.status).toBe(400);
     expect((await readBody(bad)).error).toMatch(/valid JSON/);
+  });
+});
+
+describe("play rate limit", () => {
+  it("caps matches per owner and keeps the writes bounded", async () => {
+    const owner = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Busy", presetName: "Bully" }) }),
+    );
+    const play = () => api(`/agents/${created.agent.id}/play`, { method: "POST", owner });
+    for (let i = 0; i < 4; i++) expect((await play()).status).toBe(201);
+
+    const limited = await play();
+    expect(limited.status).toBe(429);
+    expect((await readBody(limited)).error).toMatch(/playing matches/);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+});
+
+describe("GET /presets", () => {
+  it("serves the shipped tables free, so the UI can rate them without a model call", async () => {
+    const before = elicitCalls;
+    const res = await api("/presets", { owner: null });
+    expect(res.status).toBe(200);
+    const listed = await readBody(res);
+    expect(listed.free).toBe(true);
+    expect(listed.presets.map((p: { name: string }) => p.name)).toEqual(PRESET_NAMES);
+
+    const preview = await readBody(
+      await api("/preview", { method: "POST", body: JSON.stringify({ policyTable: listed.presets[0].policyTable }) }),
+    );
+    expect(typeof preview.preview.trueRating).toBe("number");
+    expect(elicitCalls).toBe(before);
   });
 });

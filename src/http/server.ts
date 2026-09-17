@@ -8,6 +8,7 @@ import type { Db } from "../db/client.js";
 import { agents, matches } from "../db/schema.js";
 import {
   createAgent,
+  snapshotPreset,
   leaderboard,
   ownerAgent,
   pickOpponent,
@@ -19,8 +20,16 @@ import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.j
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 
 /**
- * Thin HTTP layer over the runner. Auth is a stub: an owner id from a header.
- * Wallet auth replaces it later, so nothing here should be trusted as identity.
+ * Thin HTTP layer over the runner.
+ *
+ * !!! STUB_AUTH_MUST_NOT_SHIP !!!
+ * Identity is an owner id read straight from the x-owner-id header. Anyone can
+ * send anyone's id, so this is not authentication: it separates callers for
+ * rate limiting and ownership checks during development and nothing more. With
+ * it in place, any caller can read any owner's brief and table and can play
+ * their agents. Replace with a wallet signature - sign a nonce, recover the
+ * address, bind the session - before anything is staked. Grep for
+ * STUB_AUTH_MUST_NOT_SHIP.
  */
 export type Elicit = (input: { brief: string }) => Promise<{ table: Policy | null; reason?: string }>;
 
@@ -28,8 +37,10 @@ export type AppOptions = {
   db: Db;
   /** Defaults to one model call per request. Injected in tests so they never spend money. */
   elicit?: Elicit;
-  /** Applies to the endpoints that can reach a model. */
+  /** Applies to the endpoints that can reach a model. Default 5 a minute. */
   rateLimit?: RateLimitRule;
+  /** Applies to playing matches: no model call, but it writes rows. Default 30 a minute. */
+  playRateLimit?: RateLimitRule;
   now?: () => number;
 };
 
@@ -55,6 +66,9 @@ export function createApp(options: AppOptions): Server {
   const { db } = options;
   const elicit = options.elicit ?? defaultElicit;
   const limiter = new RateLimiter(options.rateLimit ?? { limit: 5, windowMs: 60_000 }, options.now);
+  // Playing costs no money but writes a match row and rewrites two ratings;
+  // unbounded, it is a cheap way to bloat the transcript table.
+  const playLimiter = new RateLimiter(options.playRateLimit ?? { limit: 30, windowMs: 60_000 }, options.now);
 
   const routes: [string, RegExp, (ctx: Ctx) => Promise<unknown>][] = [
     ["POST", /^\/agents$/, postAgent],
@@ -62,6 +76,7 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
     ["GET", /^\/ladder$/, getLadder],
+    ["GET", /^\/presets$/, getPresets],
     ["POST", /^\/preview$/, postPreview],
   ];
 
@@ -74,6 +89,8 @@ export function createApp(options: AppOptions): Server {
     requireOwner: () => string;
     /** Throws 429 when the caller has spent its allowance on model-touching endpoints. */
     spend: () => void;
+    /** Throws 429 when the caller has played too many matches this minute. */
+    spendPlay: () => void;
     refund: () => void;
   };
 
@@ -149,6 +166,7 @@ export function createApp(options: AppOptions): Server {
     if (!row) throw new HttpError(404, "no such agent");
     if (row.ownerId !== null && row.ownerId !== ctx.ownerId) throw new HttpError(403, "that agent belongs to someone else");
     if (row.retiredAt !== null) throw new HttpError(409, "that agent is retired");
+    ctx.spendPlay();
 
     const pick = await pickOpponent(db, id);
     const { match, log } = await runMatch(db, id, pick.opponentId);
@@ -195,6 +213,14 @@ export function createApp(options: AppOptions): Server {
     }
     const limit = Math.min(Number(ctx.query.get("limit") ?? 50) || 50, 200);
     return { sort, rows: await leaderboard(db, limit, sort) };
+  }
+
+  /** Public and free: the shipped tables, so the UI can rate them without a model call. */
+  async function getPresets() {
+    return {
+      presets: PRESET_NAMES.map((name) => ({ name, policyTable: snapshotPreset(name) })),
+      free: true,
+    };
   }
 
   async function postPreview(ctx: Ctx) {
@@ -262,6 +288,14 @@ export function createApp(options: AppOptions): Server {
         spent = true;
         if (!result.ok) {
           throw new HttpError(429, "rate limit reached for model-backed requests", {
+            retryAfterSeconds: result.retryAfterSeconds,
+          });
+        }
+      },
+      spendPlay: () => {
+        const result = playLimiter.take(limitKey);
+        if (!result.ok) {
+          throw new HttpError(429, "rate limit reached for playing matches", {
             retryAfterSeconds: result.retryAfterSeconds,
           });
         }
