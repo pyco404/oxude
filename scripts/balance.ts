@@ -1,16 +1,19 @@
-import { mulberry32, nextUint32, playMatch, PRESET_NAMES, PRESETS } from "../src/index.js";
+import { mulberry32, nextUint32, playMatch, PRESET_NAMES, PRESETS, type Deal, type TurnOrder } from "../src/index.js";
 import { agentsFor, analyse, fmt, NAMES, P, PROBE_NOTES, stakesFromEnv } from "./analysis.js";
 
-// Usage: npm run balance [-- --no-sim]; ANTE=5 RAISED_BET=25 BASE_BET=10 BALANCE_SEED=1 to vary.
+// Usage: npm run balance [-- --no-sim]; ANTE=5 RAISED_BET=25 BASE_BET=10 BALANCE_SEED=1
+// TURNS=alternating DEAL=independent to vary.
 const MATCHES = 20_000;
 const MASTER_SEED = Number(process.env.BALANCE_SEED ?? 0x0de5eed);
 const SIMULATE = !process.argv.includes("--no-sim");
 
 const stakes = stakesFromEnv();
-const a = analyse(stakes);
+const turnOrder = (process.env.TURNS ?? "simultaneous") as TurnOrder;
+const deal = (process.env.DEAL ?? "complementary") as Deal;
+const a = analyse(stakes, PRESETS, turnOrder, deal);
 const pad = (s: string, n = 12) => s.padStart(n);
 
-console.log(`Stakes: ante ${stakes.ante}, base bet ${stakes.baseBet}, raised bet ${stakes.raisedBet}`);
+console.log(`Turn order ${turnOrder}, deal ${deal}. Stakes: ante ${stakes.ante}, base bet ${stakes.baseBet}, raised bet ${stakes.raisedBet}`);
 for (const [name, text] of Object.entries(PROBE_NOTES)) console.log(`  ${name}: ${text}`);
 
 console.log("\nExact expected net of row vs column (both seatings):");
@@ -33,8 +36,8 @@ if (SIMULATE) {
       let sum = 0;
       let sq = 0;
       for (let k = 0; k < MATCHES; k++) {
-        const asA = playMatch(agent, PRESETS[colName], { seed: nextUint32(master), stakes }).nets.A;
-        const asB = -playMatch(PRESETS[colName], agent, { seed: nextUint32(master), stakes }).nets.A;
+        const asA = playMatch(agent, PRESETS[colName], { seed: nextUint32(master), stakes, turnOrder, deal }).nets.A;
+        const asB = -playMatch(PRESETS[colName], agent, { seed: nextUint32(master), stakes, turnOrder, deal }).nets.A;
         const net = (asA + asB) / 2;
         sum += net;
         sq += net * net;

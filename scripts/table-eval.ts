@@ -6,6 +6,7 @@ import {
   expectedNet,
   type Action,
   type Agent,
+  type Deal,
   type Stakes,
   type TurnOrder,
 } from "../src/index.js";
@@ -54,7 +55,21 @@ export function tableFor(agent: Agent, stakes: Readonly<Stakes>): DecisionTable 
 }
 
 /** Expected net for A. Alternating play averages over the round-1 leader coin. */
-export function tableNet(tA: DecisionTable, tB: DecisionTable, stakes: Readonly<Stakes>, turnOrder: TurnOrder): number {
+// Edge-index pairs per deal: [iA, iB, probability, P(A wins)].
+const PCT = EDGES.map((e) => Math.round(e * 100));
+const PAIRS: Record<Deal, [number, number, number, number][]> = {
+  complementary: PCT.map((p, i) => [i, E - 1 - i, 1 / E, p / 100]),
+  independent: PCT.flatMap((pa, i) => PCT.map((pb, j): [number, number, number, number] => [i, j, 1 / (E * E), (50 + pa - pb) / 100])),
+};
+
+export function tableNet(
+  tA: DecisionTable,
+  tB: DecisionTable,
+  stakes: Readonly<Stakes>,
+  turnOrder: TurnOrder,
+  deal: Deal = "complementary",
+): number {
+  const pairs = PAIRS[deal];
   const { ante, baseBet, raisedBet } = stakes;
   const memo = new Float64Array(2 * 2 * 2 * 2 * 2 * 2 * (MAX_ROUNDS + 1));
   const done = new Uint8Array(memo.length);
@@ -64,9 +79,7 @@ export function tableNet(tA: DecisionTable, tB: DecisionTable, stakes: Readonly<
     const key = ((((round * 2 + wA) * 2 + wB) * 2 + lastA) * 2 + lastB) * 3 + leader;
     if (key < memo.length && done[key]) return memo[key]!;
     let total = 0;
-    for (let i = 0; i < E; i++) {
-      const edgeA = EDGES[i]!;
-      const j = E - 1 - i;
+    for (const [i, j, prob, pWin] of pairs) {
       let aAct: number, bAct: number;
       if (leader === 2) {
         aAct = at(tA, lastB, 0, i);
@@ -104,12 +117,12 @@ export function tableNet(tA: DecisionTable, tB: DecisionTable, stakes: Readonly<
       } else {
         const bet = aAct === RAISE || bAct === RAISE ? raisedBet : baseBet;
         ev =
-          edgeA * (bet + value(round + 1, wA + 1, wB, nA, nB, nextLeader)) +
-          (1 - edgeA) * (-bet + value(round + 1, wA, wB + 1, nA, nB, nextLeader));
+          pWin * (bet + value(round + 1, wA + 1, wB, nA, nB, nextLeader)) +
+          (1 - pWin) * (-bet + value(round + 1, wA, wB + 1, nA, nB, nextLeader));
       }
-      total += ev;
+      total += prob * ev;
     }
-    const v = total / E;
+    const v = total;
     if (key < memo.length) {
       memo[key] = v;
       done[key] = 1;
@@ -120,15 +133,25 @@ export function tableNet(tA: DecisionTable, tB: DecisionTable, stakes: Readonly<
   return (value(1, 0, 0, 0, 0, 0) + value(1, 0, 0, 0, 0, 1)) / 2;
 }
 
-export const tableSeatAveraged = (tX: DecisionTable, tY: DecisionTable, stakes: Readonly<Stakes>, turnOrder: TurnOrder) =>
-  (tableNet(tX, tY, stakes, turnOrder) - tableNet(tY, tX, stakes, turnOrder)) / 2;
+export const tableSeatAveraged = (
+  tX: DecisionTable,
+  tY: DecisionTable,
+  stakes: Readonly<Stakes>,
+  turnOrder: TurnOrder,
+  deal: Deal = "complementary",
+) => (tableNet(tX, tY, stakes, turnOrder, deal) - tableNet(tY, tX, stakes, turnOrder, deal)) / 2;
 
 /** Throws unless the fast evaluator matches the general exact calculator on the given pairs. */
-export function selfCheck(pairs: [Agent, Agent][], stakes: Readonly<Stakes>, turnOrder: TurnOrder): number {
+export function selfCheck(
+  pairs: [Agent, Agent][],
+  stakes: Readonly<Stakes>,
+  turnOrder: TurnOrder,
+  deal: Deal = "complementary",
+): number {
   let worst = 0;
   for (const [a, b] of pairs) {
-    const fast = tableNet(tableFor(a, stakes), tableFor(b, stakes), stakes, turnOrder);
-    const slow = expectedNet(a, b, { stakes, turnOrder });
+    const fast = tableNet(tableFor(a, stakes), tableFor(b, stakes), stakes, turnOrder, deal);
+    const slow = expectedNet(a, b, { stakes, turnOrder, deal });
     worst = Math.max(worst, Math.abs(fast - slow));
   }
   if (worst > 1e-9) throw new Error(`table-eval disagrees with expectedNet by ${worst}`);

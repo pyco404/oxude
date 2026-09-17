@@ -11,19 +11,22 @@ import {
   type PresetName,
   type Stakes,
   type StrategyParams,
+  type Deal,
   type TurnOrder,
 } from "../src/index.js";
 import { analyse, fmt, MAX_PROBE_BEATS, NAMES, PROBES, SPREAD_LIMIT, TIE } from "./analysis.js";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { selfCheck, tableFor, tableSeatAveraged, type DecisionTable } from "./table-eval.js";
 
 // Exact search for preset parameters that meet the ship criteria across an
 // ante range (every criterion must hold at the low end, the centre and the
 // high end; the points in between are then checked and reported).
 //
-// Usage: npm run search -- [--turns simultaneous|alternating] [--ante 4] [--range 1]
+// Usage: npm run search -- [--turns simultaneous|alternating] [--deal complementary|independent] [--ante 4] [--range 1]
+//                          [--max-sets N: stop after N passing sets] [--save-limit N]
 //                          [--base 10] [--raise 20] [--top 3]
-// Env: ANY_BLUFF=1 drops the bluffer requirement; ANY_TRICKY=1 lets Tricky react to pressure.
+// Env: ANY_BLUFF=1 drops the bluffer requirement; NOMINAL_BLUFF=1 accepts a bluffer whose bluffs never
+// fold anyone; ANY_TRICKY=1 lets Tricky react to pressure.
 const flag = (name: string) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -31,13 +34,32 @@ const flag = (name: string) => {
 const num = (name: string, fallback: number) => Number(flag(name) ?? fallback);
 const TURNS = (flag("--turns") ?? "simultaneous") as TurnOrder;
 if (TURNS !== "simultaneous" && TURNS !== "alternating") throw new Error(`--turns must be simultaneous or alternating`);
+const DEAL = (flag("--deal") ?? "complementary") as Deal;
+if (DEAL !== "complementary" && DEAL !== "independent") throw new Error(`--deal must be complementary or independent`);
 const ANTE = num("--ante", 4);
 const RANGE = num("--range", 1);
 const BASE = num("--base", CLASSIC_STAKES.baseBet);
 const RAISE = num("--raise", CLASSIC_STAKES.raisedBet);
 const TOP = num("--top", 3);
 const SAVE = flag("--save");
+/** Cap on sets written to the JSON file; the .jsonl beside it always holds them all. */
+const SAVE_LIMIT = num("--save-limit", 500);
+/** Stop enumerating once this many sets pass (Infinity = exhaustive). */
+const MAX_SETS = num("--max-sets", Infinity);
+/** Passing sets are appended here as they are found, so a crash keeps the work. */
+const INCREMENTAL = SAVE ? SAVE.replace(/\.json$/, "") + ".jsonl" : undefined;
+
+const startedAt = Date.now();
+const elapsed = () => ((Date.now() - startedAt) / 1000).toFixed(0) + "s";
+/** Progress line with elapsed time and a remaining estimate from work done so far. */
+function progress(label: string, done: number, total: number) {
+  const secs = (Date.now() - startedAt) / 1000;
+  const eta = done > 0 ? (secs * (total - done)) / done : 0;
+  const pct = ((100 * done) / total).toFixed(0);
+  console.log(`  [${elapsed()}] ${label}: ${done}/${total} (${pct}%), about ${eta.toFixed(0)}s left`);
+}
 const REQUIRE_BLUFF = !process.env.ANY_BLUFF;
+const REQUIRE_LANDED = REQUIRE_BLUFF && !process.env.NOMINAL_BLUFF && TURNS === "alternating";
 const TRICKY_IGNORES_PRESSURE = !process.env.ANY_TRICKY;
 
 const stakesAt = (ante: number): Stakes => ({ ante, baseBet: BASE, raisedBet: RAISE });
@@ -122,26 +144,35 @@ const trickyOk = cands.map((c) => !TRICKY_IGNORES_PRESSURE || HARD.every((a) => 
   const sample: [Agent, Agent][] = [];
   for (let k = 0; k < 60; k++) sample.push([cands[(k * 7919) % N]!.agent, cands[(k * 104729 + 13) % N]!.agent]);
   sample.push([() => "raise", cands[0]!.agent], [PROBES[1]![1], cands[N - 1]!.agent]);
-  for (const a of [...HARD, ...EXTRA]) selfCheck(sample, stakesAt(a), TURNS);
+  for (const a of [...HARD, ...EXTRA]) selfCheck(sample, stakesAt(a), TURNS, DEAL);
 }
 
-const started = Date.now();
 // ---- Exact matrices at the hard antes ----
+const started = Date.now();
+console.log(`[${elapsed()}] Building ${HARD.length} exact matrices over ${N} candidates (${((N * (N - 1)) / 2) * HARD.length} pairs)...`);
 const M = HARD.map(() => new Float64Array(N * N));
 const PV = HARD.map(() => PROBES.map(() => new Float64Array(N)));
+const pairTotal = (N * (N - 1)) / 2;
 HARD.forEach((ante, h) => {
   const s = stakesAt(ante);
   const ts = cands.map((c) => tableAt(c, ante));
+  let nextReport = Date.now() + 30_000;
   for (let i = 0; i < N; i++) {
+    if (Date.now() > nextReport) {
+      // Pair count grows as i advances; progress by pairs done, not rows.
+      progress(`matrix ${h + 1}/${HARD.length}`, h * pairTotal + i * N - (i * (i + 1)) / 2, HARD.length * pairTotal);
+      nextReport = Date.now() + 30_000;
+    }
     for (let j = i + 1; j < N; j++) {
-      const v = tableSeatAveraged(ts[i]!, ts[j]!, s, TURNS);
+      const v = tableSeatAveraged(ts[i]!, ts[j]!, s, TURNS, DEAL);
       M[h]![i * N + j] = v;
       M[h]![j * N + i] = -v;
     }
-    PROBES.forEach((_, k) => (PV[h]![k]![i] = tableSeatAveraged(probeTables[k]!.get(ante)!, ts[i]!, s, TURNS)));
+    PROBES.forEach((_, k) => (PV[h]![k]![i] = tableSeatAveraged(probeTables[k]!.get(ante)!, ts[i]!, s, TURNS, DEAL)));
   }
 });
 const matrixSeconds = (Date.now() - started) / 1000;
+console.log(`[${elapsed()}] Matrices done in ${matrixSeconds.toFixed(0)}s; enumerating loops...`);
 
 // Lazy values at the extra antes.
 const extraMemo = new Map<string, number>();
@@ -153,7 +184,7 @@ function valueAt(i: number, j: number, ante: number): number {
   let v = extraMemo.get(key);
   if (v === undefined) {
     const [a, b] = [Math.min(i, j), Math.max(i, j)];
-    v = tableSeatAveraged(tableAt(cands[a]!, ante), tableAt(cands[b]!, ante), stakesAt(ante), TURNS);
+    v = tableSeatAveraged(tableAt(cands[a]!, ante), tableAt(cands[b]!, ante), stakesAt(ante), TURNS, DEAL);
     extraMemo.set(key, v);
   }
   return i < j ? v : -v;
@@ -164,7 +195,7 @@ function probeAt(k: number, i: number, ante: number): number {
   const key = `p${ante}:${k}:${i}`;
   let v = extraMemo.get(key);
   if (v === undefined) {
-    v = tableSeatAveraged(tableFor(PROBES[k]![1], stakesAt(ante)), tableAt(cands[i]!, ante), stakesAt(ante), TURNS);
+    v = tableSeatAveraged(tableFor(PROBES[k]![1], stakesAt(ante)), tableAt(cands[i]!, ante), stakesAt(ante), TURNS, DEAL);
     extraMemo.set(key, v);
   }
   return v;
@@ -196,6 +227,52 @@ function check(ids: number[], ante: number): Check {
   return { ok, margin: worst[1], binding: beatsOk ? worst[0] : "probe beats > 2" };
 }
 
+// A bluff "lands" when another preset in the set folds to it in the same
+// round while holding the higher edge: under the complementary deal that is
+// the complement of the bluffer's edge; under the independent deal any higher edge.
+function bluffLandsOn(x: number, y: number, ante: number): string[] {
+  if (TURNS !== "alternating") return [];
+  const out: string[] = [];
+  const tx = tableAt(cands[x]!, ante);
+  const facing = row(tableAt(cands[y]!, ante), 0, 2);
+  [0, 1].forEach((pressured) => {
+    const r = row(tx, pressured, 0);
+    r.forEach((a, e) => {
+      if (a !== 2 || !r.slice(e + 1).some((b) => b !== 2)) return;
+      const opps = DEAL === "complementary" ? [4 - e].filter((o) => o > e) : [0, 1, 2, 3, 4].filter((o) => o > e);
+      for (const o of opps) {
+        if (facing[o] === 0) out.push(`bluff@${(0.3 + e / 10).toFixed(1)}${pressured ? "(pressured)" : ""} folds @${(0.3 + o / 10).toFixed(1)}`);
+      }
+    });
+  });
+  return out;
+}
+function landedBluffs(ids: number[]): string[] {
+  return ids.flatMap((x, xi) =>
+    ids.flatMap((y, yi) => (x === y ? [] : bluffLandsOn(x, y, ANTE).map((d) => `${PRESET_NAMES[xi]} ${d} (${PRESET_NAMES[yi]})`))),
+  );
+}
+/**
+ * landsBits[x] = the candidates whose fold-to-raise rule folds one of x's
+ * bluffs at every hard ante. Precomputed once: the loop enumeration checks
+ * hundreds of millions of sets, so this must be a bit test, not a lookup.
+ */
+const LW = Math.ceil(N / 32);
+const landsBits = new Uint32Array(REQUIRE_LANDED ? N * LW : 0);
+if (REQUIRE_LANDED) {
+  const t0 = Date.now();
+  for (let x = 0; x < N; x++) {
+    if (!isBluffer[x]) continue;
+    for (let y = 0; y < N; y++) {
+      if (x !== y && HARD.every((a) => bluffLandsOn(x, y, a).length > 0)) landsBits[x * LW + (y >>> 5)]! |= 1 << (y & 31);
+    }
+  }
+  console.log(`[${elapsed()}] Precomputed landed-bluff pairs in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+}
+const landsOn = (x: number, y: number) => (landsBits[x * LW + (y >>> 5)]! & (1 << (y & 31))) !== 0;
+const hasLandedBluffer = (ids: number[]) =>
+  ids.some((x) => isBluffer[x] && ids.some((y) => y !== x && landsOn(x, y)));
+
 // ---- Loop enumeration: loop must hold at every hard ante ----
 const W = Math.ceil(N / 32);
 const beats = new Uint32Array(N * W);
@@ -224,12 +301,27 @@ function changedKeys(p: StrategyParams, o: StrategyParams) {
   return (Object.keys(o) as (keyof StrategyParams)[]).filter((k) => p[k] !== o[k]);
 }
 
+class EnoughSets extends Error {}
 type Sol = { ids: number[]; cost: number; worst: number; allPass: boolean };
 const sols: Sol[] = [];
 let loops = 0;
+let lastReport = Date.now();
+const bestParams = (id: number, role: PresetName) =>
+  cands[id]!.params.reduce((b, q) => (changedKeys(q, PRESET_PARAMS[role]).length < changedKeys(b, PRESET_PARAMS[role]).length ? q : b));
+const describe = (sol: Sol) => ({
+  cost: sol.cost,
+  worst: sol.worst,
+  allPass: sol.allPass,
+  landedBluffs: landedBluffs(sol.ids),
+  presets: Object.fromEntries(PRESET_NAMES.map((role, k) => [role, bestParams(sol.ids[k]!, role)])),
+  codes: Object.fromEntries(PRESET_NAMES.map((role, k) => [role, code(tableAt(cands[sol.ids[k]!]!, ANTE))])),
+  bluffers: PRESET_NAMES.filter((_, k) => isBluffer[sol.ids[k]!]),
+});
 const ts = new Uint32Array(W);
 const sp = new Uint32Array(W);
 const pr = new Uint32Array(W);
+let stoppedEarly = false;
+try {
 for (let t = 0; t < N; t++) {
   if (!trickyOk[t]) continue;
   each(beats, t * W, (s) => {
@@ -243,16 +335,29 @@ for (let t = 0; t < N; t++) {
         loops++;
         if (REQUIRE_BLUFF && !(isBluffer[r] || isBluffer[s] || isBluffer[p] || isBluffer[t])) return;
         const ids = [r, s, p, t];
+        if (REQUIRE_LANDED && !hasLandedBluffer(ids)) return;
         let worst = Infinity;
         for (const a of HARD) {
           const c = check(ids, a);
           if (!c.ok) return;
           worst = Math.min(worst, c.margin);
         }
-        sols.push({ ids, cost: ids.reduce((acc, id, k) => acc + cost[k]![id]!, 0), worst, allPass: false });
+        const sol = { ids, cost: ids.reduce((acc, id, k) => acc + cost[k]![id]!, 0), worst, allPass: false };
+        sols.push(sol);
+        if (INCREMENTAL) appendFileSync(INCREMENTAL, JSON.stringify(describe(sol)) + "\n");
+        if (sols.length >= MAX_SETS) throw new EnoughSets();
+        if (Date.now() > lastReport + 30_000) {
+          console.log(`  [${elapsed()}] ${loops} loops checked, ${sols.length} sets passing (Tricky ${t + 1}/${N})`);
+          lastReport = Date.now();
+        }
       });
     });
   });
+}
+} catch (e) {
+  if (!(e instanceof EnoughSets)) throw e;
+  stoppedEarly = true;
+  console.log(`[${elapsed()}] Stopped after ${sols.length} passing sets (--max-sets ${MAX_SETS}); counts below are partial.`);
 }
 for (const sol of sols) {
   const extra = EXTRA.map((a) => check(sol.ids, a));
@@ -262,52 +367,23 @@ for (const sol of sols) {
 sols.sort((a, b) => +b.allPass - +a.allPass || b.worst - a.worst || a.cost - b.cost);
 const robust = sols.filter((s) => s.allPass);
 
-console.log(`Turn order: ${TURNS}. Stakes base ${BASE} / raise ${RAISE}; ante ${HARD[0]}..${HARD[2]} around ${ANTE}.`);
-console.log(`Constraints: ${REQUIRE_BLUFF ? "at least one bluffer" : "no bluffer required"}; ${TRICKY_IGNORES_PRESSURE ? "Tricky ignores pressure" : "Tricky unconstrained"}.`);
+console.log(`Turn order: ${TURNS}. Deal: ${DEAL}. Stakes base ${BASE} / raise ${RAISE}; ante ${HARD[0]}..${HARD[2]} around ${ANTE}.`);
+console.log(`Constraints: ${REQUIRE_LANDED ? "a bluffer whose bluff folds a stronger preset in the set" : REQUIRE_BLUFF ? "at least one (nominal) bluffer" : "no bluffer required"}; ${TRICKY_IGNORES_PRESSURE ? "Tricky ignores pressure" : "Tricky unconstrained"}.`);
 console.log(`${byKey.size} distinct behaviours; rejected ${rejected.degenerate} degenerate, ${rejected.probe} probe-identical; ${N} searched (${isBluffer.filter(Boolean).length} bluffers).`);
 console.log(`Fast evaluator verified against the exact calculator. Matrices ${matrixSeconds.toFixed(0)}s, total ${((Date.now() - started) / 1000).toFixed(0)}s.`);
-console.log(`${loops} loops hold at antes ${HARD.join(", ")}; ${sols.length} sets pass all criteria there; ${robust.length} also pass at ${EXTRA.join(", ")}.`);
+console.log(`${stoppedEarly ? "(partial, stopped early) " : ""}${loops} loops hold at antes ${HARD.join(", ")}; ${sols.length} sets pass all criteria there; ${robust.length} also pass at ${EXTRA.join(", ")}.`);
 
-// A bluff "lands" when an opponent in the set folds to it in the same round
-// while holding the stronger edge (the complement of the bluffer's edge).
-function landedBluffs(ids: number[]): string[] {
-  if (TURNS !== "alternating") return [];
-  const out: string[] = [];
-  ids.forEach((x, xi) => {
-    const tx = tableAt(cands[x]!, ANTE);
-    [0, 1].forEach((pressured) => {
-      const r = row(tx, pressured, 0);
-      r.forEach((a, e) => {
-        if (a !== 2 || !r.slice(e + 1).some((b) => b !== 2)) return;
-        ids.forEach((y, yi) => {
-          if (y === x) return;
-          const opp = 4 - e;
-          if (opp > 2 && row(tableAt(cands[y]!, ANTE), 0, 2)[opp] === 0) {
-            out.push(`${PRESET_NAMES[xi]} bluff@${(0.3 + e / 10).toFixed(1)}${pressured ? "(pressured)" : ""} folds ${PRESET_NAMES[yi]}@${(0.3 + opp / 10).toFixed(1)}`);
-          }
-        });
-      });
-    });
-  });
-  return out;
-}
 const landing = sols.map((s) => landedBluffs(s.ids));
-console.log(`${landing.filter((l) => l.length > 0).length} of ${sols.length} passing sets contain a bluff that folds an opponent holding the stronger edge.`);
+console.log(`${landing.filter((l) => l.length > 0).length} of ${sols.length} passing sets contain a bluff that folds a preset holding the higher edge.`);
+
 
 if (SAVE) {
-  const bestParams = (id: number, role: PresetName) =>
-    cands[id]!.params.reduce((b, q) => (changedKeys(q, PRESET_PARAMS[role]).length < changedKeys(b, PRESET_PARAMS[role]).length ? q : b));
-  const out = sols.map((sol, i) => ({
-    cost: sol.cost,
-    worst: sol.worst,
-    allPass: sol.allPass,
-    landedBluffs: landing[i],
-    presets: Object.fromEntries(PRESET_NAMES.map((role, k) => [role, bestParams(sol.ids[k]!, role)])),
-    codes: Object.fromEntries(PRESET_NAMES.map((role, k) => [role, code(tableAt(cands[sol.ids[k]!]!, ANTE))])),
-    bluffers: PRESET_NAMES.filter((_, k) => isBluffer[sol.ids[k]!]),
-  }));
-  writeFileSync(SAVE, JSON.stringify({ turns: TURNS, ante: ANTE, range: RANGE, base: BASE, raise: RAISE, loops, sets: out }, null, 1));
-  console.log(`Saved ${out.length} sets to ${SAVE}`);
+  // Ranked order, capped: JSON.stringify cannot build a string for hundreds of
+  // thousands of sets. Every passing set is in the .jsonl written as they were found.
+  const kept = sols.slice(0, SAVE_LIMIT);
+  const out = kept.map((sol) => ({ ...describe(sol), landedBluffs: landedBluffs(sol.ids) }));
+  writeFileSync(SAVE, JSON.stringify({ turns: TURNS, deal: DEAL, ante: ANTE, range: RANGE, base: BASE, raise: RAISE, loops, total: sols.length, sets: out }, null, 1));
+  console.log(`Saved the top ${out.length} of ${sols.length} sets to ${SAVE}${INCREMENTAL ? `; all of them, unranked, in ${INCREMENTAL}` : ""}`);
 }
 
 // ---- Report ----
@@ -320,7 +396,7 @@ const fmtParams = (p: StrategyParams) =>
 const always = (a: Action): Agent => () => a;
 
 /** Value of leading round 1 (and so round 3) in a mirror match. */
-export const leadValue = (a: Agent, stakes: Stakes) => expectedNet(a, a, { stakes, turnOrder: "alternating", firstLeader: "A" });
+export const leadValue = (a: Agent, stakes: Stakes) => expectedNet(a, a, { stakes, turnOrder: "alternating", deal: DEAL, firstLeader: "A" });
 
 function report(sol: Sol, rank: number) {
   console.log(`\n#${rank}: ${sol.cost} parameter changes; ${sol.allPass ? "passes at every checked ante" : "FAILS at an in-between ante"}; worst margin ${fmt(sol.worst)}`);
@@ -335,14 +411,14 @@ function report(sol: Sol, rank: number) {
     console.log(`  ${pad("", 8)} @${ANTE}: ${code(tableAt(c, ANTE))}   changed: ${changedKeys(p, PRESET_PARAMS[role]).join(", ") || "none"}`);
   });
   const landed = landedBluffs(sol.ids);
-  console.log(`  Bluffs that fold an opponent holding the stronger edge: ${landed.length ? landed.join("; ") : "none"}`);
-  const a = analyse(stakes, presets, TURNS);
+  console.log(`  Bluffs that fold a preset holding the higher edge: ${landed.length ? landed.join("; ") : "none"}`);
+  const a = analyse(stakes, presets, TURNS, DEAL);
   console.log(`  Exact matrix at ante ${ANTE} (general calculator):`);
   console.log(pad("row vs col") + PRESET_NAMES.map((n) => pad(n)).join("") + pad("vs presets"));
   const extra: [string, Agent][] = [["AlwaysFold", always("fold")], ["AlwaysCall", always("call")]];
   const rows: [string, number[]][] = [
     ...a.matrix.map((r, i): [string, number[]] => [NAMES[i]!, r]),
-    ...extra.map(([n, ag]): [string, number[]] => [n, PRESET_NAMES.map((pn) => seatAveragedNet(ag, presets[pn], { stakes, turnOrder: TURNS }))]),
+    ...extra.map(([n, ag]): [string, number[]] => [n, PRESET_NAMES.map((pn) => seatAveragedNet(ag, presets[pn], { stakes, turnOrder: TURNS, deal: DEAL }))]),
   ];
   rows.forEach(([name, r], i) => {
     if (i === PRESET_NAMES.length) console.log(pad("-- others --"));
@@ -359,5 +435,9 @@ function report(sol: Sol, rank: number) {
   }
 }
 
+
+
+
+// Report last: a failure while writing files must not cost the analysis.
 console.log(`\nKey: rows = acting first / acting first under pressure${TURNS === "alternating" ? " / facing a raise" : ""}; edges 0.3..0.7; f=fold c=call r=raise.`);
 sols.slice(0, TOP).forEach((s, i) => report(s, i + 1));
