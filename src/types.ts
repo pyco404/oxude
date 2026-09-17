@@ -1,3 +1,4 @@
+import type { Stakes } from "./round.js";
 export type Action = "fold" | "call" | "raise";
 
 export type Seat = "A" | "B";
@@ -60,6 +61,7 @@ export type RoundLog = {
 
 export type MatchLog = {
   seed: number;
+  stakes: Stakes;
   names: { A: string; B: string };
   rounds: RoundLog[];
   roundsWon: { A: number; B: number };
