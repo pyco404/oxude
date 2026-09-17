@@ -1,15 +1,11 @@
 import {
-  CLASSIC_RULES,
-  FLIP_FOR_ANTE_RULES,
   makeStrategy,
   mulberry32,
   nextUint32,
   playMatch,
   PRESET_NAMES,
   PRESETS,
-  RAISE_AT_RISK_RULES,
   type Agent,
-  type MatchRules,
 } from "../src/index.js";
 
 const MATCHES = 20_000;
@@ -41,23 +37,16 @@ const EXPECTED_LOOP: [string, string][] = [
   ["Tricky", "Steady"],
 ];
 
-const ALL_RULESETS: Record<string, MatchRules> = {
-  classic: CLASSIC_RULES,
-  "raiser-risks-raise": RAISE_AT_RISK_RULES,
-  "flip-for-ante": FLIP_FOR_ANTE_RULES,
-};
-const selected = process.env.BALANCE_RULES?.split(",") ?? Object.keys(ALL_RULESETS);
-
 const fmt = (x: number) => (x >= 0 ? "+" : "") + x.toFixed(3);
 const pad = (s: string, n = 12) => s.padStart(n);
 
 /** matrix[i][j] = average net of agent i against agent j, averaged over both seatings. */
-function run(rules: MatchRules): number[][] {
+function run(): number[][] {
   const master = mulberry32(MASTER_SEED);
   const seatA = AGENTS.map(([, a]) =>
     AGENTS.map(([, b]) => {
       let total = 0;
-      for (let k = 0; k < MATCHES; k++) total += playMatch(a, b, { seed: nextUint32(master), rules }).nets.A;
+      for (let k = 0; k < MATCHES; k++) total += playMatch(a, b, { seed: nextUint32(master) }).nets.A;
       return total / MATCHES;
     }),
   );
@@ -67,13 +56,10 @@ function run(rules: MatchRules): number[][] {
 console.log(`${MATCHES} matches per ordered pairing, master seed ${MASTER_SEED}`);
 for (const [note, text] of Object.entries(PROBE_NOTES)) console.log(`  ${note}: ${text}`);
 
-for (const key of selected) {
-  const rules = ALL_RULESETS[key];
-  if (!rules) throw new Error(`unknown ruleset ${key}; expected one of ${Object.keys(ALL_RULESETS).join(", ")}`);
-  const m = run(rules);
+{
+  const m = run();
   const vsPresets = m.map((row) => row.slice(0, P).reduce((s, x) => s + x, 0) / P);
 
-  console.log(`\n=== Rules: ${key} ===`);
   console.log("Average net of row vs column (both seatings):");
   console.log(pad("row vs col") + PRESET_NAMES.map((n) => pad(n)).join("") + pad("vs presets"));
   m.forEach((row, i) => {

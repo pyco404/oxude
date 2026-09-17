@@ -1,5 +1,5 @@
 import { mulberry32 } from "./rng.js";
-import type { Action, Agent, MatchLog, MatchRules, RoundLog, Seat, View } from "./types.js";
+import type { Action, Agent, MatchLog, RoundLog, Seat, View } from "./types.js";
 
 export const EDGES = [0.3, 0.4, 0.5, 0.6, 0.7] as const;
 export const ANTE = 10;
@@ -24,20 +24,13 @@ function complementEdge(edge: number): number {
   return Math.round((1 - edge) * 100) / 100;
 }
 
-export const CLASSIC_RULES: MatchRules = { foldToRaise: "classic" };
-export const RAISE_AT_RISK_RULES: MatchRules = { foldToRaise: "raiser-risks-raise" };
-export const FLIP_FOR_ANTE_RULES: MatchRules = { foldToRaise: "flip-for-ante" };
-
 export type MatchOptions = {
   seed: number;
   names?: { A: string; B: string };
-  /** Defaults to CLASSIC_RULES. */
-  rules?: MatchRules;
 };
 
 export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): MatchLog {
   const { seed } = options;
-  const rules: MatchRules = { ...(options.rules ?? CLASSIC_RULES) };
   const rng = mulberry32(seed);
 
   const nets = { A: 0, B: 0 };
@@ -80,18 +73,9 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
     let bet = 0;
     let winner: Seat | null = null;
     let flip: RoundLog["flip"] = null;
-    const foldedToRaise =
-      (actionA === "fold" && actionB === "raise") || (actionA === "raise" && actionB === "fold");
 
     if (actionA === "fold" && actionB === "fold") {
       outcome = "both-folded";
-    } else if (foldedToRaise && rules.foldToRaise !== "classic") {
-      outcome = "folded-to-raise";
-      const raiser: Seat = actionA === "raise" ? "A" : "B";
-      const roll = rng();
-      winner = roll < edgeA ? "A" : "B";
-      flip = { probabilityAWins: edgeA, roll, winner };
-      bet = rules.foldToRaise === "flip-for-ante" || winner === raiser ? ANTE : RAISED_BET;
     } else if (actionA === "fold" || actionB === "fold") {
       outcome = "one-folded";
       bet = ANTE;
@@ -132,7 +116,6 @@ export function playMatch(agentA: Agent, agentB: Agent, options: MatchOptions): 
 
   return {
     seed,
-    rules,
     names: options.names ?? { A: "A", B: "B" },
     rounds,
     roundsWon,

@@ -25,11 +25,6 @@ export type RoundOutcome =
   | "both-folded"
   /** Exactly one folded: the folder pays the ante and loses the round. */
   | "one-folded"
-  /**
-   * One side raised, the other folded, and the rules flip anyway
-   * (any `foldToRaise` other than "classic"). `bet` is what moved.
-   */
-  | "folded-to-raise"
   /** Neither folded: the weighted coin was flipped. */
   | "flipped";
 
@@ -51,7 +46,7 @@ export type RoundLog = {
    * folded, otherwise the bet (base or raised).
    */
   bet: number;
-  /** Present when the coin was flipped ("flipped" or "folded-to-raise"). */
+  /** Present only when outcome is "flipped". */
   flip: FlipLog | null;
   /** Round winner; null if both folded. */
   winner: Seat | null;
@@ -61,25 +56,8 @@ export type RoundLog = {
   raiseCounts: { A: number; B: number };
 };
 
-export type FoldToRaiseRule =
-  /** The folder pays the ante and the raiser wins the round, no flip. */
-  | "classic"
-  /**
-   * Flip anyway. Raiser wins: folder pays the ante. Raiser loses: raiser pays
-   * the raised bet. Tested and rejected: folding beats calling at every edge.
-   */
-  | "raiser-risks-raise"
-  /** Flip anyway, for the ante only: the winner takes the ante from the loser. */
-  | "flip-for-ante";
-
-export type MatchRules = {
-  /** What happens when exactly one agent raises and the other folds. */
-  foldToRaise: FoldToRaiseRule;
-};
-
 export type MatchLog = {
   seed: number;
-  rules: MatchRules;
   names: { A: string; B: string };
   rounds: RoundLog[];
   roundsWon: { A: number; B: number };
