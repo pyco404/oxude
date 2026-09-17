@@ -13,12 +13,17 @@
     "check": "npm run typecheck && npm run test",
     "sweep": "tsx scripts/sweep.ts",
     "search": "tsx scripts/search.ts",
-    "inspect": "tsx scripts/inspect.ts"
+    "inspect": "tsx scripts/inspect.ts",
+    "score-policies": "tsx scripts/score-policies.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
+    "zod": "^4.6.5"
   }
 }

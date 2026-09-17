@@ -1,0 +1,45 @@
+{
+  "_brief": "Work out the expected value of each action before filling a cell.",
+  "lead": {
+    "0.30": "call",
+    "0.40": "call",
+    "0.50": "call",
+    "0.60": "raise",
+    "0.70": "raise"
+  },
+  "leadUnderPressure": {
+    "0.30": "fold",
+    "0.40": "call",
+    "0.50": "call",
+    "0.60": "raise",
+    "0.70": "raise"
+  },
+  "vsCall": {
+    "0.30": "call",
+    "0.40": "call",
+    "0.50": "call",
+    "0.60": "raise",
+    "0.70": "raise"
+  },
+  "vsCallUnderPressure": {
+    "0.30": "call",
+    "0.40": "call",
+    "0.50": "call",
+    "0.60": "raise",
+    "0.70": "raise"
+  },
+  "vsRaise": {
+    "0.30": "fold",
+    "0.40": "call",
+    "0.50": "call",
+    "0.60": "call",
+    "0.70": "call"
+  },
+  "vsRaiseUnderPressure": {
+    "0.30": "fold",
+    "0.40": "call",
+    "0.50": "call",
+    "0.60": "call",
+    "0.70": "call"
+  }
+}
