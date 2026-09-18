@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
-import { api, ApiError, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
+import { api, ApiError, bandOf, type RosterAgent, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
 
 /** STUB_AUTH_MUST_NOT_SHIP: an owner id kept in this browser stands in for a wallet. */
 const OWNER_KEY = "oxude.owner";
@@ -26,6 +26,8 @@ export default function Page() {
   const [paidCalls, setPaidCalls] = useState(0);
   const [firstFreeUsed, setFirstFreeUsed] = useState(false);
   const [ceiling, setCeiling] = useState(60);
+  const [presetRatings, setPresetRatings] = useState<Record<string, number>>({});
+  const [roster, setRoster] = useState<RosterAgent[]>([]);
   const [transcript, setTranscript] = useState<string>("");
   const [lastPlay, setLastPlay] = useState<PlayResult | null>(null);
   const [ladderTab, setLadderTab] = useState<"winnings" | "per-match">("winnings");
@@ -85,6 +87,26 @@ export default function Page() {
       setBusy(null);
     }
   };
+
+  // Free: every preset rated once against today's roster, so the picker can compare them.
+  useEffect(() => {
+    if (!ownerId || presets.length === 0) return;
+    void Promise.all(
+      presets.map(async (p) => [p.name, (await api.previewTable(ownerId, p.policyTable)).preview.trueRating] as const),
+    )
+      .then((pairs) => setPresetRatings(Object.fromEntries(pairs)))
+      .catch(() => setPresetRatings({}));
+  }, [ownerId, presets]);
+
+  // Who you would meet: your agent's band once you have one, otherwise the band
+  // the ceiling you are about to rent at would put you in.
+  const band = bandOf(agent?.maxStake ?? ceiling);
+  useEffect(() => {
+    void api
+      .roster(band)
+      .then((r) => setRoster(r.agents))
+      .catch(() => setRoster([]));
+  }, [band, agent?.matchesPlayed]);
 
   // Free: rating a preset's table costs nothing, so it runs on every selection.
   useEffect(() => {
@@ -210,10 +232,16 @@ export default function Page() {
           firstFree={!firstFreeUsed}
           ceiling={ceiling}
           setCeiling={setCeiling}
+          presetRatings={presetRatings}
         />
       )}
 
       <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />
+      <RosterPanel
+        band={band}
+        agents={roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId))}
+        fromAgent={Boolean(agent)}
+      />
       <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} />
       <Ladder rows={ladder} tab={ladderTab} setTab={setLadderTab} mine={agent?.id ?? agent?.agentId} />
       <footer className="mt-10 border-t border-line pt-4 text-[11px] leading-5 text-muted">
@@ -291,6 +319,7 @@ function RentPanel(props: {
   firstFree: boolean;
   ceiling: number;
   setCeiling: (n: number) => void;
+  presetRatings: Record<string, number>;
 }) {
   const ready = props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12;
   return (
@@ -307,24 +336,37 @@ function RentPanel(props: {
         />
 
         {props.tab === "preset" ? (
-          <ul className="grid grid-cols-2 gap-2">
-            {props.presets.map((p) => (
-              <li key={p.name}>
-                <button
-                  onClick={() => props.setChosen(p.name)}
-                  aria-pressed={props.chosen === p.name}
-                  className={`w-full border px-3 py-3 text-left ${
-                    props.chosen === p.name ? "border-red bg-panel-2" : "border-line bg-panel hover:border-muted"
-                  }`}
-                >
-                  <span className="block text-[15px] font-medium">{p.name}</span>
-                  <span className="mt-0.5 block font-mono text-[10px] leading-4 text-muted">
-                    {describe(p.policyTable)}
-                  </span>
-                </button>
-              </li>
-            ))}
+          <>
+          <ul className="space-y-2">
+            {props.presets.map((p) => {
+              const rating = props.presetRatings[p.name];
+              const selected = props.chosen === p.name;
+              return (
+                <li key={p.name}>
+                  <button
+                    onClick={() => props.setChosen(p.name)}
+                    aria-pressed={selected}
+                    className={`w-full border px-3 py-3 text-left ${
+                      selected ? "border-red bg-panel-2" : "border-line bg-panel hover:border-muted"
+                    }`}
+                  >
+                    <span className="flex items-baseline justify-between gap-3">
+                      <span className="text-[15px] font-medium">{p.name}</span>
+                      <span className="font-mono text-[12px] text-muted">
+                        {typeof rating === "number" ? `${money(rating, 3)} / match` : "…"}
+                      </span>
+                    </span>
+                    <span className="mt-1 block text-[12px] leading-5 text-muted">{p.description}</span>
+                    <Behaviour table={p.policyTable} />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
+          <p className="text-[11px] leading-4 text-muted">
+            Figures are exact expected net per match against the roster as it stands today. Free to see.
+          </p>
+          </>
         ) : (
           <div className="space-y-2">
             <textarea
@@ -386,7 +428,7 @@ function RentPanel(props: {
             className="mt-2 w-full accent-[#ff2d2d]"
           />
           <p className="mt-1 text-[11px] leading-4 text-muted">
-            The most this agent can lose in one match. It starts with 200 to play with.
+            Decides who it meets: agents are matched inside a band (10-20, 20-40, 40-60). It starts with 180 to play with.
           </p>
         </div>
         <button
@@ -408,12 +450,71 @@ function RentPanel(props: {
   );
 }
 
-/** One line of plain English for a table, from its own actions. */
-function describe(table: Record<string, Record<string, string>>): string {
+/**
+ * What a table does when it acts first, edge by edge: a filled square raises,
+ * an outlined one calls, a faint one folds. Readable at a glance, no codes.
+ */
+function Behaviour({ table }: { table: Record<string, Record<string, string>> }) {
   const lead = table["lead"] ?? {};
   const edges = Object.keys(lead).sort();
-  const short = edges.map((e) => (lead[e] ?? "c")[0]).join(" ");
-  return `first: ${short}`;
+  return (
+    <span className="mt-2 flex items-end gap-1.5" aria-label="what it does when acting first">
+      {edges.map((edge) => {
+        const action = lead[edge];
+        return (
+          <span key={edge} className="flex flex-col items-center gap-0.5">
+            <span
+              title={`${action} at ${edge}`}
+              className={`block h-3 w-6 ${
+                action === "raise" ? "bg-red" : action === "call" ? "border border-muted" : "bg-line"
+              }`}
+            />
+            <span className="font-mono text-[9px] text-muted">{edge.slice(1)}</span>
+          </span>
+        );
+      })}
+      <span className="ml-2 font-mono text-[9px] leading-3 text-muted">
+        <span className="text-red">raise</span> · call · <span className="opacity-60">fold</span>
+      </span>
+    </span>
+  );
+}
+
+/** Who you would meet: the agents in your band. */
+function RosterPanel({ band, agents, fromAgent }: { band: string; agents: RosterAgent[]; fromAgent: boolean }) {
+  return (
+    <section className="mt-3 border border-line bg-panel">
+      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+        Who you'd meet
+        <span className="font-mono normal-case tracking-normal">band {band}</span>
+      </h2>
+      <div className="p-3">
+        <p className="mb-2 text-[12px] leading-5 text-muted">
+          {fromAgent
+            ? "Your ceiling puts you in this band. You are only matched inside it."
+            : "The ceiling you rent at decides the band. You are only matched inside it."}
+        </p>
+        {agents.length === 0 ? (
+          <p className="text-[13px] text-muted">Nobody in this band right now.</p>
+        ) : (
+          <ul>
+            {agents.slice(0, 8).map((a) => (
+              <li key={a.agentId} className="flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0">
+                <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                <span className="w-14 shrink-0 font-mono text-[10px] text-muted">{a.presetName ?? "brief"}</span>
+                <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
+                <span className="w-12 shrink-0 text-right font-mono text-[11px]">{a.balance}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {agents.length > 8 ? (
+          <p className="mt-2 text-[11px] text-muted">and {agents.length - 8} more in this band</p>
+        ) : null}
+        <p className="mt-2 font-mono text-[10px] text-muted">name · plays as · matches · balance</p>
+      </div>
+    </section>
+  );
 }
 
 function AgentCard({

@@ -1,7 +1,24 @@
 /** Thin client for the HTTP layer. */
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
 
-export type Preset = { name: string; policyTable: Record<string, Record<string, string>> };
+export type Preset = { name: string; description: string; policyTable: Record<string, Record<string, string>> };
+export type RosterAgent = {
+  agentId: string;
+  name: string;
+  presetName: string | null;
+  maxStake: number;
+  matchesPlayed: number;
+  cumulativeNet: number;
+  recentForm: number;
+  balance: number;
+};
+export const BANDS = [
+  { name: "10-20", min: 10, max: 20 },
+  { name: "20-40", min: 20, max: 40 },
+  { name: "40-60", min: 40, max: 60 },
+] as const;
+/** Mirrors the server: upper bound wins at a boundary. */
+export const bandOf = (ceiling: number) => (ceiling <= 20 ? "10-20" : ceiling <= 40 ? "20-40" : "40-60");
 export type PreviewBreakdown = { weight: number; expectedNet: number };
 export type Preview = {
   trueRating: number;
@@ -97,5 +114,6 @@ export const api = {
   agent: (ownerId: string, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { ownerId }),
   play: (ownerId: string, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", ownerId }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
+  roster: (band: string) => request<{ agents: RosterAgent[] }>(`/roster?band=${band}`),
   ladder: (sort: "winnings" | "per-match") => request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=25`),
 };
