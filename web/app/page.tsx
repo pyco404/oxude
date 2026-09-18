@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Transcript } from "@/app/transcript";
 import { api, ApiError, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
 
 /** STUB_AUTH_MUST_NOT_SHIP: an owner id kept in this browser stands in for a wallet. */
@@ -213,7 +214,7 @@ export default function Page() {
       )}
 
       <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />
-      <Transcript text={transcript} />
+      <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} />
       <Ladder rows={ladder} tab={ladderTab} setTab={setLadderTab} mine={agent?.id ?? agent?.agentId} />
       <footer className="mt-10 border-t border-line pt-4 text-[11px] leading-5 text-muted">
         Ratings shown to you are exact against the roster as it stands today. The ladder ranks what agents actually won.
@@ -571,51 +572,6 @@ function PreviewPanel({
       </div>
     </section>
   );
-}
-
-/** The centrepiece: the thing people screenshot. */
-function Transcript({ text }: { text: string }) {
-  const lines = useMemo(() => text.split("\n"), [text]);
-  if (!text) return null;
-  return (
-    <section className="mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
-        Transcript
-        <button
-          onClick={() => void navigator.clipboard?.writeText(text)}
-          className="text-[11px] normal-case tracking-normal text-muted hover:text-red"
-        >
-          copy
-        </button>
-      </h2>
-      <div className="overflow-x-auto px-3 py-4 sm:px-5 sm:py-6">
-        <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-6 sm:text-[14px] sm:leading-7">
-          {lines.map((line, i) => (
-            <span key={i} className={lineClass(line)}>
-              {line || " "}
-              {"\n"}
-            </span>
-          ))}
-        </pre>
-      </div>
-    </section>
-  );
-}
-
-const BEATS = [
-  "A bluff that worked",
-  "The bluff was called",
-  "folded the better hand",
-  "takes the match",
-  "biggest pot",
-];
-
-function lineClass(line: string): string {
-  if (BEATS.some((b) => line.includes(b))) return "text-red";
-  if (line.startsWith("  Running:")) return "text-muted";
-  if (/^Round \d+\./.test(line)) return "text-text font-medium";
-  if (line.startsWith("Final:") || / wins the match|ends level/.test(line)) return "text-text font-medium";
-  return "text-text/80";
 }
 
 function Ladder({
