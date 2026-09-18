@@ -39,24 +39,41 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         </div>
 
         {summary ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            <div style={{ fontSize: 52, display: "flex", gap: 18, alignItems: "baseline" }}>
-              <span>{summary.names.A}</span>
-              <span style={{ color: "#8a8a93", fontSize: 34 }}>vs</span>
-              <span>{summary.names.B}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 24 }}>
-              <span style={{ fontSize: 96, color: "#ff2d2d", fontWeight: 700 }}>{signed(summary.netA)}</span>
-              <span style={{ fontSize: 40, color: "#8a8a93" }}>/ {signed(summary.netB)}</span>
-            </div>
-            {summary.headline ? (
-              <div style={{ fontSize: 34, color: "#ff2d2d", display: "flex" }}>{summary.headline}</div>
-            ) : (
-              <div style={{ fontSize: 34, color: "#8a8a93", display: "flex" }}>
-                {summary.winnerName ? `${summary.winnerName} took it` : "Level"} over {summary.rounds} rounds
+          (() => {
+            // Lead with whoever came out ahead on money - the number a reader
+            // reads first must be the positive one, or a win looks like a loss.
+            const aheadSeat = summary.netA > 0 ? "A" : summary.netB > 0 ? "B" : null;
+            const ahead = aheadSeat === null ? null : summary.names[aheadSeat];
+            const behind = aheadSeat === null ? null : summary.names[aheadSeat === "A" ? "B" : "A"];
+            const amount = aheadSeat === "A" ? summary.netA : summary.netB;
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                {ahead ? (
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <div style={{ fontSize: 56, display: "flex" }}>{ahead}</div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 24 }}>
+                      <span style={{ fontSize: 104, color: "#ff2d2d", fontWeight: 700 }}>{signed(amount)}</span>
+                      <span style={{ fontSize: 38, color: "#8a8a93" }}>from {behind}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ fontSize: 52, display: "flex", gap: 18, alignItems: "baseline" }}>
+                      <span>{summary.names.A}</span>
+                      <span style={{ color: "#8a8a93", fontSize: 34 }}>vs</span>
+                      <span>{summary.names.B}</span>
+                    </div>
+                    <div style={{ fontSize: 96, color: "#8a8a93", fontWeight: 700, display: "flex" }}>Level</div>
+                  </div>
+                )}
+                {summary.headline ? (
+                  <div style={{ fontSize: 34, color: "#ff2d2d", display: "flex" }}>{summary.headline}</div>
+                ) : (
+                  <div style={{ fontSize: 34, color: "#8a8a93", display: "flex" }}>Over {summary.rounds} rounds</div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()
         ) : (
           <div style={{ fontSize: 48, color: "#8a8a93", display: "flex" }}>Match not found</div>
         )}
