@@ -36,16 +36,21 @@ if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1))
   await refreshTrueRatings(db);
   console.log(`Seeded a house roster of ${rosterSize} agents across ${ceilings.length} bands`);
 }
-const { url } = await listen({ db, port: arg("--port", 8787) });
+// A host sets PORT and needs every interface; locally, loopback only.
+const { url } = await listen({ db, port: Number(process.env["PORT"] ?? arg("--port", 8787)), host: process.env["HOST"] });
 
 // Settlement on chain, when configured. The ledger is authoritative either
 // way; without a chain the outbox simply waits.
 const rpc = process.env["CHAIN_RPC_URL"];
 if (rpc) {
-  const { Connection } = await import("@solana/web3.js");
+  const { Connection, Keypair } = await import("@solana/web3.js");
   const { ChainClient, loadKeypair } = await import("../src/chain/settlement.js");
   const { startChainWorker } = await import("../src/chain/worker.js");
-  const settler = loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
+  // A host has no key file: CHAIN_SETTLER_SECRET carries the same JSON byte array.
+  const secret = process.env["CHAIN_SETTLER_SECRET"];
+  const settler = secret
+    ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[]))
+    : loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
   const chain = new ChainClient(new Connection(rpc, "confirmed"), settler);
   // web3.js confirms a transaction by racing a block-height poll it never
   // awaits, so a flaky RPC can reject outside any of our try blocks and would

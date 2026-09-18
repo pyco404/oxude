@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { listen, type Elicit } from "../src/http/server.js";
+import { clientAddress, listen, type Elicit } from "../src/http/server.js";
 import { createAgent, snapshotPreset } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { PRESET_NAMES } from "../src/index.js";
@@ -533,5 +533,25 @@ describe("wallet sign-in", () => {
     const view = await readBody(await fetch(`${url}/agents/${created.agent.id}`, { headers: { "x-owner-id": walletOf(OWNER) } }));
     expect(view.view).toBe("public");
     expect(view.agent.brief).toBeUndefined();
+  });
+});
+
+describe("client address for rate limits", () => {
+  const req = (forwarded: string | undefined) =>
+    ({ headers: forwarded === undefined ? {} : { "x-forwarded-for": forwarded }, socket: { remoteAddress: "10.0.0.1" } }) as never;
+
+  it("ignores X-Forwarded-For unless told a proxy sits in front, since anyone can send it", () => {
+    delete process.env["TRUST_PROXY"];
+    expect(clientAddress(req("6.6.6.6"))).toBe("10.0.0.1");
+  });
+
+  it("behind a proxy, takes the entry the proxy appended, not one the client made up", () => {
+    process.env["TRUST_PROXY"] = "1";
+    try {
+      expect(clientAddress(req("6.6.6.6, 203.0.113.7"))).toBe("203.0.113.7");
+      expect(clientAddress(req(undefined))).toBe("10.0.0.1");
+    } finally {
+      delete process.env["TRUST_PROXY"];
+    }
   });
 });

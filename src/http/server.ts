@@ -437,7 +437,7 @@ export function createApp(options: AppOptions): Server {
     }
 
     // Charged against the wallet, or the connection when there is none.
-    const clientKey = req.socket.remoteAddress ?? "anonymous";
+    const clientKey = clientAddress(req);
     const limitKey = ownerId ?? clientKey;
     let spent = false;
     const ctx: Ctx = {
@@ -516,10 +516,26 @@ function send(res: ServerResponse, status: number, payload: unknown, headers: Re
   res.end(JSON.stringify(payload));
 }
 
+/**
+ * The caller's address, for per-IP rate limits. Behind a hosting proxy every
+ * request arrives from the proxy, so with TRUST_PROXY set the address is the
+ * last X-Forwarded-For entry: the one the proxy appended, which the client
+ * cannot forge. Without it the header is ignored, since anyone can send it.
+ */
+export function clientAddress(req: IncomingMessage): string {
+  if (process.env["TRUST_PROXY"]) {
+    const hops = String(req.headers["x-forwarded-for"] ?? "").split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1]!;
+  }
+  return req.socket.remoteAddress ?? "anonymous";
+}
+
 /** Starts the app on a port and reports where it landed. */
-export async function listen(options: AppOptions & { port?: number }): Promise<{ url: string; close: () => Promise<void> }> {
+export async function listen(
+  options: AppOptions & { port?: number; host?: string | undefined },
+): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createApp(options);
-  await new Promise<void>((resolve) => server.listen(options.port ?? 0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(options.port ?? 0, options.host ?? "127.0.0.1", resolve));
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : options.port;
   return {
