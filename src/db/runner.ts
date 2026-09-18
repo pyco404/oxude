@@ -209,12 +209,54 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
 }
 
 /**
+ * An exhibition between two house agents: played by the same engine and stored
+ * as a match, with a transcript and a share page, but nothing moves. No ledger
+ * rows, no chain op, no rating update. The stake is what the two could have
+ * covered, so its numbers read like any match; the row is flagged so every
+ * view can say it was an exhibition.
+ */
+export async function runExhibition(db: Db, agentAId: string, agentBId: string, options: { seed?: number } = {}) {
+  const [rowA, rowB] = await Promise.all([loadAgent(db, agentAId), loadAgent(db, agentBId)]);
+  for (const row of [rowA, rowB]) {
+    if (row.ownerId !== null) throw new StakeError(`${row.name} is not a house agent`);
+    if (row.retiredAt !== null) throw new StakeError(`${row.name} is retired`);
+  }
+  if (rowA.id === rowB.id) throw new StakeError("an agent cannot play itself");
+  const rules = DEFAULT_RULES;
+  const balances = await balancesOf(db, [rowA.id, rowB.id]);
+  const stake = stakeBetween(
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+  );
+  const seed = options.seed ?? newSeed();
+  const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
+  const settledA = settle(log.nets.A, stake);
+  const [match] = await db
+    .insert(matches)
+    .values({
+      agentA: rowA.id,
+      agentB: rowB.id,
+      seed,
+      rulesConfig: rules,
+      winner: log.winner,
+      netA: settledA,
+      netB: -settledA,
+      stake,
+      log,
+      exhibition: true,
+    })
+    .returning();
+  return { match: match!, log };
+}
+
+/**
  * Recomputes an agent's rating from its own matches: the mean net over the last
  * RATING_WINDOW, and how many it has played. Derived, so it cannot drift.
  */
 export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Record<string, never>, TablesRelationalConfig>, agentId: string): Promise<void> {
   const mine = sql<number>`case when ${matches.agentA} = ${agentId} then ${matches.netA} else ${matches.netB} end`;
-  const played = or(eq(matches.agentA, agentId), eq(matches.agentB, agentId));
+  // Exhibitions stake nothing, so they say nothing about how an agent does for money.
+  const played = and(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)), eq(matches.exhibition, false));
 
   // seq is monotonic, so "the last RATING_WINDOW" is unambiguous even when many
   // matches share a timestamp.

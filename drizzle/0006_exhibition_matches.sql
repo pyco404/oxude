@@ -1,0 +1,1 @@
+ALTER TABLE "matches" ADD COLUMN "exhibition" boolean DEFAULT false NOT NULL;

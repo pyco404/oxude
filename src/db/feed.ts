@@ -26,6 +26,8 @@ export type FeedItem = {
   beat: string | null;
   /** Which seat the headline is about. */
   beatSeat: Seat | null;
+  /** House agents playing each other: nothing was staked or settled. */
+  exhibition: boolean;
 };
 
 const agentA = alias(agents, "agent_a_row");
@@ -54,6 +56,7 @@ export async function recentMatches(
       netB: matches.netB,
       stake: matches.stake,
       log: matches.log,
+      exhibition: matches.exhibition,
     })
     .from(matches)
     .innerJoin(agentA, eq(agentA.id, matches.agentA))
@@ -79,6 +82,7 @@ export async function recentMatches(
       headline: beat?.text ?? null,
       beat: beat?.kind ?? null,
       beatSeat: beat?.seat ?? null,
+      exhibition: r.exhibition,
     };
   });
 }
@@ -95,7 +99,7 @@ export async function latestBluff(db: Db, scan = 100): Promise<FeedItem | null> 
 }
 
 /**
- * Wins, losses and level matches over an agent's whole history, by money: a
+ * Wins, losses and level matches over an agent's staked history, by money: a
  * win is a match it finished ahead. Round wins can disagree (two small rounds
  * against one big one), and everything else in the product counts money.
  */
@@ -107,6 +111,7 @@ export async function agentRecord(db: Db, agentId: string): Promise<{ wins: numb
       level: sql<number>`count(*) filter (where ${matches.netA} = 0)::int`,
     })
     .from(matches)
-    .where(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)));
+    // Staked matches only: an exhibition wins or loses nothing.
+    .where(and(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)), eq(matches.exhibition, false)));
   return { wins: Number(row?.wins ?? 0), losses: Number(row?.losses ?? 0), level: Number(row?.level ?? 0) };
 }

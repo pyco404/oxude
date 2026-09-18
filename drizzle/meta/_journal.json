@@ -43,6 +43,13 @@
       "when": 1789719784424,
       "tag": "0005_chain_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789768590547,
+      "tag": "0006_exhibition_matches",
+      "breakpoints": true
     }
   ]
 }

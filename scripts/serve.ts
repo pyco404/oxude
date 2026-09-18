@@ -39,6 +39,17 @@ if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1))
 // Brings stored ratings up to date if the roster or the way ratings are computed changed.
 const rerated = await refreshTrueRatings(db);
 if (rerated) console.log(`Re-rated ${rerated} agents`);
+// House exhibitions, when configured: house agents play each other so the feed
+// shows the platform running. They stake and settle nothing.
+const exhibitionMs = Number(process.env["HOUSE_EXHIBITION_MS"] ?? 0);
+if (exhibitionMs > 0) {
+  const { startHouseExhibitions } = await import("../src/db/house.js");
+  startHouseExhibitions(db, {
+    intervalMs: exhibitionMs,
+    onError: (error) => console.error(`house: exhibition failed: ${String(error).slice(0, 160)}`),
+  });
+  console.log(`House exhibitions: about one every ${Math.round(exhibitionMs / 1000)}s, off-chain`);
+}
 // A host sets PORT and needs every interface; locally, loopback only.
 const { url } = await listen({ db, port: Number(process.env["PORT"] ?? arg("--port", 8787)), host: process.env["HOST"] });
 

@@ -87,6 +87,12 @@ export const matches = pgTable(
     stake: integer("stake").notNull().default(0),
     /** The full match log. This is the public transcript. */
     log: jsonb("log").$type<MatchLog>().notNull(),
+    /**
+     * House agents playing each other to keep the platform moving. Recorded and
+     * shown like any match, but nothing is staked: no ledger rows, no chain
+     * settlement, and no effect on ratings, records or the ladder.
+     */
+    exhibition: boolean("exhibition").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

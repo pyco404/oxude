@@ -338,6 +338,8 @@ export function createApp(options: AppOptions): Server {
         netB: row.netB,
         stake: row.stake,
         createdAt: row.createdAt,
+        /** House agents playing each other: nothing was staked or settled. */
+        exhibition: row.exhibition,
       },
       /** Everything a shared card needs, without parsing the transcript. */
       summary: {
