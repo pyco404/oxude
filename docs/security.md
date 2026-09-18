@@ -1,0 +1,65 @@
+# Security model
+
+Oxude is a devnet demo with fake currency. This document says what it protects, how, and where it stops. Nothing here has been audited.
+
+## What is at stake
+
+Game tokens in per-agent vaults on Solana devnet, and the accuracy of the off-chain ledger that decides every movement. There is no mainnet deployment and nothing of real value.
+
+## Who is trusted with what
+
+| Party | Can do | Cannot do |
+|---|---|---|
+| A player (wallet) | Sign in; rent agents; play their own agents; change their own agents' ceilings; rate briefs | Act for another wallet's agents; move money; see another player's brief, table or private rating |
+| The model | Fill in a decision table once, when an agent is rented from a brief | Anything during a match; see any key; sign anything |
+| The API server | Run matches, write the ledger, queue chain operations | Move vault funds except through the program's `settle`, within its limits |
+| The settler key (server) | Open vaults; settle matches, up to 60 each, each match once | Exceed the per-match limit; settle a match twice; withdraw from vaults |
+| The admin key | Initialise the program; **upgrade it** | Nothing else at run time |
+
+## Identity: wallet sign-in
+
+`src/auth/wallet.ts`, `src/http/server.ts`.
+
+- **Challenge.** `POST /auth/nonce` issues 16 random bytes, bound to one public key, valid for 5 minutes, rate limited per IP.
+- **Message.** The wallet signs plain text naming the site ("*domain* wants you to sign in with your Solana account"), so a signature made for Oxude cannot be replayed on another site. It says signing costs nothing and triggers no transaction, because the signing prompt is where people get phished.
+- **Verification.** The server rebuilds the exact message it issued and checks the ed25519 signature. It never trusts message text sent back by the client.
+- **Replay.** A nonce is burnt with a conditional update, so two concurrent verifications of one signature cannot both open a session. Tested: a wrong-key signature, a replayed nonce, a nonce issued to another key, a tampered message and an expired nonce are all rejected.
+- **Sessions.** 32 random bytes, returned once and stored only as a SHA-256 hash, valid 7 days, revoked on sign-out. Sent as `Authorization: Bearer`.
+
+## Money: ledger and chain
+
+`src/db/ledger.ts`, `src/db/runner.ts`, `src/chain/`, `chain/programs/oxude_settlement/`.
+
+- **The ledger is authoritative.** Balances are sums of immutable ledger rows. A match, its ledger rows, both ratings and its chain operation are written in one database transaction, so they cannot disagree.
+- **The server validates before anything moves.** A match's stake is limited by what both agents can cover and by one match's maximum exposure (60). An agent that cannot cover the minimum stake is refused a match and retired.
+- **The chain records, in order.** An outbox worker submits vault openings and settlements strictly in order, stops at the first failure and retries from there. If an earlier attempt landed but its confirmation was lost, the vault or settlement record already exists, so the worker marks it done instead of sending it again.
+- **The program checks again.** Only the configured settler can open vaults or settle. A settlement cannot exceed the per-match limit. A match settles at most once, because its record is a PDA seeded by the match id. Vault authority is a PDA, so no private key — the server's included — can move vault funds except through `settle`. Each of these is tested on a local validator (`npm run test:chain`).
+- **Reconciliation.** `reconcile` compares every fully settled agent's vault with its ledger balance and reports disagreements; it never overwrites either side.
+
+## The model
+
+The model's only job is to fill in a 30-cell decision table from a brief, once, when an agent is rented. The table is validated (every cell must be fold, call or raise) and stored. Matches play the stored table; the model is not called during a match and has no access to keys, balances, other agents or the chain. The prompt is a pure function of the stakes and the brief, and a test checks it contains no seed or opponent information.
+
+## Other protections
+
+- **Rate limits**, per wallet or per IP: model-backed requests 5 a minute (each owner's first is free), matches 30 a minute, sign-in nonces 20 a minute.
+- **Privacy of strategies.** Another player's brief, table and exact rating are never returned by the public views of an agent, the ladder, the roster, or match pages. Match transcripts show every hand played, by design — a player who studies transcripts and adapts is playing the game properly.
+- **CORS** allows one configured web origin.
+
+## Known limitations
+
+These are real, and would each need fixing before anything of value were at stake.
+
+1. **A stolen settler key could drain vaults.** The program limits each settlement to 60 and each match id to one settlement, but match ids are made up by the server. An attacker holding the settler key could invent new ids and settle 60 at a time until vaults are empty. The per-match limit caps each transaction, not the total. Mitigations would include an on-chain rate limit per vault, or settlements that require evidence the server cannot fabricate alone.
+2. **The admin key can upgrade the program**, and so could replace every rule above. It should move to a multisig, or the program should be made immutable.
+3. **Custodial by design.** Players never hold their tokens and there is no withdrawal instruction. The server operator decides what happens to vault funds.
+4. **The settler key is a hot key on the server.** It lives in a file (`.keys/settler.json`). There is no HSM, no signing service, no key rotation.
+5. **The session token is in browser `localStorage`**, readable by any script running on the page. It grants the app's actions, not wallet authority. Serving the API through Next.js on the same origin would allow an HttpOnly cookie instead.
+6. **Nonces and sessions are not garbage-collected.** Expired rows accumulate.
+7. **Rate limits are in memory**, per process. They reset on restart and are not shared across instances.
+8. **Each settlement record costs the settler about 0.0015 SOL in rent.** At scale this is a steady SOL drain; old records could be closed to recover it, but there is no instruction for that yet.
+9. **Unaudited.** The program, the auth flow and the ledger have tests, not an audit.
+
+## Reporting
+
+This is a demo. If you find something, open an issue.
