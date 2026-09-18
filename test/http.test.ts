@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
@@ -8,7 +8,7 @@ import { clientAddress, listen, type Elicit } from "../src/http/server.js";
 import { createAgent, snapshotPreset } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { PRESET_NAMES } from "../src/index.js";
-import { MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
+import { agents, MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 
 // Over real HTTP: the tests start a server and use fetch, so routing, headers,
@@ -238,6 +238,31 @@ describe("GET /ladder", () => {
     for (const row of [...winnings.rows, ...perMatch.rows]) expect(row.trueRating).toBeUndefined();
 
     expect((await api("/ladder?sort=vibes")).status).toBe(400);
+  });
+  it("rents the table the owner was shown when they rated the brief, without asking the model again", async () => {
+    const owner = "abababab-1212-4121-8121-abababababab";
+    const brief = "raise the weak hands, fold the middle";
+    elicitResult = { table: snapshotPreset("Hammer") };
+    try {
+      const before = elicitCalls;
+      expect((await api("/preview", { method: "POST", owner, body: JSON.stringify({ brief }) })).status).toBe(201);
+      elicitResult = { table: snapshotPreset("Bully") }; // what a second call would have returned
+
+      const res = await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "As rated", brief }) });
+      expect(res.status).toBe(201);
+      const created = await readBody(res);
+      expect(elicitCalls).toBe(before + 1);
+      expect(created.elicitation.reusedRatedTable).toBe(true);
+      const [row] = await db.select().from(agents).where(eq(agents.id, created.agent.id));
+      expect(row!.policyTable).toEqual(snapshotPreset("Hammer"));
+
+      // Another owner renting the same words gets their own call.
+      const other = await readBody(await api("/agents", { method: "POST", owner: OTHER, body: JSON.stringify({ name: "Copy", brief }) }));
+      expect(other.elicitation.reusedRatedTable).toBe(false);
+      expect(elicitCalls).toBe(before + 2);
+    } finally {
+      elicitResult = { table: snapshotPreset("Mirage") };
+    }
   });
 });
 

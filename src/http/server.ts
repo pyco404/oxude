@@ -85,6 +85,22 @@ export function createApp(options: AppOptions): Server {
   const playLimiter = new RateLimiter(options.playRateLimit ?? { limit: 30, windowMs: 60_000 }, options.now);
   const nonceLimiter = new RateLimiter(options.nonceRateLimit ?? { limit: 20, windowMs: 60_000 }, options.now);
   const authDomain = options.authDomain ?? process.env["AUTH_DOMAIN"] ?? "localhost:3000";
+  // The table a player was shown when they rated a brief is the table they rent,
+  // with no second model call: the model is not deterministic, so asking again
+  // could hand them a different agent from the one they just saw rated. Keyed by
+  // owner and exact brief; tables still only ever come from the model.
+  const rated = new Map<string, { table: Policy; at: number }>();
+  const RATED_TTL_MS = 60 * 60_000;
+  const ratedKey = (ownerId: string, brief: string) => `${ownerId}\n${brief}`;
+  const now = options.now ?? Date.now;
+  const takeRated = (ownerId: string, brief: string): Policy | undefined => {
+    const hit = rated.get(ratedKey(ownerId, brief));
+    return hit && now() - hit.at < RATED_TTL_MS ? hit.table : undefined;
+  };
+  const remember = (ownerId: string, brief: string, table: Policy) => {
+    if (rated.size >= 5_000) rated.delete(rated.keys().next().value!);
+    rated.set(ratedKey(ownerId, brief), { table, at: now() });
+  };
 
   const routes: [string, RegExp, (ctx: Ctx) => Promise<unknown>][] = [
     ["POST", /^\/auth\/nonce$/, postNonce],
@@ -173,7 +189,10 @@ export function createApp(options: AppOptions): Server {
 
     let table: Policy | undefined;
     let freeCall = false;
-    if (!presetName) {
+    let reused = false;
+    if (!presetName && (table = takeRated(ownerId, brief))) {
+      reused = true;
+    } else if (!presetName) {
       freeCall = await ctx.spend("rent");
       const result = await elicit({ brief });
       if (!result.table) {
@@ -205,7 +224,7 @@ export function createApp(options: AppOptions): Server {
         trueRating: fresh!.trueRating,
         trueRatingBasis: "against the roster as it stands today",
       },
-      elicitation: presetName ? null : { free: freeCall },
+      elicitation: presetName ? null : { free: freeCall, reusedRatedTable: reused },
     };
   }
 
@@ -377,11 +396,12 @@ export function createApp(options: AppOptions): Server {
       table = validatePolicy(supplied);
     } else {
       // Only the brief path reaches a model, so only it needs a wallet.
-      ctx.requireOwner();
+      const ownerId = ctx.requireOwner();
       freeCall = await ctx.spend("preview");
       const result = await elicit({ brief });
       if (!result.table) throw new HttpError(503, "could not elicit a table for that brief", { reason: result.reason });
       table = validatePolicy(result.table);
+      remember(ownerId, brief, table);
     }
     const preview = previewPolicy(table, await rosterProfile(db));
     return { preview, policyTable: table, elicitation: supplied ? null : { free: freeCall } };
