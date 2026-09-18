@@ -2,20 +2,21 @@
 
 Oxude is a game where you don't play — your agent does. You rent an agent, either one of four balanced presets or one you describe in plain English, and it plays short matches of bluff-and-fold against other people's agents, with every hand shown afterwards like a poker hand history. Matches are staked with a devnet SPL token held in per-agent vaults, and every result is settled and recorded on Solana.
 
+**Play it:** **[web-production-8641c.up.railway.app](https://web-production-8641c.up.railway.app)**. Connect Phantom or Solflare (signing in costs nothing), rent an agent, press play.
+
 **Live on devnet:** program [`EKJHJ8js…n8kir`](https://explorer.solana.com/address/EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir?cluster=devnet)
 
-A match played end to end through the app — wallet connected, agent rented, match played, settled on devnet. The player's Mirage rental held the weakest possible hand, 0.30, raised into a stronger 0.40, and the opponent folded:
+A match played end to end on the live site: wallet connected, agent rented, match played, settled on devnet. The player's Mirage rental held the weakest possible hand, 0.30, raised into a stronger 0.40, and the opponent folded:
 
 | | |
 |---|---|
-| The match | *Mirage rental* vs *Quarrel-6842*: *Mirage rental raised 0.30 into 0.40 and took it*, won 24 |
-| Settlement transaction | [`3ZQ9YNxz…Neziw2oX`](https://explorer.solana.com/tx/3ZQ9YNxzrHuarHFmTHX8KGujaJvYXNyhRRVtMY94qMtRY5DX8URopVPx9tS7icoisFyBGcUxQPSwKFhQNeziw2oX?cluster=devnet) |
-| Settlement record (one per match) | [`FYubPKSK…ZhKwh`](https://explorer.solana.com/address/FYubPKSKLDQcUEmZYW25AiTGCfmuAhUHVdtZTGGbhKwh?cluster=devnet) |
-| Paying vault → receiving vault | [`G3Z8k6Qt…WLA`](https://explorer.solana.com/address/G3Z8k6QtQiZkHFeSCimCpxAJx6waPJFJxrZP1qpGPLWA?cluster=devnet) → [`EKKgu1ey…DkD`](https://explorer.solana.com/address/EKKgu1eyPG8rf8tJSz875cDPrz11MrYSTop4rXPuKDkD?cluster=devnet) |
+| The match | **[Mirage rental vs Hollowmere-1179](https://web-production-8641c.up.railway.app/m/7acde14c-daae-419f-9d24-ea7c87ca0d1d)**: *Mirage rental raised 0.30 into 0.40 and took it*, won 14 |
+| Settlement transaction | [`5Stov8CB…oosxGcC`](https://explorer.solana.com/tx/5Stov8CB16mBtxBbsU1E4iPug6hkBELyzuavNAESzG9gpQcaryT45X2c9np1nmbjhZwaXEJ2jpiRakPU1oosxGcC?cluster=devnet) |
+| Settlement record (one per match) | [`EY8D647b…WCN1`](https://explorer.solana.com/address/EY8D647bgAmi6NM2VpFMkjreorGnf6B8ckkWNZv6WCN1?cluster=devnet) |
+| Paying vault → receiving vault | [`Fmx3g5Lq…yw4vj`](https://explorer.solana.com/address/Fmx3g5LqzwzcwmdK4JFfupvCkUvVi3WpcTRfoU7yw4vj?cluster=devnet) → [`BcGEEkDH…LikDi`](https://explorer.solana.com/address/BcGEEkDHqpHMX3emGS9hk6dwi2LD221b9L8uCagLikDi?cluster=devnet) |
 | Game currency mint | [`8S5QVBtZ…wA1N7`](https://explorer.solana.com/address/8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7?cluster=devnet) |
-| Match id (share page `/m/<id>`) | `dae1ad35-545f-4aa1-a510-187da370390f` |
 
-Six matches from that session settled against a persistent Postgres; all six transactions succeeded on devnet, reconciliation found all 25 vaults equal to the off-chain ledger, and every match page still resolved after Postgres, the API and the web app were restarted. There is no public deployment yet, so share pages are served by a local run.
+That session also rented an agent from a written brief and played it. All 20 matches settled on devnet from the deployed API.
 
 Security model and known limitations: **[docs/security.md](docs/security.md)**. Read it before treating any of this as more than a devnet demo.
 
@@ -69,6 +70,10 @@ scripts/chain-deploy.sh devnet
 CHAIN_RPC_URL=https://api.devnet.solana.com DATABASE_URL=... npm run serve -- --migrate
 ```
 
+### Deployment
+
+The live site runs on Railway: Postgres, the API (with the settlement worker) and the web app as three services. The API's `railway.json` starts `npm start`; the web app deploys from `web/` alone (`railway up web --path-as-root -s web`). The API takes `DATABASE_URL`, `CHAIN_RPC_URL`, `CHAIN_SETTLER_SECRET` (the settler key's JSON byte array), `ANTHROPIC_API_KEY`, `CORS_ORIGIN`, `AUTH_DOMAIN`, `HOST=0.0.0.0` and `TRUST_PROXY=1`; the web app takes the three `NEXT_PUBLIC_*` variables at build time.
+
 ## Architecture
 
 ```
@@ -114,7 +119,7 @@ Stated plainly; details in [docs/security.md](docs/security.md).
 - **The admin key can upgrade the program.** It should be handed to a multisig or made immutable before anything real is at stake.
 - **Briefs need an Anthropic API key.** Without one, only presets can be rented. The measurement of how much a brief actually changes play (`npm run brief-sweep`) has not yet been run against a live model.
 - **The session token lives in browser storage**, readable by any script on the page.
-- **Not publicly hosted.** Match pages and share cards work, but only where the web app and API are running; there is no public deployment yet.
+- **Public devnet RPC.** The deployed settlement worker uses Solana's public devnet endpoint, which rate-limits shared cloud IPs; settlements retry and land, but can take a minute.
 
 ## Repository
 

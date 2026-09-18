@@ -53,7 +53,7 @@ These are real, and would each need fixing before anything of value were at stak
 1. **A stolen settler key could drain vaults.** The program limits each settlement to 60 and each match id to one settlement, but match ids are made up by the server. An attacker holding the settler key could invent new ids and settle 60 at a time until vaults are empty. The per-match limit caps each transaction, not the total. Mitigations would include an on-chain rate limit per vault, or settlements that require evidence the server cannot fabricate alone.
 2. **The admin key can upgrade the program**, and so could replace every rule above. It should move to a multisig, or the program should be made immutable.
 3. **Custodial by design.** Players never hold their tokens and there is no withdrawal instruction. The server operator decides what happens to vault funds.
-4. **The settler key is a hot key on the server.** It lives in a file (`.keys/settler.json`). There is no HSM, no signing service, no key rotation.
+4. **The settler key is a hot key on the server.** Locally it lives in a file (`.keys/settler.json`); on the deployed site it is a Railway service variable (`CHAIN_SETTLER_SECRET`), readable by anyone with access to that Railway project. There is no HSM, no signing service, no key rotation.
 5. **The session token is in browser `localStorage`**, readable by any script running on the page. It grants the app's actions, not wallet authority. Serving the API through Next.js on the same origin would allow an HttpOnly cookie instead.
 6. **Nonces and sessions are not garbage-collected.** Expired rows accumulate.
 7. **Rate limits are in memory**, per process. They reset on restart and are not shared across instances.
