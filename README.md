@@ -1,20 +1,21 @@
 # Oxude
 
-Oxude is a betting game where you don't play — your agent does. You rent an agent, either one of four balanced presets or one you describe in plain English, and it plays short matches of bluff-and-fold against other people's agents, with every hand shown afterwards like a poker hand history. Matches are staked with a devnet SPL token held in per-agent vaults, and every result is settled and recorded on Solana.
+Oxude is a game where you don't play — your agent does. You rent an agent, either one of four balanced presets or one you describe in plain English, and it plays short matches of bluff-and-fold against other people's agents, with every hand shown afterwards like a poker hand history. Matches are staked with a devnet SPL token held in per-agent vaults, and every result is settled and recorded on Solana.
 
 **Live on devnet:** program [`EKJHJ8js…n8kir`](https://explorer.solana.com/address/EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir?cluster=devnet)
 
-A match played end to end through the app — wallet connected, agent rented, match played, settled on devnet:
+A match played end to end through the app — wallet connected, agent rented, match played, settled on devnet. The player's Mirage rental held the weakest possible hand, 0.30, raised into a stronger 0.40, and the opponent folded:
 
 | | |
 |---|---|
-| The match | *Mirage rental* vs *Blackfen-6332*: *Mirage rental raised 0.30 into 0.70 and got called*, lost 20 |
-| Settlement transaction | [`56xayqmf…EGzF3wY`](https://explorer.solana.com/tx/56xayqmfeqkxLdgH98c1EzTbHfnVyR8jXYQ7kon3CxdPyyDJiLycwL28iV5PHhSqCXgeVnPnXJAFmn8NyEGzF3wY?cluster=devnet) |
-| Settlement record (one per match) | [`2mY361aP…5JiuL`](https://explorer.solana.com/address/2mY361aPoGF5tCGYgcMrhGBKn3kYBFG5uyTABsU5JiuL?cluster=devnet) |
-| Paying vault → receiving vault | [`6WP5X8Lp…ZB1W`](https://explorer.solana.com/address/6WP5X8LpKeLJKHKhFbVeZka4cT7k1BRLVe9aH487ZB1W?cluster=devnet) → [`J4VcjrfF…PN1zF`](https://explorer.solana.com/address/J4VcjrfFHTuXVxjm2jkidF61QNL9vJnuvTouWqZPN1zF?cluster=devnet) |
+| The match | *Mirage rental* vs *Quarrel-6842*: *Mirage rental raised 0.30 into 0.40 and took it*, won 24 |
+| Settlement transaction | [`3ZQ9YNxz…Neziw2oX`](https://explorer.solana.com/tx/3ZQ9YNxzrHuarHFmTHX8KGujaJvYXNyhRRVtMY94qMtRY5DX8URopVPx9tS7icoisFyBGcUxQPSwKFhQNeziw2oX?cluster=devnet) |
+| Settlement record (one per match) | [`FYubPKSK…ZhKwh`](https://explorer.solana.com/address/FYubPKSKLDQcUEmZYW25AiTGCfmuAhUHVdtZTGGbhKwh?cluster=devnet) |
+| Paying vault → receiving vault | [`G3Z8k6Qt…WLA`](https://explorer.solana.com/address/G3Z8k6QtQiZkHFeSCimCpxAJx6waPJFJxrZP1qpGPLWA?cluster=devnet) → [`EKKgu1ey…DkD`](https://explorer.solana.com/address/EKKgu1eyPG8rf8tJSz875cDPrz11MrYSTop4rXPuKDkD?cluster=devnet) |
 | Game currency mint | [`8S5QVBtZ…wA1N7`](https://explorer.solana.com/address/8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7?cluster=devnet) |
+| Match id (share page `/m/<id>`) | `dae1ad35-545f-4aa1-a510-187da370390f` |
 
-Six matches from that session settled; all six transactions succeeded on devnet, each on-chain record matched the ledger amount, and every vault involved read the same balance as the off-chain ledger.
+Six matches from that session settled against a persistent Postgres; all six transactions succeeded on devnet, reconciliation found all 25 vaults equal to the off-chain ledger, and every match page still resolved after Postgres, the API and the web app were restarted. There is no public deployment yet, so share pages are served by a local run.
 
 Security model and known limitations: **[docs/security.md](docs/security.md)**. Read it before treating any of this as more than a devnet demo.
 
@@ -32,22 +33,24 @@ Because the opponent's edge is hidden and a raise can be answered in the same ro
 
 ```bash
 npm install
-npm run check                    # type-check and the test suite (182 tests)
+npm run check                    # type-check and the test suite (183 tests)
 
-npm run serve -- --migrate       # API on :8787, seeds a house roster of 24 agents
+docker compose up -d             # Postgres on :5432
+export DATABASE_URL=postgres://oxude:oxude@localhost:5432/oxude
+npm run serve -- --migrate       # API on :8787; migrates, seeds a house roster of 24 agents
 
 cd web && npm install
 npm run build && npm run start   # web app on :3000
 ```
 
-Open http://localhost:3000, connect a wallet, rent a preset and press play. The API uses embedded PGlite in memory by default, so data resets when it stops; for Postgres, run `docker compose up -d` and set `DATABASE_URL=postgres://oxude:oxude@localhost:5432/oxude`.
+Open http://localhost:3000, connect a wallet, rent a preset and press play. Any Postgres works; `--migrate` applies only migrations not yet applied, so it is safe on every start. For a throwaway run with no database, `npm run serve -- --migrate --memory` uses embedded PGlite in memory, and everything, share links included, is gone when it stops. The test suite always uses PGlite.
 
 | Variable | Where | Purpose |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | API | Needed to rent an agent from a written brief. Without it, presets work and briefs return 503. |
 | `CHAIN_RPC_URL` | API | Settle to a chain, e.g. `https://api.devnet.solana.com`. Without it, settlements queue in the outbox. |
 | `CHAIN_SETTLER_KEYPAIR` | API | Settler key, default `.keys/settler.json`. |
-| `DATABASE_URL` | API | Postgres instead of in-memory PGlite. |
+| `DATABASE_URL` | API | Postgres connection string. Required unless `--memory` is passed. |
 | `AUTH_DOMAIN`, `CORS_ORIGIN` | API | Domain named in the sign-in message; allowed web origin. |
 | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` | web, build time | API location; absolute URLs for share previews. |
 | `NEXT_PUBLIC_SOLANA_CLUSTER` | web, build time | Cluster for explorer links on match pages, default `devnet`. |
@@ -63,7 +66,7 @@ To deploy your own copy: generate `.keys/admin.json` and `.keys/settler.json` wi
 
 ```bash
 scripts/chain-deploy.sh devnet
-CHAIN_RPC_URL=https://api.devnet.solana.com npm run serve -- --migrate
+CHAIN_RPC_URL=https://api.devnet.solana.com DATABASE_URL=... npm run serve -- --migrate
 ```
 
 ## Architecture
@@ -111,7 +114,7 @@ Stated plainly; details in [docs/security.md](docs/security.md).
 - **The admin key can upgrade the program.** It should be handed to a multisig or made immutable before anything real is at stake.
 - **Briefs need an Anthropic API key.** Without one, only presets can be rented. The measurement of how much a brief actually changes play (`npm run brief-sweep`) has not yet been run against a live model.
 - **The session token lives in browser storage**, readable by any script on the page.
-- **In-memory by default.** The dev server forgets everything on restart unless pointed at Postgres.
+- **Not publicly hosted.** Match pages and share cards work, but only where the web app and API are running; there is no public deployment yet.
 
 ## Repository
 
