@@ -38,6 +38,15 @@ beforeAll(async () => {
 });
 afterAll(async () => close());
 
+describe("migrate", () => {
+  it("applies each migration once, so a persistent database survives a restart", async () => {
+    const before = await db.select({ id: agents.id }).from(agents);
+    await migrate(db);
+    await migrate(db);
+    expect(await db.select({ id: agents.id }).from(agents)).toEqual(before);
+  });
+});
+
 const addAgent = async (values: Partial<typeof agents.$inferInsert> & { name: string }) => {
   const preset = values.presetName === undefined ? "Anchor" : values.presetName;
   const [row] = await db

@@ -24,15 +24,30 @@ export async function connect(url = process.env["DATABASE_URL"]): Promise<{ db: 
   return { db: drizzlePglite(client, { schema }), close: () => client.close() };
 }
 
-/** Applies every migration in order. Drizzle-kit owns the SQL; this just runs it. */
+/**
+ * Applies each migration not yet applied, in order, recording it in the same
+ * transaction, so a persistent database can be migrated on every start.
+ * Drizzle-kit owns the SQL; this just runs it.
+ */
 export async function migrate(db: Db, dir = "drizzle"): Promise<void> {
+  await db.execute(
+    sql.raw("CREATE TABLE IF NOT EXISTS oxude_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"),
+  );
+  const applied = new Set(
+    ((await db.execute(sql.raw("SELECT name FROM oxude_migrations"))) as unknown as { rows: { name: string }[] }).rows.map(
+      (r) => r.name,
+    ),
+  );
   const files = readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => f.endsWith(".sql") && !applied.has(f))
     .sort();
   for (const file of files) {
-    for (const statement of readFileSync(join(dir, file), "utf8").split("--> statement-breakpoint")) {
-      const trimmed = statement.trim();
-      if (trimmed) await db.execute(sql.raw(trimmed));
-    }
+    await db.transaction(async (tx) => {
+      for (const statement of readFileSync(join(dir, file), "utf8").split("--> statement-breakpoint")) {
+        const trimmed = statement.trim();
+        if (trimmed) await tx.execute(sql.raw(trimmed));
+      }
+      await tx.execute(sql`INSERT INTO oxude_migrations (name) VALUES (${file})`);
+    });
   }
 }
