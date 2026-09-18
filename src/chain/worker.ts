@@ -106,3 +106,43 @@ export async function reconcile(db: Db, chain: ChainPort): Promise<{ checked: nu
   }
   return { checked: involved.length, mismatches };
 }
+
+/**
+ * Keeps draining the outbox on an interval. One drain at a time: a slow chain
+ * delays the next pass rather than stacking overlapping ones.
+ */
+export function startChainWorker(
+  db: Db,
+  chain: ChainPort,
+  options: { intervalMs?: number; onPass?: (result: DrainResult) => void } = {},
+): { stop: () => void } {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const pass = async () => {
+    if (stopped) return;
+    try {
+      const result = await drainChainOps(db, chain);
+      options.onPass?.(result);
+    } catch (error) {
+      options.onPass?.({ confirmed: 0, alreadyOnChain: 0, stoppedAt: null, error: String(error) });
+    }
+    if (!stopped) timer = setTimeout(() => void pass(), options.intervalMs ?? 5_000);
+  };
+  void pass();
+  return {
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
+/** What the chain has recorded for one match, for the transcript and share page. */
+export async function settlementStatus(db: Db, matchId: string) {
+  const [op] = await db
+    .select({ status: chainOps.status, signature: chainOps.signature, amount: chainOps.amount })
+    .from(chainOps)
+    .where(and(eq(chainOps.kind, "settle"), eq(chainOps.matchId, matchId)))
+    .limit(1);
+  return op ?? null;
+}

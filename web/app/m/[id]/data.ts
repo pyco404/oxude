@@ -22,6 +22,8 @@ export type MatchPayload = {
     headline: string | null;
   };
   transcript: string;
+  /** What the chain has recorded; null for a level match, which moves nothing. */
+  settlement: { status: "pending" | "confirmed" | "failed"; signature: string | null; amount: number } | null;
 };
 
 export type MatchLookup =

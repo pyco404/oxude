@@ -31,6 +31,26 @@ if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1))
   console.log(`Seeded a house roster of ${rosterSize} agents across ${ceilings.length} bands`);
 }
 const { url } = await listen({ db, port: arg("--port", 8787) });
+
+// Settlement on chain, when configured. The ledger is authoritative either
+// way; without a chain the outbox simply waits.
+const rpc = process.env["CHAIN_RPC_URL"];
+if (rpc) {
+  const { Connection } = await import("@solana/web3.js");
+  const { ChainClient, loadKeypair } = await import("../src/chain/settlement.js");
+  const { startChainWorker } = await import("../src/chain/worker.js");
+  const settler = loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
+  const chain = new ChainClient(new Connection(rpc, "confirmed"), settler);
+  startChainWorker(db, chain, {
+    intervalMs: Number(process.env["CHAIN_INTERVAL_MS"] ?? 5000),
+    onPass: (r) => {
+      if (r.confirmed || r.alreadyOnChain || r.error) {
+        console.log(`chain: ${r.confirmed} confirmed, ${r.alreadyOnChain} already on chain${r.error ? `, stopped: ${r.error.slice(0, 160)}` : ""}`);
+      }
+    },
+  });
+  console.log(`Settling to ${rpc} as ${settler.publicKey.toBase58()}`);
+}
 console.log(`Oxude on ${url}`);
 console.log(`  POST ${url}/agents         wallet session required; {name, presetName} or {name, brief}`);
 console.log(`  GET  ${url}/agents/:id     public, or the owner view for its signed-in owner`);

@@ -23,6 +23,7 @@ import {
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
+import { settlementStatus } from "../chain/worker.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
 
 /**
@@ -328,6 +329,8 @@ export function createApp(options: AppOptions): Server {
         headline: headlineFor(row.log, displayNames),
       },
       transcript: renderTranscript(row.log, displayNames),
+      /** What the chain has recorded. Null for a level match, which moves nothing. */
+      settlement: await settlementStatus(db, row.id),
       log: row.log,
     };
   }

@@ -2,7 +2,7 @@
   "name": "oxude",
   "version": "0.0.1",
   "private": true,
-  "description": "Oxude match engine \u2014 agent-versus-agent betting game.",
+  "description": "Oxude match engine — agent-versus-agent betting game.",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -24,6 +24,7 @@
     "test:chain": "CHAIN=1 vitest run test/chain.test.ts"
   },
   "devDependencies": {
+    "@types/bn.js": "^5.2.0",
     "@types/node": "^24.13.5",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.10",
@@ -37,6 +38,7 @@
     "@electric-sql/pglite": "^0.5.8",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
+    "bn.js": "^5.2.5",
     "bs58": "^6.0.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.23.0",

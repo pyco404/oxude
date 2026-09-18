@@ -7,6 +7,18 @@ import { getMatch, lookupMatch } from "./data";
 // page a link preview points at, so it renders from the server.
 export const dynamic = "force-dynamic";
 
+/** Explorer link for a settlement, on whichever cluster the site settles to. */
+function explorerUrl(signature: string): string {
+  const cluster = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
+  const suffix =
+    cluster === "mainnet-beta"
+      ? ""
+      : cluster.startsWith("http")
+        ? `?cluster=custom&customUrl=${encodeURIComponent(cluster)}`
+        : `?cluster=${cluster}`;
+  return `https://explorer.solana.com/tx/${signature}${suffix}`;
+}
+
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
@@ -70,6 +82,20 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             {summary.rounds === 1 ? "round" : "rounds"}, staked {summary.stake}.
           </p>
           {summary.headline ? <p className="mt-2 text-[14px] leading-6 text-red">{summary.headline}.</p> : null}
+          <p className="mt-3 border-t border-line pt-2 font-mono text-[11px] leading-5 text-muted">
+            {data.settlement === null
+              ? "Level match: nothing to settle."
+              : data.settlement.status === "confirmed" && data.settlement.signature
+                ? (
+                  <>
+                    Settled on Solana: {data.settlement.amount} moved.{" "}
+                    <a href={explorerUrl(data.settlement.signature)} className="text-red" target="_blank" rel="noreferrer">
+                      view transaction
+                    </a>
+                  </>
+                )
+                : `Settlement of ${data.settlement.amount} queued for the chain.`}
+          </p>
         </div>
       </section>
 

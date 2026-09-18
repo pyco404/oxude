@@ -1,4 +1,7 @@
-import { AnchorProvider, BN, Program, Wallet } from "@coral-xyz/anchor";
+import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
+// From bn.js directly: under plain Node ESM, @coral-xyz/anchor only exposes BN
+// on its default export, so a named import works in vitest and fails in tsx.
+import BN from "bn.js";
 import { getAccount } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
