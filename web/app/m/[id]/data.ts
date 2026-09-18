@@ -11,6 +11,8 @@ export type MatchPayload = {
     netB: number;
     stake: number;
     createdAt: string;
+    /** House agents playing each other: nothing was staked or settled. */
+    exhibition: boolean;
   };
   summary: {
     names: { A: string; B: string };

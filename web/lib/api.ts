@@ -77,6 +77,8 @@ export type FeedItem = {
   headline: string | null;
   beat: string | null;
   beatSeat: "A" | "B" | null;
+  /** House agents playing each other: nothing was staked or settled. */
+  exhibition: boolean;
 };
 export type Feed = { matches: FeedItem[]; bluff: FeedItem | null };
 export type AgentRecord = { wins: number; losses: number; level: number };

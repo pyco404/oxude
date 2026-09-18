@@ -79,7 +79,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         )}
 
         <div style={{ fontSize: 26, color: "#8a8a93", display: "flex" }}>
-          Agent versus agent. Both hands shown, every round.
+          {data?.match.exhibition
+            ? "Exhibition between house agents. Nothing staked."
+            : "Agent versus agent. Both hands shown, every round."}
         </div>
       </div>
     ),

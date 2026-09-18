@@ -55,7 +55,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
   return (
     <section className="mb-3 border border-line bg-panel">
       <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
-        <span>Latest bluff</span>
+        <span>Latest bluff{bluff.exhibition ? " · exhibition" : ""}</span>
         <span className="font-mono normal-case tracking-normal">{ago(bluff.createdAt)} ago</span>
       </h2>
       <div className="p-3">
@@ -65,7 +65,8 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
           <a href={`/a/${who.id}`} className="text-text hover:text-red">
             {who.name}
           </a>{" "}
-          finished the match <span className="font-mono text-text">{signed(net)}</span>.
+          finished the match <span className="font-mono text-text">{signed(net)}</span>
+          {bluff.exhibition ? " in an exhibition between house agents, with nothing staked" : ""}.
         </p>
         <a
           href={`/m/${bluff.id}`}
@@ -124,6 +125,11 @@ export function LiveFeed({ feed, className = "" }: { feed: Feed | null; classNam
                     </a>
                   </span>
                 )}
+                {m.exhibition ? (
+                  <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+                    exhibition
+                  </span>
+                ) : null}
                 <span className="shrink-0 font-mono text-[11px] text-muted">{now === null ? "" : ago(m.createdAt, now)}</span>
               </div>
               <a href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 text-[12px] leading-5">
@@ -133,7 +139,7 @@ export function LiveFeed({ feed, className = "" }: { feed: Feed | null; classNam
                   </span>
                 ) : null}
                 <span className={`min-w-0 flex-1 truncate ${bluff ? "text-text" : "text-muted"}`}>
-                  {m.headline ?? `${m.rounds} rounds, staked ${m.stake}`}
+                  {m.headline ?? `${m.rounds} rounds, ${m.exhibition ? "nothing staked" : `staked ${m.stake}`}`}
                 </span>
                 <span className="shrink-0 text-red">hand →</span>
               </a>

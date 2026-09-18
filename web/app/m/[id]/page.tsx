@@ -31,7 +31,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const outcome = summary.winnerName
     ? `${summary.winnerName} won ${signed(Math.abs(summary.netA))} over ${summary.rounds} rounds.`
     : `Level after ${summary.rounds} rounds.`;
-  const description = summary.headline ? `${outcome} ${summary.headline}.` : outcome;
+  const played = summary.headline ? `${outcome} ${summary.headline}.` : outcome;
+  const description = data.match.exhibition ? `Exhibition between house agents, nothing staked. ${played}` : played;
 
   return {
     title,
@@ -89,7 +90,9 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
           </p>
           {summary.headline ? <p className="mt-2 text-[14px] leading-6 text-red">{summary.headline}.</p> : null}
           <p className="mt-3 border-t border-line pt-2 font-mono text-[11px] leading-5 text-muted">
-            {data.settlement === null
+            {match.exhibition
+              ? "Exhibition between house agents: nothing was staked or settled."
+              : data.settlement === null
               ? "Level match: nothing to settle."
               : data.settlement.status === "confirmed" && data.settlement.signature
                 ? (

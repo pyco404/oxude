@@ -34,7 +34,8 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
   const opponent = mine === "A" ? m.b : m.a;
   const net = mine === "A" ? m.netA : m.netB;
   // By money, like the record: a match finished ahead is a win, whoever took more rounds.
-  const result = net === 0 ? "Level" : net > 0 ? "Won" : "Lost";
+  // An exhibition stakes nothing, so it isn't a win or a loss.
+  const result = m.exhibition ? "Exh" : net === 0 ? "Level" : net > 0 ? "Won" : "Lost";
   return (
     <li className="border-b border-line px-3 py-2.5 last:border-b-0">
       <div className="flex items-baseline gap-2 text-[13px]">
@@ -47,13 +48,18 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
             {opponent.name}
           </a>
         </span>
+        {m.exhibition ? (
+          <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+            exhibition
+          </span>
+        ) : null}
         <span className={`shrink-0 font-mono ${net > 0 ? "text-red" : ""}`}>{signed(net)}</span>
       </div>
       <a href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
         {m.beat === "bluff-worked" ? (
           <span className="shrink-0 border border-red px-1 font-mono text-[9px] uppercase tracking-wider text-red">bluff</span>
         ) : null}
-        <span className="min-w-0 flex-1 truncate text-muted">{m.headline ?? `${m.rounds} rounds, staked ${m.stake}`}</span>
+        <span className="min-w-0 flex-1 truncate text-muted">{m.headline ?? `${m.rounds} rounds, ${m.exhibition ? "nothing staked" : `staked ${m.stake}`}`}</span>
         <span className="shrink-0 text-red">hand →</span>
       </a>
     </li>
