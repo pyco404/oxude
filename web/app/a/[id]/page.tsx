@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteFooter, SiteHeader } from "@/app/site-header";
 import { notFound } from "next/navigation";
 import type { FeedItem } from "@/lib/api";
 import { lookupAgent } from "./data";
@@ -80,14 +81,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const found = await lookupAgent(id);
   if (found.status === "missing") notFound();
 
-  const header = (
-    <header className="mb-4">
-      <a href="/" className="flex items-center gap-2 text-xl font-semibold tracking-[0.2em] text-red">
-        <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
-        OXUDE
-      </a>
-    </header>
-  );
+  const header = <SiteHeader active="ladder" />;
   if (found.status === "unavailable") {
     return (
       <main className="mx-auto w-full max-w-3xl px-4 pt-5 sm:px-6">
@@ -146,7 +140,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         </ol>
       </section>
 
-      <footer className="mt-6 border-t border-line pt-4 text-[11px] leading-5 text-muted">
+      <SiteFooter>
         {agent.presetName
           ? "It plays a published preset table."
           : "It plays a table written from its owner's brief. The brief stays private; only its actions are public, in the hands above."}{" "}
@@ -154,13 +148,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           Rent one
         </a>
         .
-        <p className="mt-2">
-          <a href="https://x.com/OxudeAI" className="text-red" target="_blank" rel="noreferrer">
-            @OxudeAI
-          </a>{" "}
-          on X
-        </p>
-      </footer>
+      </SiteFooter>
     </main>
   );
 }

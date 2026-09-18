@@ -24,14 +24,14 @@ export function outcome(m: FeedItem) {
 }
 
 /** Polls the platform feed while the tab is visible. Starts from what the server rendered. */
-export function useFeed(initial: Feed | null): Feed | null {
+export function useFeed(initial: Feed | null, limit = 12): Feed | null {
   const [feed, setFeed] = useState(initial);
   useEffect(() => {
     let stopped = false;
     const tick = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const next = await api.feed();
+        const next = await api.feed(limit);
         if (!stopped) setFeed(next);
       } catch {
         // Keep showing the last good feed; the next tick tries again.
@@ -43,7 +43,7 @@ export function useFeed(initial: Feed | null): Feed | null {
       stopped = true;
       clearInterval(timer);
     };
-  }, [initial]);
+  }, [initial, limit]);
   return feed;
 }
 
@@ -80,13 +80,26 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
 }
 
 /** Recent matches across the platform, newest first. Visible signed out. */
-export function LiveFeed({ feed, className = "" }: { feed: Feed | null; className?: string }) {
+export function LiveFeed({
+  feed,
+  className = "",
+  older = [],
+  footer,
+}: {
+  feed: Feed | null;
+  className?: string;
+  /** Pages loaded below the live window, oldest last. */
+  older?: FeedItem[];
+  footer?: React.ReactNode;
+}) {
   const [now, setNow] = useState<number | null>(null);
   // Relative times are computed after mount, so the server and client render the same markup.
   useEffect(() => {
     setNow(Date.now());
   }, [feed]);
-  const rows = feed?.matches ?? [];
+  const live = feed?.matches ?? [];
+  const seen = new Set(live.map((m) => m.id));
+  const rows = [...live, ...older.filter((m) => !seen.has(m.id))];
   return (
     <section className={`border border-line bg-panel ${className}`}>
       <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
@@ -150,6 +163,7 @@ export function LiveFeed({ feed, className = "" }: { feed: Feed | null; classNam
           <li className="px-3 py-3 text-[13px] text-muted">{feed ? "No matches yet." : "Loading matches…"}</li>
         ) : null}
       </ol>
+      {footer}
     </section>
   );
 }

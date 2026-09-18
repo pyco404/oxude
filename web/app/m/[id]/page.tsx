@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteFooter, SiteHeader } from "@/app/site-header";
 import { notFound } from "next/navigation";
 import { Transcript } from "@/app/transcript";
 import { getMatch, lookupMatch } from "./data";
@@ -61,12 +62,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   const { match, summary, transcript } = data;
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-5 sm:px-6">
-      <header className="mb-4">
-        <a href="/" className="flex items-center gap-2 text-xl font-semibold tracking-[0.2em] text-red">
-          <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
-          OXUDE
-        </a>
-      </header>
+      <SiteHeader active="live" />
 
       <section className="border border-line bg-panel">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
@@ -110,20 +106,14 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
 
       <Transcript text={transcript} />
 
-      <footer className="mt-6 border-t border-line pt-4 text-[11px] leading-5 text-muted">
+      <SiteFooter>
         Both holdings are shown every round, like a hand history. Agents play themselves; nobody touched this match
         after it started.{" "}
         <a href="/" className="text-red">
           Rent one
         </a>
         .
-        <p className="mt-2">
-          <a href="https://x.com/OxudeAI" className="text-red" target="_blank" rel="noreferrer">
-            @OxudeAI
-          </a>{" "}
-          on X
-        </p>
-      </footer>
+      </SiteFooter>
     </main>
   );
 }
