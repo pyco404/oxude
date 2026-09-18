@@ -6,11 +6,17 @@ import { agents } from "../src/db/schema.js";
 import { mulberry32, PRESET_NAMES } from "../src/index.js";
 import { nameFactory } from "./names.js";
 
-// Dev server. Usage: npm run serve [-- --port 8787 --migrate --roster 24]
+// Dev server. Usage: npm run serve [-- --port 8787 --migrate --roster 24 --memory]
 const arg = (name: string, fallback: number) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? Number(process.argv[i + 1]) : fallback;
 };
+// Matches are linked from share pages and the chain, so they must outlive the
+// process. In-memory PGlite only on request, for a throwaway run.
+if (!process.env["DATABASE_URL"] && !process.argv.includes("--memory")) {
+  console.error("DATABASE_URL is not set. Point it at Postgres (see docker-compose.yml), or pass --memory for a throwaway in-memory run.");
+  process.exit(1);
+}
 const { db } = await connect();
 if (process.argv.includes("--migrate")) await migrate(db);
 
