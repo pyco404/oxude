@@ -364,7 +364,6 @@ export function createApp(options: AppOptions): Server {
   }
 
   async function postPreview(ctx: Ctx) {
-    ctx.requireOwner();
     const brief = typeof ctx.body["brief"] === "string" ? ctx.body["brief"].trim() : "";
     const supplied = ctx.body["policyTable"];
     if (!brief && !supplied) throw new HttpError(400, "brief or policyTable is required");
@@ -374,6 +373,8 @@ export function createApp(options: AppOptions): Server {
     if (supplied) {
       table = validatePolicy(supplied);
     } else {
+      // Only the brief path reaches a model, so only it needs a wallet.
+      ctx.requireOwner();
       freeCall = await ctx.spend("preview");
       const result = await elicit({ brief });
       if (!result.table) throw new HttpError(503, "could not elicit a table for that brief", { reason: result.reason });

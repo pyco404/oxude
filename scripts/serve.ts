@@ -1,17 +1,39 @@
 import { connect, migrate } from "../src/db/client.js";
 import { listen } from "../src/http/server.js";
+import { createAgent, CEILING_BANDS } from "../src/db/runner.js";
+import { refreshTrueRatings } from "../src/db/rating.js";
+import { agents } from "../src/db/schema.js";
+import { mulberry32, PRESET_NAMES } from "../src/index.js";
+import { nameFactory } from "./names.js";
 
-// Dev server. Usage: npm run serve [-- --port 8787 --migrate]
+// Dev server. Usage: npm run serve [-- --port 8787 --migrate --roster 24]
 const arg = (name: string, fallback: number) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? Number(process.argv[i + 1]) : fallback;
 };
 const { db } = await connect();
 if (process.argv.includes("--migrate")) await migrate(db);
+
+// The house roster: unowned preset agents spread across the ceiling bands, so a
+// first player has someone to meet in every band. Only when the roster is empty.
+const rosterSize = arg("--roster", 24);
+if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1)).length === 0) {
+  const nextName = nameFactory(mulberry32(Date.now() % 1_000_000));
+  const ceilings = CEILING_BANDS.map((b) => b.max);
+  for (let i = 0; i < rosterSize; i++) {
+    await createAgent(db, {
+      name: nextName(),
+      presetName: PRESET_NAMES[i % PRESET_NAMES.length]!,
+      maxStake: ceilings[i % ceilings.length]!,
+    });
+  }
+  await refreshTrueRatings(db);
+  console.log(`Seeded a house roster of ${rosterSize} agents across ${ceilings.length} bands`);
+}
 const { url } = await listen({ db, port: arg("--port", 8787) });
 console.log(`Oxude on ${url}`);
-console.log(`  POST ${url}/agents         X-Owner-Id required; {name, presetName} or {name, brief}`);
-console.log(`  GET  ${url}/agents/:id     public, or the owner view with a matching X-Owner-Id`);
+console.log(`  POST ${url}/agents         wallet session required; {name, presetName} or {name, brief}`);
+console.log(`  GET  ${url}/agents/:id     public, or the owner view for its signed-in owner`);
 console.log(`  POST ${url}/agents/:id/play`);
 console.log(`  GET  ${url}/matches/:id    includes the rendered transcript`);
 console.log(`  GET  ${url}/ladder?sort=winnings|per-match`);

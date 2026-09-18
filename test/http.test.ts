@@ -269,7 +269,9 @@ describe("POST /preview", () => {
     expect(other.status).toBe(201);
   });
 
-  it("requires an owner and some input", async () => {
+  it("rates a supplied table signed out, but needs a wallet to spend a model call", async () => {
+    const table = await api("/preview", { method: "POST", owner: null, body: JSON.stringify({ policyTable: snapshotPreset("Anchor") }) });
+    expect(table.status).toBe(201);
     expect((await api("/preview", { method: "POST", owner: null, body: JSON.stringify({ brief: "x" }) })).status).toBe(401);
     expect((await api("/preview", { method: "POST", body: JSON.stringify({}) })).status).toBe(400);
   });
