@@ -135,7 +135,10 @@ export const api = {
   agent: (token: string | null, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { token }),
   play: (token: string | null, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", token }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
-  roster: (band: string) => request<{ agents: RosterAgent[] }>(`/roster?band=${band}`),
-  feed: (limit = 12) => request<Feed>(`/matches?limit=${limit}`),
-  ladder: (sort: "winnings" | "per-match") => request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=25`),
+  roster: (band?: string) =>
+    request<{ agents: RosterAgent[]; counts?: Record<string, number> }>(band ? `/roster?band=${band}` : "/roster"),
+  feed: (limit = 12, before?: number) =>
+    request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
+  ladder: (sort: "winnings" | "per-match", limit = 25) =>
+    request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=${limit}`),
 };

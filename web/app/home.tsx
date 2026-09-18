@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
+import { LadderPanel } from "@/app/ladder-panel";
+import { Segmented } from "@/app/ui";
+import { SiteFooter, SiteHeader } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
 import {
   installedWallets,
@@ -14,7 +17,7 @@ import {
   type Session,
   type WalletName,
 } from "@/lib/wallet";
-import { api, ApiError, bandOf, type Feed, type RosterAgent, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
+import { api, ApiError, BANDS, bandOf, type Feed, type RosterAgent, type AgentView, type PlayResult, type Preset, type Preview } from "@/lib/api";
 
 const AGENT_KEY = "oxude.agent";
 const BRIEF_DEBOUNCE_MS = 1500;
@@ -40,11 +43,13 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const [firstFreeUsed, setFirstFreeUsed] = useState(false);
   const [ceiling, setCeiling] = useState(60);
   const [presetRatings, setPresetRatings] = useState<Record<string, number>>({});
-  const [roster, setRoster] = useState<RosterAgent[]>([]);
+  const [roster, setRoster] = useState<RosterAgent[] | null>([]);
+  // Set once the player moves the slider, so the busiest-band default never overrides a choice.
+  const ceilingTouched = useRef(false);
   const [transcript, setTranscript] = useState<string>("");
   const [lastPlay, setLastPlay] = useState<PlayResult | null>(null);
-  const [ladderTab, setLadderTab] = useState<"winnings" | "per-match">("winnings");
-  const [ladder, setLadder] = useState<LadderRow[]>([]);
+  // Bumped after renting or playing, so the ladder refetches.
+  const [ladderKey, setLadderKey] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const briefTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,13 +97,6 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     if (saved) void refreshAgent(saved, token);
   }, [token, refreshAgent]);
 
-  const loadLadder = useCallback(async () => {
-    const { rows } = await api.ladder(ladderTab);
-    setLadder(rows);
-  }, [ladderTab]);
-  useEffect(() => {
-    void loadLadder();
-  }, [loadLadder]);
 
   const run = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
@@ -129,8 +127,20 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     void api
       .roster(band)
       .then((r) => setRoster(r.agents))
-      .catch(() => setRoster([]));
+      .catch(() => setRoster(null));
   }, [band, agent?.matchesPlayed]);
+
+  // Start the ceiling in the band with the most agents, so a newcomer has someone to meet.
+  useEffect(() => {
+    void api
+      .roster()
+      .then(({ counts }) => {
+        if (ceilingTouched.current || !counts) return;
+        const busiest = BANDS.reduce((best, b) => ((counts[b.name] ?? 0) > (counts[best.name] ?? 0) ? b : best));
+        setCeiling(busiest.max);
+      })
+      .catch(() => {});
+  }, []);
 
   // Free: rating a preset's table costs nothing, so it runs on every selection.
   useEffect(() => {
@@ -188,7 +198,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       setAgent({ ...created, id });
       setTranscript("");
       setLastPlay(null);
-      await loadLadder();
+      setLadderKey((k) => k + 1);
     });
 
   const play = () =>
@@ -199,7 +209,8 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       setLastPlay(result);
       const { transcript: text } = await api.match(result.matchId);
       setTranscript(text);
-      await Promise.all([refreshAgent(id, token), loadLadder()]);
+      await refreshAgent(id, token);
+      setLadderKey((k) => k + 1);
     });
 
   const release = () => {
@@ -264,7 +275,10 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
           paidCalls={paidCalls}
           firstFree={!firstFreeUsed}
           ceiling={ceiling}
-          setCeiling={setCeiling}
+          setCeiling={(n) => {
+            ceilingTouched.current = true;
+            setCeiling(n);
+          }}
           presetRatings={presetRatings}
           signedIn={Boolean(session)}
         />
@@ -273,49 +287,40 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />
       <RosterPanel
         band={band}
-        agents={roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId))}
+        agents={roster === null ? null : roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId))}
         fromAgent={Boolean(agent)}
       />
       <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} />
       {session ? <LiveFeed feed={feed} className="mt-3" /> : null}
-      <Ladder rows={ladder} tab={ladderTab} setTab={setLadderTab} mine={agent?.id ?? agent?.agentId} />
-      <footer className="mt-10 border-t border-line pt-4 text-[11px] leading-5 text-muted">
+      <LadderPanel refreshKey={ladderKey} mine={agent?.id ?? agent?.agentId} />
+      <SiteFooter>
         Ratings shown to you are exact against the roster as it stands today. The ladder ranks what agents actually won.
-        <p className="mt-2">
-          <a href="https://x.com/OxudeAI" className="text-red" target="_blank" rel="noreferrer">
-            @OxudeAI
-          </a>{" "}
-          on X
-        </p>
-      </footer>
+      </SiteFooter>
     </main>
   );
 }
 
 function Header({ session, onDisconnect, busy }: { session: Session | null; onDisconnect: () => void; busy: boolean }) {
   return (
-    <header className="mb-5">
-      <div className="flex items-center justify-between">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-[0.2em] text-red">
-          {/* The mark on its transparent field; the chrome around it stays flat. */}
-          <img src="/oxude-tb.png" alt="" width={32} height={32} className="h-8 w-8" />
-          OXUDE
-        </h1>
-        {session ? (
-          <button
-            onClick={onDisconnect}
-            disabled={busy}
-            className="border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red"
-            title="Sign out"
-          >
-            {shortKey(session.ownerId)}
-          </button>
-        ) : null}
-      </div>
-      <p className="mt-1 text-[13px] leading-5 text-muted">
+    <>
+      <SiteHeader
+        right={
+          session ? (
+            <button
+              onClick={onDisconnect}
+              disabled={busy}
+              className="border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red"
+              title="Sign out"
+            >
+              {shortKey(session.ownerId)}
+            </button>
+          ) : null
+        }
+      />
+      <p className="-mt-1 mb-4 text-[13px] leading-5 text-muted">
         AI agents play bluff-and-fold against each other, staked and settled on Solana. Every hand is shown.
       </p>
-    </header>
+    </>
   );
 }
 
@@ -363,34 +368,6 @@ function ConnectPanel({
           ),
         )}
       </div>
-    </div>
-  );
-}
-
-function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div className="flex border border-line" role="tablist">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          role="tab"
-          aria-selected={value === o.value}
-          onClick={() => onChange(o.value)}
-          className={`flex-1 px-3 py-2 text-[13px] transition-none ${
-            value === o.value ? "bg-red text-ink font-medium" : "bg-panel text-muted hover:text-text"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
     </div>
   );
 }
@@ -615,7 +592,7 @@ function Behaviour({ table, delayMs = 0 }: { table: Record<string, Record<string
 }
 
 /** Who you would meet: the agents in your band. */
-function RosterPanel({ band, agents, fromAgent }: { band: string; agents: RosterAgent[]; fromAgent: boolean }) {
+function RosterPanel({ band, agents, fromAgent }: { band: string; agents: RosterAgent[] | null; fromAgent: boolean }) {
   return (
     <section className="mt-3 border border-line bg-panel">
       <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
@@ -628,7 +605,9 @@ function RosterPanel({ band, agents, fromAgent }: { band: string; agents: Roster
             ? "Your ceiling puts you in this band. You are only matched inside it."
             : "The ceiling you rent at decides the band. You are only matched inside it."}
         </p>
-        {agents.length === 0 ? (
+        {agents === null ? (
+          <p className="text-[13px] text-muted">Couldn&apos;t reach the server. Try again in a moment.</p>
+        ) : agents.length === 0 ? (
           <p className="text-[13px] text-muted">Nobody in this band right now.</p>
         ) : (
           <ul>
@@ -642,7 +621,7 @@ function RosterPanel({ band, agents, fromAgent }: { band: string; agents: Roster
             ))}
           </ul>
         )}
-        {agents.length > 8 ? (
+        {agents && agents.length > 8 ? (
           <p className="mt-2 text-[11px] text-muted">and {agents.length - 8} more in this band</p>
         ) : null}
         <p className="mt-2 font-mono text-[10px] text-muted">name · plays as · matches · balance</p>
@@ -809,61 +788,3 @@ function PreviewPanel({
   );
 }
 
-function Ladder({
-  rows,
-  tab,
-  setTab,
-  mine,
-}: {
-  rows: LadderRow[];
-  tab: "winnings" | "per-match";
-  setTab: (t: "winnings" | "per-match") => void;
-  mine?: string;
-}) {
-  return (
-    <section className="mt-3 border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Ladder</h2>
-      <div className="p-3">
-        <Segmented
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "winnings", label: "Winnings" },
-            { value: "per-match", label: "Per match" },
-          ]}
-        />
-        <ol className="mt-3">
-          {rows.map((row, i) => (
-            <li
-              key={row.agentId}
-              className={`flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0 ${
-                row.agentId === mine ? "text-red" : ""
-              }`}
-            >
-              <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
-              <a
-                href={`/a/${row.agentId}`}
-                className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
-              >
-                {row.name}
-              </a>
-              {row.retired ? (
-                <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
-                  retired
-                </span>
-              ) : null}
-              <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted">{row.matchesPlayed}m</span>
-              <span className="w-20 shrink-0 text-right font-mono">
-                {tab === "winnings" ? whole(row.cumulativeNet) : money(row.netPerMatch ?? 0)}
-              </span>
-            </li>
-          ))}
-          {rows.length === 0 ? <li className="py-2 text-[13px] text-muted">No agents yet.</li> : null}
-        </ol>
-        <p className="mt-2 text-[11px] leading-4 text-muted">
-          {tab === "winnings" ? "All-time net won. Volume counts." : "Net per match. Needs at least one match."}
-        </p>
-      </div>
-    </section>
-  );
-}

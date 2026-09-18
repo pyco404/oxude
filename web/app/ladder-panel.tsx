@@ -1,0 +1,82 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { api, type LadderRow } from "@/lib/api";
+import { Segmented } from "@/app/ui";
+
+const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
+const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
+
+/**
+ * The ladder, fetching for itself. `refreshKey` refetches when it changes
+ * (after renting or playing). A failed request says so: an empty ladder and an
+ * unreachable server must never look the same.
+ */
+export function LadderPanel({ mine, refreshKey = 0, limit = 25 }: { mine?: string | undefined; refreshKey?: number; limit?: number }) {
+  const [tab, setTab] = useState<"winnings" | "per-match">("winnings");
+  const [rows, setRows] = useState<LadderRow[] | null | undefined>(undefined);
+  useEffect(() => {
+    let current = true;
+    api
+      .ladder(tab, limit)
+      .then((r) => current && setRows(r.rows))
+      .catch(() => current && setRows(null));
+    return () => {
+      current = false;
+    };
+  }, [tab, limit, refreshKey]);
+
+  return (
+    <section id="ladder" className="mt-3 scroll-mt-4 border border-line bg-panel">
+      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Ladder</h2>
+      <div className="p-3">
+        <Segmented
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "winnings", label: "Winnings" },
+            { value: "per-match", label: "Per match" },
+          ]}
+        />
+        <ol className="mt-3">
+          {(rows ?? []).map((row, i) => (
+            <li
+              key={row.agentId}
+              className={`flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0 ${
+                row.agentId === mine ? "text-red" : ""
+              }`}
+            >
+              <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
+              <a
+                href={`/a/${row.agentId}`}
+                className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
+              >
+                {row.name}
+              </a>
+              {row.retired ? (
+                <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+                  retired
+                </span>
+              ) : null}
+              <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted">{row.matchesPlayed}m</span>
+              <span className="w-20 shrink-0 text-right font-mono">
+                {tab === "winnings" ? whole(row.cumulativeNet) : money(row.netPerMatch ?? 0)}
+              </span>
+            </li>
+          ))}
+          {rows === undefined ? <li className="py-2 text-[13px] text-muted">Loading…</li> : null}
+          {rows === null ? (
+            <li className="py-2 text-[13px] text-muted">Couldn&apos;t reach the server. Try again in a moment.</li>
+          ) : null}
+          {rows && rows.length === 0 ? <li className="py-2 text-[13px] text-muted">No agents yet.</li> : null}
+        </ol>
+        <p className="mt-2 text-[11px] leading-4 text-muted">
+          {tab === "winnings"
+            ? "All-time net won in staked matches. Volume counts."
+            : "Net per staked match. Needs at least one match."}{" "}
+          Exhibitions between house agents don&apos;t count.
+        </p>
+      </div>
+    </section>
+  );
+}
