@@ -251,6 +251,7 @@ describe("GET /presets", () => {
     const listed = await readBody(res);
     expect(listed.free).toBe(true);
     expect(listed.presets.map((p: { name: string }) => p.name)).toEqual(PRESET_NAMES);
+    for (const preset of listed.presets) expect(preset.description.length).toBeGreaterThan(20);
 
     const preview = await readBody(
       await api("/preview", { method: "POST", body: JSON.stringify({ policyTable: listed.presets[0].policyTable }) }),

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { elicitPolicy } from "../agents/llm.js";
 import { validatePolicy, type Policy } from "../agents/policy.js";
 import { headlineFor, renderTranscript } from "../transcript.js";
-import { PRESET_NAMES, type PresetName } from "../presets.js";
+import { PRESET_DESCRIPTIONS, PRESET_NAMES, type PresetName } from "../presets.js";
 import type { Db } from "../db/client.js";
 import { agents, matches } from "../db/schema.js";
 import { isFirstElicitationFree, recordElicitation, StakeError, statement } from "../db/ledger.js";
@@ -296,7 +296,11 @@ export function createApp(options: AppOptions): Server {
   /** Public and free: the shipped tables, so the UI can rate them without a model call. */
   async function getPresets() {
     return {
-      presets: PRESET_NAMES.map((name) => ({ name, policyTable: snapshotPreset(name) })),
+      presets: PRESET_NAMES.map((name) => ({
+        name,
+        description: PRESET_DESCRIPTIONS[name],
+        policyTable: snapshotPreset(name),
+      })),
       free: true,
     };
   }

@@ -98,6 +98,14 @@ export const PRESET_PARAMS = {
 
 export type PresetName = keyof typeof PRESET_PARAMS;
 
+/** What each preset does, in a sentence a player can choose by. */
+export const PRESET_DESCRIPTIONS: Record<PresetName, string> = {
+  Anchor: "Calls down and raises only a strong hand. Folds when the price is wrong, never on a hunch.",
+  Hammer: "Raises from even money up. Same discipline as Anchor, a lot more pressure.",
+  Mirage: "Raises its worst hand and its best, calls in between. The bluffer.",
+  Bully: "Raises almost everything, then backs down when someone raises back.",
+};
+
 export const PRESET_NAMES = Object.keys(PRESET_PARAMS) as PresetName[];
 
 /** Re-exported for callers that reach for the rules through the presets. */
