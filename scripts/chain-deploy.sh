@@ -26,5 +26,13 @@ awk -v b="$BALANCE" 'BEGIN { exit !(b < 3) }' && {
   exit 1
 }
 
-solana program deploy "$SO" --program-id "$PROGRAM_KEY" --keypair "$ADMIN" --url "$RPC"
+# Buffer writes go straight to validators (the default TPU path). Public
+# devnet drops some of them, so allow many retry rounds for the dropped ones,
+# with a small priority fee. Do not add --use-rpc: sending ~300 writes through
+# the public RPC gets throttled with 429s and never finishes.
+# If a deploy still fails, close the stranded buffer to recover its ~1.5 SOL:
+#   solana program show --buffers --buffer-authority <ADMIN> --url <RPC>
+#   solana program close <BUFFER> --keypair .keys/admin.json --url <RPC> --bypass-warning
+solana program deploy "$SO" --program-id "$PROGRAM_KEY" --keypair "$ADMIN" --url "$RPC" \
+  --max-sign-attempts 100 --with-compute-unit-price 10000
 CHAIN_RPC_URL="$RPC" npx tsx scripts/chain-setup.ts
