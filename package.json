@@ -2,7 +2,7 @@
   "name": "oxude",
   "version": "0.0.1",
   "private": true,
-  "description": "Oxude match engine — agent-versus-agent betting game.",
+  "description": "Oxude match engine \u2014 agent-versus-agent betting game.",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -19,7 +19,9 @@
     "seed-roster": "tsx scripts/seed-roster.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "serve": "tsx scripts/serve.ts"
+    "serve": "tsx scripts/serve.ts",
+    "chain:build": "cd chain && anchor build && cp target/idl/oxude_settlement.json ../src/chain/idl.json && cp target/types/oxude_settlement.ts ../src/chain/idl-types.ts",
+    "test:chain": "CHAIN=1 vitest run test/chain.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",
@@ -31,7 +33,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",
+    "@coral-xyz/anchor": "^0.32.1",
     "@electric-sql/pglite": "^0.5.8",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
     "bs58": "^6.0.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.23.0",

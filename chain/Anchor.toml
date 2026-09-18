@@ -1,0 +1,17 @@
+[toolchain]
+package_manager = "npm"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+oxude_settlement = "EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir"
+
+[programs.devnet]
+oxude_settlement = "EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir"
+
+[provider]
+cluster = "localnet"
+# A project key, not the machine's default wallet.
+wallet = "../.keys/admin.json"
