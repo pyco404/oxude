@@ -468,6 +468,9 @@ describe("sharing and the roster", () => {
     const all = await readBody(await api("/roster", { owner: null }));
     expect(all.bands.map((b: { name: string }) => b.name)).toEqual(["10-20", "20-40", "40-60"]);
     expect(all.agents.length).toBeGreaterThan(0);
+    const counts = all.counts as Record<string, number>;
+    expect(Object.keys(counts)).toEqual(["10-20", "20-40", "40-60"]);
+    expect(counts["10-20"]! + counts["20-40"]! + counts["40-60"]!).toBeGreaterThanOrEqual(all.agents.length);
 
     const high = await readBody(await api("/roster?band=40-60", { owner: null }));
     expect(high.agents.every((a: { maxStake: number }) => a.maxStake > 40)).toBe(true);

@@ -19,6 +19,7 @@ import {
   roster,
   runMatch,
   type LadderTab,
+  bandCounts,
 } from "../db/runner.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, recentMatches } from "../db/feed.js";
@@ -413,7 +414,7 @@ export function createApp(options: AppOptions): Server {
       throw new HttpError(400, `band must be one of ${CEILING_BANDS.map((b) => b.name).join(", ")}`);
     }
     const rows = await roster(db, band === null ? {} : { band: band as CeilingBand });
-    return { band, bands: CEILING_BANDS, agents: rows };
+    return { band, bands: CEILING_BANDS, counts: await bandCounts(db), agents: rows };
   }
 
   async function postPreview(ctx: Ctx) {

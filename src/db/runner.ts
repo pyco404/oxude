@@ -482,6 +482,19 @@ export async function roster(db: Db, options: { band?: CeilingBand; limit?: numb
     .limit(options.limit ?? 24);
 }
 
+/** Active agents in each ceiling band, so a newcomer can be pointed at the busiest. */
+export async function bandCounts(db: Db): Promise<Record<CeilingBand, number>> {
+  const [row] = await db
+    .select({
+      low: sql<number>`count(*) filter (where ${agents.maxStake} <= 20)::int`,
+      mid: sql<number>`count(*) filter (where ${agents.maxStake} > 20 and ${agents.maxStake} <= 40)::int`,
+      high: sql<number>`count(*) filter (where ${agents.maxStake} > 40)::int`,
+    })
+    .from(agents)
+    .where(isNull(agents.retiredAt));
+  return { "10-20": Number(row?.low ?? 0), "20-40": Number(row?.mid ?? 0), "40-60": Number(row?.high ?? 0) };
+}
+
 /** The owner's ceiling, changed after renting. */
 export async function setCeiling(db: Db, agentId: string, ownerId: string | null, ceiling: number) {
   const row = await ownerAgent(db, agentId, ownerId);
