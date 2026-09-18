@@ -72,13 +72,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit & { ownerId?: string } = {}): Promise<T> {
-  const { ownerId, ...rest } = init;
+async function request<T>(path: string, init: RequestInit & { token?: string | null } = {}): Promise<T> {
+  const { token, ...rest } = init;
   const res = await fetch(`${API}${path}`, {
     ...rest,
     headers: {
       "content-type": "application/json",
-      ...(ownerId ? { "x-owner-id": ownerId } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(rest.headers ?? {}),
     },
   });
@@ -95,24 +95,24 @@ async function request<T>(path: string, init: RequestInit & { ownerId?: string }
 
 export const api = {
   presets: () => request<{ presets: Preset[]; free: boolean }>("/presets"),
-  previewTable: (ownerId: string, policyTable: unknown) =>
-    request<{ preview: Preview }>("/preview", { method: "POST", ownerId, body: JSON.stringify({ policyTable }) }),
-  previewBrief: (ownerId: string, brief: string) =>
+  previewTable: (token: string | null, policyTable: unknown) =>
+    request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable }) }),
+  previewBrief: (token: string | null, brief: string) =>
     request<{ preview: Preview; elicitation: { free: boolean } | null }>("/preview", {
       method: "POST",
-      ownerId,
+      token,
       body: JSON.stringify({ brief }),
     }),
-  rent: (ownerId: string, input: { name: string; presetName?: string; brief?: string; maxStake?: number }) =>
+  rent: (token: string | null, input: { name: string; presetName?: string; brief?: string; maxStake?: number }) =>
     request<{ agent: AgentView; elicitation: { free: boolean } | null }>("/agents", {
       method: "POST",
-      ownerId,
+      token,
       body: JSON.stringify(input),
     }),
-  setCeiling: (ownerId: string, id: string, maxStake: number) =>
-    request<{ maxStake: number }>(`/agents/${id}/ceiling`, { method: "POST", ownerId, body: JSON.stringify({ maxStake }) }),
-  agent: (ownerId: string, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { ownerId }),
-  play: (ownerId: string, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", ownerId }),
+  setCeiling: (token: string | null, id: string, maxStake: number) =>
+    request<{ maxStake: number }>(`/agents/${id}/ceiling`, { method: "POST", token, body: JSON.stringify({ maxStake }) }),
+  agent: (token: string | null, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { token }),
+  play: (token: string | null, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", token }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
   roster: (band: string) => request<{ agents: RosterAgent[] }>(`/roster?band=${band}`),
   ladder: (sort: "winnings" | "per-match") => request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=25`),

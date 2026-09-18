@@ -2,10 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
+import {
+  installedWallets,
+  installUrl,
+  loadSession,
+  shortKey,
+  signInWith,
+  signOut,
+  type Session,
+  type WalletName,
+} from "@/lib/wallet";
 import { api, ApiError, bandOf, type RosterAgent, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
 
-/** STUB_AUTH_MUST_NOT_SHIP: an owner id kept in this browser stands in for a wallet. */
-const OWNER_KEY = "oxude.owner";
 const AGENT_KEY = "oxude.agent";
 const BRIEF_DEBOUNCE_MS = 1500;
 
@@ -13,7 +21,9 @@ const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).t
 const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
 
 export default function Page() {
-  const [ownerId, setOwnerId] = useState("");
+  const [session, setSession] = useState<Session | null>(null);
+  const [wallets, setWallets] = useState<WalletName[]>([]);
+  const token = session?.token ?? null;
   const [agent, setAgent] = useState<AgentView | null>(null);
   const [tab, setTab] = useState<"preset" | "brief">("preset");
   const [presets, setPresets] = useState<Preset[]>([]);
@@ -37,22 +47,32 @@ export default function Page() {
   const briefTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    let id = localStorage.getItem(OWNER_KEY);
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem(OWNER_KEY, id);
-    }
-    setOwnerId(id);
+    setSession(loadSession());
+    // Wallets inject after load; look again shortly so a slow extension still shows up.
+    setWallets(installedWallets());
+    const late = setTimeout(() => setWallets(installedWallets()), 600);
     void api.presets().then((r) => {
       setPresets(r.presets);
       setChosen((c) => c || r.presets[0]?.name || "");
     });
+    return () => clearTimeout(late);
   }, []);
 
+  const connect = (name: WalletName) =>
+    run("connect", async () => {
+      setSession(await signInWith(name));
+    });
+  const disconnect = () =>
+    run("disconnect", async () => {
+      await signOut(session);
+      setSession(null);
+      setAgent(null);
+    });
+
   const refreshAgent = useCallback(
-    async (id: string, owner: string) => {
+    async (id: string, sessionToken: string | null) => {
       try {
-        const { agent: fresh } = await api.agent(owner, id);
+        const { agent: fresh } = await api.agent(sessionToken, id);
         setAgent({ ...fresh, id });
       } catch {
         localStorage.removeItem(AGENT_KEY);
@@ -62,11 +82,12 @@ export default function Page() {
     [],
   );
 
+  // Your agent is only yours while you are signed in as its owner.
   useEffect(() => {
-    if (!ownerId) return;
+    if (!token) return;
     const saved = localStorage.getItem(AGENT_KEY);
-    if (saved) void refreshAgent(saved, ownerId);
-  }, [ownerId, refreshAgent]);
+    if (saved) void refreshAgent(saved, token);
+  }, [token, refreshAgent]);
 
   const loadLadder = useCallback(async () => {
     const { rows } = await api.ladder(ladderTab);
@@ -90,13 +111,13 @@ export default function Page() {
 
   // Free: every preset rated once against today's roster, so the picker can compare them.
   useEffect(() => {
-    if (!ownerId || presets.length === 0) return;
+    if (presets.length === 0) return;
     void Promise.all(
-      presets.map(async (p) => [p.name, (await api.previewTable(ownerId, p.policyTable)).preview.trueRating] as const),
+      presets.map(async (p) => [p.name, (await api.previewTable(null, p.policyTable)).preview.trueRating] as const),
     )
       .then((pairs) => setPresetRatings(Object.fromEntries(pairs)))
       .catch(() => setPresetRatings({}));
-  }, [ownerId, presets]);
+  }, [presets]);
 
   // Who you would meet: your agent's band once you have one, otherwise the band
   // the ceiling you are about to rent at would put you in.
@@ -110,20 +131,20 @@ export default function Page() {
 
   // Free: rating a preset's table costs nothing, so it runs on every selection.
   useEffect(() => {
-    if (tab !== "preset" || !ownerId || !chosen) return;
+    if (tab !== "preset" || !chosen) return;
     const table = presets.find((p) => p.name === chosen)?.policyTable;
     if (!table) return;
     setPreviewing(true);
     void api
-      .previewTable(ownerId, table)
+      .previewTable(null, table)
       .then((r) => setPreview({ value: r.preview, paid: false }))
       .catch(() => setPreview(null))
       .finally(() => setPreviewing(false));
-  }, [tab, chosen, presets, ownerId]);
+  }, [tab, chosen, presets]);
 
   // Paid: rating a brief needs a model call, so it waits until typing stops.
   useEffect(() => {
-    if (tab !== "brief" || !ownerId) return;
+    if (tab !== "brief" || !token) return;
     if (briefTimer.current) clearTimeout(briefTimer.current);
     if (!autoPreview || brief.trim().length < 12) return;
     briefTimer.current = setTimeout(() => void ratePaidBrief(), BRIEF_DEBOUNCE_MS);
@@ -131,14 +152,14 @@ export default function Page() {
       if (briefTimer.current) clearTimeout(briefTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brief, tab, autoPreview, ownerId]);
+  }, [brief, tab, autoPreview, token]);
 
   const ratePaidBrief = async () => {
-    if (!ownerId || brief.trim().length < 12) return;
+    if (!token || brief.trim().length < 12) return;
     setPreviewing(true);
     setError(null);
     try {
-      const r = await api.previewBrief(ownerId, brief.trim());
+      const r = await api.previewBrief(token, brief.trim());
       setPreview({ value: r.preview, paid: true });
       if (r.elicitation?.free) setFirstFreeUsed(true);
       else setPaidCalls((n) => n + 1);
@@ -153,7 +174,7 @@ export default function Page() {
   const rent = () =>
     run("rent", async () => {
       const label = name.trim() || (tab === "preset" ? `${chosen} rental` : "My agent");
-      const { agent: created, elicitation } = await api.rent(ownerId, {
+      const { agent: created, elicitation } = await api.rent(token, {
         name: label,
         maxStake: ceiling,
         ...(tab === "preset" ? { presetName: chosen } : { brief: brief.trim() }),
@@ -171,11 +192,11 @@ export default function Page() {
     run("play", async () => {
       const id = agent?.id ?? agent?.agentId;
       if (!id) return;
-      const result = await api.play(ownerId, id);
+      const result = await api.play(token, id);
       setLastPlay(result);
       const { transcript: text } = await api.match(result.matchId);
       setTranscript(text);
-      await Promise.all([refreshAgent(id, ownerId), loadLadder()]);
+      await Promise.all([refreshAgent(id, token), loadLadder()]);
     });
 
   const release = () => {
@@ -187,7 +208,13 @@ export default function Page() {
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-6">
-      <Header ownerId={ownerId} />
+      <Header
+        session={session}
+        wallets={wallets}
+        onConnect={connect}
+        onDisconnect={disconnect}
+        busy={busy === "connect" || busy === "disconnect"}
+      />
 
       {error ? (
         <p className="mb-4 border border-red/40 bg-red-dim/20 px-3 py-2 text-[13px] text-red" role="alert">
@@ -206,8 +233,8 @@ export default function Page() {
             run("ceiling", async () => {
               const id = agent.id ?? agent.agentId;
               if (!id) return;
-              await api.setCeiling(ownerId, id, value);
-              await refreshAgent(id, ownerId);
+              await api.setCeiling(token, id, value);
+              await refreshAgent(id, token);
             })
           }
         />
@@ -233,6 +260,7 @@ export default function Page() {
           ceiling={ceiling}
           setCeiling={setCeiling}
           presetRatings={presetRatings}
+          signedIn={Boolean(session)}
         />
       )}
 
@@ -251,7 +279,19 @@ export default function Page() {
   );
 }
 
-function Header({ ownerId }: { ownerId: string }) {
+function Header({
+  session,
+  wallets,
+  onConnect,
+  onDisconnect,
+  busy,
+}: {
+  session: Session | null;
+  wallets: WalletName[];
+  onConnect: (name: WalletName) => void;
+  onDisconnect: () => void;
+  busy: boolean;
+}) {
   return (
     <header className="mb-5">
       <div className="flex items-center justify-between">
@@ -260,14 +300,70 @@ function Header({ ownerId }: { ownerId: string }) {
           <img src="/oxude-tb.png" alt="" width={32} height={32} className="h-8 w-8" />
           OXUDE
         </h1>
-        <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
-          {ownerId ? `owner ${ownerId.slice(0, 8)}` : "…"}
-        </span>
+        {session ? (
+          <button
+            onClick={onDisconnect}
+            disabled={busy}
+            className="border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red"
+            title="Sign out"
+          >
+            {shortKey(session.ownerId)}
+          </button>
+        ) : null}
       </div>
       <p className="mt-1 text-[13px] leading-5 text-muted">
         Rent an agent, write its brief, watch what it does. It plays itself.
       </p>
+      {session ? null : <ConnectPanel wallets={wallets} onConnect={onConnect} busy={busy} />}
     </header>
+  );
+}
+
+/**
+ * Sign-in. The wallet signs a plain-text message, never a transaction, and the
+ * panel says so, because a signing prompt is exactly where people get phished.
+ */
+function ConnectPanel({
+  wallets,
+  onConnect,
+  busy,
+}: {
+  wallets: WalletName[];
+  onConnect: (name: WalletName) => void;
+  busy: boolean;
+}) {
+  const all: WalletName[] = ["Phantom", "Solflare"];
+  return (
+    <div className="mt-3 border border-line bg-panel p-3">
+      <p className="text-[13px] leading-5">Connect a wallet to rent and play.</p>
+      <p className="mt-1 text-[11px] leading-4 text-muted">
+        You sign a message, not a transaction: it costs nothing and moves nothing. Browsing needs no wallet.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {all.map((name) =>
+          wallets.includes(name) ? (
+            <button
+              key={name}
+              onClick={() => onConnect(name)}
+              disabled={busy}
+              className="bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+            >
+              {busy ? "Waiting…" : name}
+            </button>
+          ) : (
+            <a
+              key={name}
+              href={installUrl(name)}
+              target="_blank"
+              rel="noreferrer"
+              className="border border-line px-3 py-2 text-center text-[13px] text-muted"
+            >
+              Get {name}
+            </a>
+          ),
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -320,8 +416,10 @@ function RentPanel(props: {
   ceiling: number;
   setCeiling: (n: number) => void;
   presetRatings: Record<string, number>;
+  signedIn: boolean;
 }) {
-  const ready = props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12;
+  const ready =
+    props.signedIn && (props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12);
   return (
     <section className="border border-line bg-panel">
       <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Rent an agent</h2>
@@ -392,7 +490,7 @@ function RentPanel(props: {
             </div>
             <button
               onClick={props.onRateBrief}
-              disabled={props.brief.trim().length < 12 || props.previewing}
+              disabled={!props.signedIn || props.brief.trim().length < 12 || props.previewing}
               className="w-full border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
             >
               {props.previewing ? "Rating…" : "Rate this brief"}
@@ -436,7 +534,13 @@ function RentPanel(props: {
           disabled={!ready || props.busy}
           className="w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
-          {props.busy ? "Renting…" : props.tab === "preset" ? `Rent ${props.chosen}` : "Rent on this brief"}
+          {!props.signedIn
+            ? "Connect a wallet to rent"
+            : props.busy
+              ? "Renting…"
+              : props.tab === "preset"
+                ? `Rent ${props.chosen}`
+                : "Rent on this brief"}
         </button>
         {props.tab === "brief" ? (
           <p className="text-[11px] leading-4 text-muted">
