@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
+import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
 import { useCountUp } from "@/lib/motion";
 import {
   installedWallets,
@@ -13,7 +14,7 @@ import {
   type Session,
   type WalletName,
 } from "@/lib/wallet";
-import { api, ApiError, bandOf, type RosterAgent, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
+import { api, ApiError, bandOf, type Feed, type RosterAgent, type AgentView, type LadderRow, type PlayResult, type Preset, type Preview } from "@/lib/api";
 
 const AGENT_KEY = "oxude.agent";
 const BRIEF_DEBOUNCE_MS = 1500;
@@ -21,7 +22,8 @@ const BRIEF_DEBOUNCE_MS = 1500;
 const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
 const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
 
-export default function Page() {
+export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
+  const feed = useFeed(initialFeed);
   const [session, setSession] = useState<Session | null>(null);
   const [wallets, setWallets] = useState<WalletName[]>([]);
   const token = session?.token ?? null;
@@ -209,19 +211,22 @@ export default function Page() {
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-6">
-      <Header
-        session={session}
-        wallets={wallets}
-        onConnect={connect}
-        onDisconnect={disconnect}
-        busy={busy === "connect" || busy === "disconnect"}
-      />
+      <Header session={session} onDisconnect={disconnect} busy={busy === "disconnect"} />
 
       {error ? (
         <p className="mb-4 border border-red/40 bg-red-dim/20 px-3 py-2 text-[13px] text-red" role="alert">
           {error}
         </p>
       ) : null}
+
+      {/* Signed out, the game comes first: a bluff and the live feed, then the ask. */}
+      {session ? null : (
+        <>
+          <BluffCard bluff={feed?.bluff ?? null} />
+          <LiveFeed feed={feed} className="mb-3" />
+          <ConnectPanel wallets={wallets} onConnect={connect} busy={busy === "connect"} />
+        </>
+      )}
 
       {agent ? (
         <AgentCard
@@ -272,6 +277,7 @@ export default function Page() {
         fromAgent={Boolean(agent)}
       />
       <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} />
+      {session ? <LiveFeed feed={feed} className="mt-3" /> : null}
       <Ladder rows={ladder} tab={ladderTab} setTab={setLadderTab} mine={agent?.id ?? agent?.agentId} />
       <footer className="mt-10 border-t border-line pt-4 text-[11px] leading-5 text-muted">
         Ratings shown to you are exact against the roster as it stands today. The ladder ranks what agents actually won.
@@ -286,19 +292,7 @@ export default function Page() {
   );
 }
 
-function Header({
-  session,
-  wallets,
-  onConnect,
-  onDisconnect,
-  busy,
-}: {
-  session: Session | null;
-  wallets: WalletName[];
-  onConnect: (name: WalletName) => void;
-  onDisconnect: () => void;
-  busy: boolean;
-}) {
+function Header({ session, onDisconnect, busy }: { session: Session | null; onDisconnect: () => void; busy: boolean }) {
   return (
     <header className="mb-5">
       <div className="flex items-center justify-between">
@@ -319,9 +313,8 @@ function Header({
         ) : null}
       </div>
       <p className="mt-1 text-[13px] leading-5 text-muted">
-        Rent an agent, write its brief, watch what it does. It plays itself.
+        AI agents play bluff-and-fold against each other, staked and settled on Solana. Every hand is shown.
       </p>
-      {session ? null : <ConnectPanel wallets={wallets} onConnect={onConnect} busy={busy} />}
     </header>
   );
 }
@@ -341,8 +334,8 @@ function ConnectPanel({
 }) {
   const all: WalletName[] = ["Phantom", "Solflare"];
   return (
-    <div className="mt-3 border border-line bg-panel p-3">
-      <p className="text-[13px] leading-5">Connect a wallet to rent and play.</p>
+    <div className="mb-3 border border-line bg-panel p-3">
+      <p className="text-[13px] leading-5">Want one of your own? Connect a wallet to rent an agent and play.</p>
       <p className="mt-1 text-[11px] leading-4 text-muted">
         You sign a message, not a transaction: it costs nothing and moves nothing. Browsing needs no wallet.
       </p>
@@ -848,7 +841,12 @@ function Ladder({
               }`}
             >
               <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
-              <span className={`min-w-0 flex-1 truncate ${row.retired ? "text-muted line-through" : ""}`}>{row.name}</span>
+              <a
+                href={`/a/${row.agentId}`}
+                className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
+              >
+                {row.name}
+              </a>
               {row.retired ? (
                 <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
                   retired

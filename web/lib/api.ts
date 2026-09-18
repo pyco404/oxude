@@ -62,6 +62,25 @@ export type PlayResult = {
   retired: boolean;
 };
 
+/** One match as the public feed shows it. Mirrors the API's FeedItem. */
+export type FeedItem = {
+  id: string;
+  seq: number;
+  createdAt: string;
+  a: { id: string; name: string };
+  b: { id: string; name: string };
+  winner: "A" | "B" | null;
+  netA: number;
+  netB: number;
+  stake: number;
+  rounds: number;
+  headline: string | null;
+  beat: string | null;
+  beatSeat: "A" | "B" | null;
+};
+export type Feed = { matches: FeedItem[]; bluff: FeedItem | null };
+export type AgentRecord = { wins: number; losses: number; level: number };
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -115,5 +134,6 @@ export const api = {
   play: (token: string | null, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", token }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
   roster: (band: string) => request<{ agents: RosterAgent[] }>(`/roster?band=${band}`),
+  feed: (limit = 12) => request<Feed>(`/matches?limit=${limit}`),
   ladder: (sort: "winnings" | "per-match") => request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=25`),
 };

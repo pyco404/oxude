@@ -69,7 +69,13 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
 
       <section className="border border-line bg-panel">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
-          {summary.names.A} <span className="text-muted">vs</span> {summary.names.B}
+          <a href={`/a/${match.agentA.id}`} className="hover:text-red">
+            {summary.names.A}
+          </a>{" "}
+          <span className="text-muted">vs</span>{" "}
+          <a href={`/a/${match.agentB.id}`} className="hover:text-red">
+            {summary.names.B}
+          </a>
         </h1>
         <div className="p-3">
           <p className="font-mono text-2xl">
