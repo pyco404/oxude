@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
+import { useCountUp } from "@/lib/motion";
 import {
   installedWallets,
   installUrl,
@@ -436,30 +437,16 @@ function RentPanel(props: {
         {props.tab === "preset" ? (
           <>
           <ul className="space-y-2">
-            {props.presets.map((p) => {
-              const rating = props.presetRatings[p.name];
-              const selected = props.chosen === p.name;
-              return (
-                <li key={p.name}>
-                  <button
-                    onClick={() => props.setChosen(p.name)}
-                    aria-pressed={selected}
-                    className={`w-full border px-3 py-3 text-left ${
-                      selected ? "border-red bg-panel-2" : "border-line bg-panel hover:border-muted"
-                    }`}
-                  >
-                    <span className="flex items-baseline justify-between gap-3">
-                      <span className="text-[15px] font-medium">{p.name}</span>
-                      <span className="font-mono text-[12px] text-muted">
-                        {typeof rating === "number" ? `${money(rating, 3)} / match` : "…"}
-                      </span>
-                    </span>
-                    <span className="mt-1 block text-[12px] leading-5 text-muted">{p.description}</span>
-                    <Behaviour table={p.policyTable} />
-                  </button>
-                </li>
-              );
-            })}
+            {props.presets.map((p, index) => (
+              <PresetCard
+                key={p.name}
+                preset={p}
+                index={index}
+                rating={props.presetRatings[p.name]}
+                selected={props.chosen === p.name}
+                onSelect={() => props.setChosen(p.name)}
+              />
+            ))}
           </ul>
           <p className="text-[11px] leading-4 text-muted">
             Figures are exact expected net per match against the roster as it stands today. Free to see.
@@ -554,22 +541,66 @@ function RentPanel(props: {
   );
 }
 
+/** Arrival timing for the preset cards. */
+const BAR_STAGGER_MS = 30;
+const CARD_STAGGER_MS = 80;
+
+function PresetCard({
+  preset,
+  index,
+  rating,
+  selected,
+  onSelect,
+}: {
+  preset: Preset;
+  index: number;
+  rating: number | undefined;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  // Counts in on the same beat as this card's bars.
+  const shown = useCountUp(rating, 400, index * CARD_STAGGER_MS);
+  return (
+    <li>
+      <button
+        onClick={onSelect}
+        aria-pressed={selected}
+        className={`card-border w-full border px-3 py-3 text-left ${
+          selected ? "border-red bg-panel-2" : "border-line bg-panel hover:border-muted"
+        }`}
+      >
+        <span className="flex items-baseline justify-between gap-3">
+          <span className="text-[15px] font-medium">{preset.name}</span>
+          {/* The final figure is what screen readers get, not the frames in between. */}
+          <span className="font-mono text-[12px] text-muted" aria-label={rating === undefined ? undefined : `${money(rating, 3)} per match`}>
+            {shown === undefined ? "…" : `${money(shown, 3)} / match`}
+          </span>
+        </span>
+        <span className="mt-1 block text-[12px] leading-5 text-muted">{preset.description}</span>
+        <Behaviour table={preset.policyTable} delayMs={index * CARD_STAGGER_MS} />
+      </button>
+    </li>
+  );
+}
+
 /**
  * What a table does when it acts first, edge by edge: a filled square raises,
  * an outlined one calls, a faint one folds. Readable at a glance, no codes.
+ * Each square wipes in once on arrival and then holds still.
  */
-function Behaviour({ table }: { table: Record<string, Record<string, string>> }) {
+function Behaviour({ table, delayMs = 0 }: { table: Record<string, Record<string, string>>; delayMs?: number }) {
   const lead = table["lead"] ?? {};
   const edges = Object.keys(lead).sort();
   return (
     <span className="mt-2 flex items-end gap-1.5" aria-label="what it does when acting first">
-      {edges.map((edge) => {
+      {edges.map((edge, i) => {
         const action = lead[edge];
         return (
           <span key={edge} className="flex flex-col items-center gap-0.5">
             <span
               title={`${action} at ${edge}`}
-              className={`block h-3 w-6 ${
+              style={{ animationDelay: `${delayMs + i * BAR_STAGGER_MS}ms` }}
+              className={`bar-wipe block h-3 w-6 ${
                 action === "raise" ? "bg-red" : action === "call" ? "border border-muted" : "bg-line"
               }`}
             />

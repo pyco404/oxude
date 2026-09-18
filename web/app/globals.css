@@ -30,3 +30,36 @@ body {
   background: var(--color-red-dim);
   color: var(--color-text);
 }
+
+/*
+ * Arrival motion for the preset cards. It plays once, when a card mounts, and
+ * never loops: the bars are data, and anything that keeps moving makes them
+ * harder to compare. Delays are set inline to stagger edges and cards.
+ */
+@keyframes bar-wipe {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.bar-wipe {
+  transform-origin: left center;
+  animation: bar-wipe 180ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* The selected card's border fades in once; there is no pulse. */
+.card-border {
+  transition: border-color 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-wipe {
+    animation: none;
+  }
+  .card-border {
+    transition: none;
+  }
+}
