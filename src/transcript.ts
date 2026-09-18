@@ -99,6 +99,34 @@ function describeBeat(beat: Beat, names: TranscriptNames): string {
   }
 }
 
+/**
+ * The one line worth putting on a shared card: the most dramatic thing that
+ * happened, or null for a match where nothing stood out.
+ */
+export function headlineFor(log: MatchLog, names: TranscriptNames = log.names): string | null {
+  const order: Beat["kind"][] = ["bluff-worked", "bluff-called", "fold-with-better-hand", "biggest-swing"];
+  const beats = log.rounds.flatMap((_, i) => beatsFor(log, i));
+  for (const kind of order) {
+    const beat = beats.find((b) => b.kind === kind);
+    if (!beat) continue;
+    const who = names[beat.seat];
+    switch (beat.kind) {
+      case "bluff-worked":
+        // Both edges, or "bluffed on 0.60" reads as a strong hand rather than the weaker one.
+        return `${who} raised ${beat.edge.toFixed(2)} into ${beat.oppEdge.toFixed(2)} and took it`;
+      case "bluff-called":
+        return beat.survived
+          ? `${who} raised ${beat.edge.toFixed(2)} into ${beat.oppEdge.toFixed(2)}, got called, and won anyway`
+          : `${who} raised ${beat.edge.toFixed(2)} into ${beat.oppEdge.toFixed(2)} and got called`;
+      case "fold-with-better-hand":
+        return `${who} folded the better hand at ${beat.edge.toFixed(2)}`;
+      case "biggest-swing":
+        return `${who} took the biggest pot and the lead`;
+    }
+  }
+  return null;
+}
+
 function describeRound(log: MatchLog, index: number, names: TranscriptNames): string[] {
   const round = log.rounds[index]!;
   const name = (seat: Seat) => names[seat];

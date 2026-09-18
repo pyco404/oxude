@@ -389,6 +389,37 @@ export async function ownerAgent(db: Db, agentId: string, ownerId: string | null
   return row;
 }
 
+/** Who is available to play, optionally inside one ceiling band. */
+export async function roster(db: Db, options: { band?: CeilingBand; limit?: number } = {}) {
+  const bounds = options.band;
+  const inBand =
+    bounds === undefined
+      ? sql`true`
+      : bounds === "10-20"
+        ? lte(agents.maxStake, 20)
+        : bounds === "20-40"
+          ? and(gt(agents.maxStake, 20), lte(agents.maxStake, 40))
+          : gt(agents.maxStake, 40);
+
+  const balance = sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
+  return db
+    .select({
+      agentId: agents.id,
+      name: agents.name,
+      presetName: agents.presetName,
+      maxStake: agents.maxStake,
+      matchesPlayed: ratings.matchesPlayed,
+      cumulativeNet: ratings.cumulativeNet,
+      recentForm: ratings.rollingNet50,
+      balance,
+    })
+    .from(agents)
+    .innerJoin(ratings, eq(ratings.agentId, agents.id))
+    .where(and(isNull(agents.retiredAt), inBand))
+    .orderBy(desc(ratings.matchesPlayed))
+    .limit(options.limit ?? 24);
+}
+
 /** The owner's ceiling, changed after renting. */
 export async function setCeiling(db: Db, agentId: string, ownerId: string | null, ceiling: number) {
   const row = await ownerAgent(db, agentId, ownerId);

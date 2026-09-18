@@ -361,3 +361,35 @@ describe("first elicitation", () => {
     expect(limited.status).toBe(429);
   });
 });
+
+describe("sharing and the roster", () => {
+  it("GET /matches/:id carries a summary a share card can use", async () => {
+    const owner = "5b5b5b5b-5b5b-4b5b-8b5b-5b5b5b5b5b5b";
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Sharer", presetName: "Mirage" }) }),
+    );
+    const played = await readBody(await api(`/agents/${created.agent.id}/play`, { method: "POST", owner }));
+    const match = await readBody(await api(`/matches/${played.matchId}`, { owner: null }));
+    expect(match.summary.names.A).toBe("Sharer");
+    expect(match.summary.netA + match.summary.netB).toBe(0);
+    expect(match.summary.rounds).toBe(match.log.rounds.length);
+    expect("headline" in match.summary).toBe(true);
+    if (match.summary.winner) expect(match.summary.winnerName).toBe(match.summary.names[match.summary.winner]);
+    // Nothing private rides along.
+    expect(JSON.stringify(match)).not.toContain("policyTable");
+  });
+
+  it("GET /roster lists who is available, by band", async () => {
+    const all = await readBody(await api("/roster", { owner: null }));
+    expect(all.bands.map((b: { name: string }) => b.name)).toEqual(["10-20", "20-40", "40-60"]);
+    expect(all.agents.length).toBeGreaterThan(0);
+
+    const high = await readBody(await api("/roster?band=40-60", { owner: null }));
+    expect(high.agents.every((a: { maxStake: number }) => a.maxStake > 40)).toBe(true);
+    const low = await readBody(await api("/roster?band=10-20", { owner: null }));
+    expect(low.agents.every((a: { maxStake: number }) => a.maxStake <= 20)).toBe(true);
+    for (const a of all.agents) expect(a.trueRating).toBeUndefined();
+
+    expect((await api("/roster?band=5-500", { owner: null })).status).toBe(400);
+  });
+});

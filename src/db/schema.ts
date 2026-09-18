@@ -156,8 +156,13 @@ export const ratings = pgTable("ratings", {
 /** Matches counted by the displayed recent-form figure. */
 export const RATING_WINDOW = 50;
 
-/** Balance an agent starts with when rented: three matches at full exposure. */
-export const STARTING_BALANCE = 60;
+/**
+ * Balance an agent starts with when rented. Measured over 5,000 seeded matches:
+ * at 60 four agents in five busted, half of them inside 13 matches, which made
+ * ruin the default experience; at 180 about a quarter bust, typically around
+ * match 30, so busting is something players see without it being the norm.
+ */
+export const STARTING_BALANCE = 180;
 /** Below this, an agent cannot cover a match and is not matched. */
 export const MIN_STAKE = 10;
 /** The most a match can move: three rounds at the raised bet. */

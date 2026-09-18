@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   beatsFor,
+  headlineFor,
   makeStrategy,
   playMatch,
   PRESETS,
@@ -107,5 +108,27 @@ describe("transcripts", () => {
     for (const leak of ["brief", "policy", "preset", "seed", "foldBelow", "raiseAtOrAbove", "bluffAtOrBelow", "pot-odds"]) {
       expect(text.toLowerCase()).not.toContain(leak.toLowerCase());
     }
+  });
+});
+
+describe("headlines", () => {
+  it("picks the most dramatic beat, naming both edges on a bluff", () => {
+    const log = findMatch("bluff-worked");
+    const line = headlineFor(log, NAMES)!;
+    expect(line).toMatch(/raised 0\.\d\d into 0\.\d\d and took it/);
+  });
+
+  it("prefers a bluff over a swing, and is null when nothing stood out", () => {
+    let sawNull = false;
+    for (let seed = 1; seed < 400; seed++) {
+      const log = playMatch(PRESETS.Anchor, PRESETS.Hammer, { seed });
+      const kinds = log.rounds.flatMap((_, i) => beatsFor(log, i).map((b) => b.kind));
+      const line = headlineFor(log, NAMES);
+      const dramatic = kinds.some((k) => ["bluff-worked", "bluff-called", "fold-with-better-hand", "biggest-swing"].includes(k));
+      expect(line === null).toBe(!dramatic);
+      if (line === null) sawNull = true;
+      if (kinds.includes("bluff-worked")) expect(line).toMatch(/took it$/);
+    }
+    expect(sawNull).toBe(true);
   });
 });

@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { eq } from "drizzle-orm";
 import { elicitPolicy } from "../agents/llm.js";
 import { validatePolicy, type Policy } from "../agents/policy.js";
-import { renderTranscript } from "../transcript.js";
+import { headlineFor, renderTranscript } from "../transcript.js";
 import { PRESET_NAMES, type PresetName } from "../presets.js";
 import type { Db } from "../db/client.js";
 import { agents, matches } from "../db/schema.js";
@@ -16,10 +16,12 @@ import {
   ownerAgent,
   pickOpponent,
   publicAgent,
+  roster,
   runMatch,
   type LadderTab,
 } from "../db/runner.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
+import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 
 /**
@@ -88,6 +90,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
     ["GET", /^\/ladder$/, getLadder],
     ["GET", /^\/presets$/, getPresets],
+    ["GET", /^\/roster$/, getRoster],
     ["POST", /^\/preview$/, postPreview],
   ];
 
@@ -251,6 +254,7 @@ export function createApp(options: AppOptions): Server {
         return a?.name ?? "unknown";
       }),
     );
+    const displayNames = { A: names[0]!, B: names[1]! };
     return {
       match: {
         id: row.id,
@@ -261,9 +265,21 @@ export function createApp(options: AppOptions): Server {
         winner: row.winner,
         netA: row.netA,
         netB: row.netB,
+        stake: row.stake,
         createdAt: row.createdAt,
       },
-      transcript: renderTranscript(row.log, { A: names[0]!, B: names[1]! }),
+      /** Everything a shared card needs, without parsing the transcript. */
+      summary: {
+        names: displayNames,
+        netA: row.netA,
+        netB: row.netB,
+        winner: row.winner,
+        winnerName: row.winner === null ? null : displayNames[row.winner],
+        rounds: row.log.rounds.length,
+        stake: row.stake,
+        headline: headlineFor(row.log, displayNames),
+      },
+      transcript: renderTranscript(row.log, displayNames),
       log: row.log,
     };
   }
@@ -283,6 +299,16 @@ export function createApp(options: AppOptions): Server {
       presets: PRESET_NAMES.map((name) => ({ name, policyTable: snapshotPreset(name) })),
       free: true,
     };
+  }
+
+  /** Who is out there to play, in a band. Public: the ladder shows this anyway. */
+  async function getRoster(ctx: Ctx) {
+    const band = ctx.query.get("band");
+    if (band !== null && !CEILING_BANDS.some((b) => b.name === band)) {
+      throw new HttpError(400, `band must be one of ${CEILING_BANDS.map((b) => b.name).join(", ")}`);
+    }
+    const rows = await roster(db, band === null ? {} : { band: band as CeilingBand });
+    return { band, bands: CEILING_BANDS, agents: rows };
   }
 
   async function postPreview(ctx: Ctx) {
