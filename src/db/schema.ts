@@ -57,7 +57,8 @@ export const agents = pgTable(
     trueRating: doublePrecision("true_rating"),
     /** Fingerprint of the roster trueRating was computed against; recompute when it changes. */
     trueRatingRoster: text("true_rating_roster"),
-    ownerId: uuid("owner_id"),
+    /** The owner's wallet: a base58 Solana public key. */
+    ownerId: text("owner_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     retiredAt: timestamp("retired_at", { withTimezone: true }),
   },
@@ -127,7 +128,8 @@ export const elicitations = pgTable(
   "elicitations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    ownerId: uuid("owner_id").notNull(),
+    /** The owner's wallet public key. */
+    ownerId: text("owner_id").notNull(),
     /** "preview" rates a brief; "rent" writes an agent's table. */
     kind: text("kind").$type<"preview" | "rent">().notNull(),
     /** True when it did not count against the owner's allowance. */
@@ -135,6 +137,37 @@ export const elicitations = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("elicitations_owner_idx").on(t.ownerId, t.createdAt)],
+);
+
+/**
+ * Single-use sign-in challenges. A nonce is bound to one public key, expires
+ * quickly, and is burnt on first use, so a captured signature cannot be
+ * replayed.
+ */
+export const authNonces = pgTable("auth_nonces", {
+  nonce: text("nonce").primaryKey(),
+  publicKey: text("public_key").notNull(),
+  /** The exact text the wallet is asked to sign. Verified byte for byte. */
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+});
+
+/**
+ * Sessions after a verified signature. Only a hash of the token is stored, so
+ * a read of this table does not hand out working sessions.
+ */
+export const sessions = pgTable(
+  "sessions",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("sessions_owner_idx").on(t.ownerId)],
 );
 
 export const ratings = pgTable("ratings", {

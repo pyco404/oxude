@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import bs58 from "bs58";
+import nacl from "tweetnacl";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { listen, type Elicit } from "../src/http/server.js";
 import { createAgent, snapshotPreset } from "../src/db/runner.js";
@@ -30,13 +33,61 @@ const elicit: Elicit = async () => {
 type Json = Record<string, any>;
 const readBody = async (res: Response): Promise<Json> => (await res.json()) as Json;
 
-const api = (path: string, init: RequestInit & { owner?: string | null } = {}) => {
+/**
+ * Owners are real wallets: each label maps to a deterministic ed25519 keypair,
+ * which signs in through the actual nonce -> sign -> verify flow the first time
+ * it is used. Nothing in these tests asserts an identity it has not signed for.
+ */
+const keypairs = new Map<string, nacl.SignKeyPair>();
+const keypairFor = (label: string) => {
+  let kp = keypairs.get(label);
+  if (!kp) {
+    kp = nacl.sign.keyPair.fromSeed(createHash("sha256").update(label).digest());
+    keypairs.set(label, kp);
+  }
+  return kp;
+};
+const walletOf = (label: string) => bs58.encode(keypairFor(label).publicKey);
+
+async function signIn(label: string): Promise<string> {
+  const kp = keypairFor(label);
+  const publicKey = bs58.encode(kp.publicKey);
+  const issued = await readBody(
+    await fetch(`${url}/auth/nonce`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ publicKey }),
+    }),
+  );
+  const signature = bs58.encode(nacl.sign.detached(new TextEncoder().encode(issued.message), kp.secretKey));
+  const session = await readBody(
+    await fetch(`${url}/auth/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ publicKey, nonce: issued.nonce, signature }),
+    }),
+  );
+  return session.token as string;
+}
+
+const tokens = new Map<string, string>();
+async function tokenFor(label: string): Promise<string> {
+  let token = tokens.get(label);
+  if (!token) {
+    token = await signIn(label);
+    tokens.set(label, token);
+  }
+  return token;
+}
+
+const api = async (path: string, init: RequestInit & { owner?: string | null } = {}) => {
   const { owner = OWNER, ...rest } = init;
+  const token = owner ? await tokenFor(owner) : null;
   return fetch(`${url}${path}`, {
     ...rest,
     headers: {
       "content-type": "application/json",
-      ...(owner ? { "x-owner-id": owner } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(rest.headers ?? {}),
     },
   });
@@ -54,6 +105,7 @@ beforeAll(async () => {
     db,
     elicit,
     rateLimit: { limit: 3, windowMs: 60_000 },
+    nonceRateLimit: { limit: 1000, windowMs: 60_000 },
     playRateLimit: { limit: 4, windowMs: 60_000 },
   }));
 });
@@ -68,7 +120,7 @@ describe("POST /agents", () => {
     expect(res.status).toBe(201);
     const created = await readBody(res);
     expect(created.agent.presetName).toBe("Bully");
-    expect(created.agent.ownerId).toBe(OWNER);
+    expect(created.agent.ownerId).toBe(walletOf(OWNER));
     expect(typeof created.agent.trueRating).toBe("number");
     expect(created.agent.trueRatingBasis).toBe("against the roster as it stands today");
   });
@@ -89,7 +141,7 @@ describe("POST /agents", () => {
     expect(elicitCalls).toBe(calls);
   });
 
-  it("refuses without an owner header, and validates its input", async () => {
+  it("refuses without a session, and validates its input", async () => {
     const anon = await api("/agents", { method: "POST", owner: null, body: JSON.stringify({ name: "x", presetName: "Bully" }) });
     expect(anon.status).toBe(401);
 
@@ -100,8 +152,13 @@ describe("POST /agents", () => {
     const nameless = await api("/agents", { method: "POST", body: JSON.stringify({ presetName: "Bully" }) });
     expect(nameless.status).toBe(400);
 
-    const malformed = await api("/agents", { method: "POST", owner: "not-a-uuid", body: "{}" });
-    expect(malformed.status).toBe(400);
+    // A token nobody issued is simply signed out.
+    const forged = await fetch(`${url}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer not-a-real-session" },
+      body: JSON.stringify({ name: "x", presetName: "Bully" }),
+    });
+    expect(forged.status).toBe(401);
   });
 
   it("creates no agent when elicitation fails", async () => {
@@ -269,7 +326,7 @@ describe("CORS", () => {
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
-    expect(preflight.headers.get("access-control-allow-headers")).toContain("x-owner-id");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("authorization");
 
     const get = await api("/presets", { owner: null });
     expect(get.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
@@ -392,5 +449,87 @@ describe("sharing and the roster", () => {
     for (const a of all.agents) expect(a.trueRating).toBeUndefined();
 
     expect((await api("/roster?band=5-500", { owner: null })).status).toBe(400);
+  });
+});
+
+describe("wallet sign-in", () => {
+  const signFor = (label: string, message: string) =>
+    bs58.encode(nacl.sign.detached(new TextEncoder().encode(message), keypairFor(label).secretKey));
+  const post = (path: string, body: unknown, token?: string) =>
+    fetch(`${url}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    });
+
+  it("issues a nonce inside a message that names the site and says it costs nothing", async () => {
+    const publicKey = walletOf("reader");
+    const issued = await readBody(await post("/auth/nonce", { publicKey }));
+    expect(issued.message).toContain("wants you to sign in with your Solana account:");
+    expect(issued.message).toContain(publicKey);
+    expect(issued.message).toContain(`Nonce: ${issued.nonce}`);
+    expect(issued.message).toMatch(/will not trigger a transaction or cost any fees/);
+    expect((await post("/auth/nonce", { publicKey: "not-base58-0OIl" })).status).toBe(400);
+  });
+
+  it("opens a session for a valid signature, and the session identifies the wallet", async () => {
+    const token = await signIn("verifier");
+    const me = await readBody(await fetch(`${url}/auth/me`, { headers: { authorization: `Bearer ${token}` } }));
+    expect(me.ownerId).toBe(walletOf("verifier"));
+  });
+
+  it("rejects a signature from the wrong key, a replayed nonce, and a nonce issued to someone else", async () => {
+    const publicKey = walletOf("victim");
+    const issued = await readBody(await post("/auth/nonce", { publicKey }));
+
+    // Signed by an attacker's key, claiming the victim's.
+    const forged = await post("/auth/verify", { publicKey, nonce: issued.nonce, signature: signFor("attacker", issued.message) });
+    expect(forged.status).toBe(401);
+
+    // A good signature, used twice.
+    const good = { publicKey, nonce: issued.nonce, signature: signFor("victim", issued.message) };
+    expect((await post("/auth/verify", good)).status).toBe(201);
+    const replay = await post("/auth/verify", good);
+    expect(replay.status).toBe(401);
+    expect((await readBody(replay)).reason).toMatch(/already used/);
+
+    // A nonce issued to one key, presented with another.
+    const other = await readBody(await post("/auth/nonce", { publicKey: walletOf("bystander") }));
+    const swapped = await post("/auth/verify", {
+      publicKey,
+      nonce: other.nonce,
+      signature: signFor("victim", other.message),
+    });
+    expect(swapped.status).toBe(401);
+    expect((await readBody(swapped)).reason).toMatch(/different key/);
+  });
+
+  it("rejects a tampered message: the server verifies what it issued, not what was sent", async () => {
+    const publicKey = walletOf("tamper");
+    const issued = await readBody(await post("/auth/nonce", { publicKey }));
+    const altered = issued.message.replace("Sign in to Oxude", "Approve a transfer");
+    const res = await post("/auth/verify", { publicKey, nonce: issued.nonce, signature: signFor("tamper", altered) });
+    expect(res.status).toBe(401);
+  });
+
+  it("revokes a session on logout", async () => {
+    const token = await signIn("leaver");
+    expect((await post("/auth/logout", {}, token)).status).toBe(201);
+    const after = await fetch(`${url}/auth/me`, { headers: { authorization: `Bearer ${token}` } });
+    expect(after.status).toBe(401);
+  });
+
+  it("ignores the old x-owner-id header entirely", async () => {
+    const created = await readBody(
+      await api("/agents", { method: "POST", body: JSON.stringify({ name: "Guarded", presetName: "Hammer" }) }),
+    );
+    const res = await fetch(`${url}/agents/${created.agent.id}/play`, {
+      method: "POST",
+      headers: { "x-owner-id": walletOf(OWNER) },
+    });
+    expect(res.status).toBe(403);
+    const view = await readBody(await fetch(`${url}/agents/${created.agent.id}`, { headers: { "x-owner-id": walletOf(OWNER) } }));
+    expect(view.view).toBe("public");
+    expect(view.agent.brief).toBeUndefined();
   });
 });

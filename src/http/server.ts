@@ -23,18 +23,16 @@ import {
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
+import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
 
 /**
  * Thin HTTP layer over the runner.
  *
- * !!! STUB_AUTH_MUST_NOT_SHIP !!!
- * Identity is an owner id read straight from the x-owner-id header. Anyone can
- * send anyone's id, so this is not authentication: it separates callers for
- * rate limiting and ownership checks during development and nothing more. With
- * it in place, any caller can read any owner's brief and table and can play
- * their agents. Replace with a wallet signature - sign a nonce, recover the
- * address, bind the session - before anything is staked. Grep for
- * STUB_AUTH_MUST_NOT_SHIP.
+ * Identity is a Solana wallet. A caller asks for a nonce, signs the returned
+ * message with its wallet, and exchanges the signature for a session token
+ * sent as "Authorization: Bearer <token>". The owner of everything below is
+ * the wallet public key behind that session - never a value the caller simply
+ * asserts.
  */
 export type Elicit = (input: { brief: string }) => Promise<{ table: Policy | null; reason?: string }>;
 
@@ -46,6 +44,10 @@ export type AppOptions = {
   rateLimit?: RateLimitRule;
   /** Applies to playing matches: no model call, but it writes rows. Default 30 a minute. */
   playRateLimit?: RateLimitRule;
+  /** The domain named in the sign-in message. Defaults to AUTH_DOMAIN or localhost:3000. */
+  authDomain?: string;
+  /** Applies to nonce requests, which anyone can make. Default 20 a minute. */
+  nonceRateLimit?: RateLimitRule;
   /**
    * Browser origins allowed to call this API. The web app runs on its own
    * origin, so without this every request from it fails before it is sent.
@@ -80,8 +82,14 @@ export function createApp(options: AppOptions): Server {
   // Playing costs no money but writes a match row and rewrites two ratings;
   // unbounded, it is a cheap way to bloat the transcript table.
   const playLimiter = new RateLimiter(options.playRateLimit ?? { limit: 30, windowMs: 60_000 }, options.now);
+  const nonceLimiter = new RateLimiter(options.nonceRateLimit ?? { limit: 20, windowMs: 60_000 }, options.now);
+  const authDomain = options.authDomain ?? process.env["AUTH_DOMAIN"] ?? "localhost:3000";
 
   const routes: [string, RegExp, (ctx: Ctx) => Promise<unknown>][] = [
+    ["POST", /^\/auth\/nonce$/, postNonce],
+    ["POST", /^\/auth\/verify$/, postVerify],
+    ["POST", /^\/auth\/logout$/, postLogout],
+    ["GET", /^\/auth\/me$/, getMe],
     ["POST", /^\/agents$/, postAgent],
     ["GET", /^\/agents\/([^/]+)$/, getAgent],
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
@@ -98,8 +106,12 @@ export function createApp(options: AppOptions): Server {
     params: string[];
     query: URLSearchParams;
     body: Record<string, unknown>;
+    /** The wallet behind the caller's session, or null when signed out. */
     ownerId: string | null;
-    /** Throws 401 unless the caller presented an owner id. */
+    /** The raw session token, for logout. */
+    token: string | null;
+    clientKey: string;
+    /** Throws 401 unless the caller has a live session. */
     requireOwner: () => string;
     /**
      * Charges a model call against the caller's allowance, unless this is the
@@ -110,6 +122,42 @@ export function createApp(options: AppOptions): Server {
     spendPlay: () => void;
     refund: () => void;
   };
+
+  async function postNonce(ctx: Ctx) {
+    const result = nonceLimiter.take(ctx.clientKey);
+    if (!result.ok) {
+      throw new HttpError(429, "too many sign-in attempts", { retryAfterSeconds: result.retryAfterSeconds });
+    }
+    const publicKey = ctx.body["publicKey"];
+    if (!isPublicKey(publicKey)) throw new HttpError(400, "publicKey must be a base58 Solana public key");
+    const issued = await issueNonce(db, publicKey, authDomain);
+    return { nonce: issued.nonce, message: issued.message, expiresAt: issued.expiresAt };
+  }
+
+  async function postVerify(ctx: Ctx) {
+    const { publicKey, nonce, signature } = ctx.body;
+    if (typeof publicKey !== "string" || typeof nonce !== "string" || typeof signature !== "string") {
+      throw new HttpError(400, "publicKey, nonce and signature are required");
+    }
+    try {
+      const session = await verifySignIn(db, { publicKey, nonce, signature });
+      return { token: session.token, ownerId: session.ownerId, expiresAt: session.expiresAt };
+    } catch (error) {
+      // One status for every failure: the caller learns it did not verify, not why.
+      if (error instanceof AuthError) throw new HttpError(401, "sign-in failed", { reason: error.message });
+      throw error;
+    }
+  }
+
+  async function postLogout(ctx: Ctx) {
+    ctx.requireOwner();
+    await revokeSession(db, ctx.token!);
+    return { signedOut: true };
+  }
+
+  async function getMe(ctx: Ctx) {
+    return { ownerId: ctx.requireOwner() };
+  }
 
   async function postAgent(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
@@ -343,7 +391,7 @@ export function createApp(options: AppOptions): Server {
   const corsOrigin = options.corsOrigin ?? process.env["CORS_ORIGIN"] ?? "http://localhost:3000";
   const corsHeaders = {
     "access-control-allow-origin": corsOrigin,
-    "access-control-allow-headers": "content-type, x-owner-id",
+    "access-control-allow-headers": "content-type, authorization",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-expose-headers": "retry-after",
     "access-control-max-age": "600",
@@ -370,11 +418,12 @@ export function createApp(options: AppOptions): Server {
     const route = routes.find(([method, pattern]) => method === req.method && pattern.test(url.pathname));
     if (!route) return reply(res, 404, { error: "no such route" });
 
-    const ownerHeader = req.headers["x-owner-id"];
-    const ownerId = typeof ownerHeader === "string" && UUID.test(ownerHeader) ? ownerHeader : null;
-    if (typeof ownerHeader === "string" && ownerId === null) {
-      return reply(res, 400, { error: "x-owner-id must be a uuid" });
-    }
+    // A session token, if any. A stale or unknown token is treated as signed
+    // out rather than rejected, so public reads keep working; anything that
+    // needs an owner refuses with 401.
+    const auth = req.headers["authorization"];
+    const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+    const ownerId = await ownerForToken(db, token);
 
     let body: Record<string, unknown> = {};
     try {
@@ -383,16 +432,19 @@ export function createApp(options: AppOptions): Server {
       return reply(res, 400, { error: error instanceof Error ? error.message : "bad body" });
     }
 
-    // Charged against the caller, or the connection when there is none.
-    const limitKey = ownerId ?? req.socket.remoteAddress ?? "anonymous";
+    // Charged against the wallet, or the connection when there is none.
+    const clientKey = req.socket.remoteAddress ?? "anonymous";
+    const limitKey = ownerId ?? clientKey;
     let spent = false;
     const ctx: Ctx = {
       params: url.pathname.match(route[1])!.slice(1),
       query: url.searchParams,
       body,
       ownerId,
+      token,
+      clientKey,
       requireOwner: () => {
-        if (!ownerId) throw new HttpError(401, "x-owner-id header required");
+        if (!ownerId) throw new HttpError(401, "sign in with your wallet first");
         return ownerId;
       },
       spend: async (kind) => {
