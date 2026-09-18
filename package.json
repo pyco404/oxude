@@ -21,14 +21,14 @@
     "db:push": "drizzle-kit push",
     "serve": "tsx scripts/serve.ts",
     "chain:build": "cd chain && anchor build && cp target/idl/oxude_settlement.json ../src/chain/idl.json && cp target/types/oxude_settlement.ts ../src/chain/idl-types.ts",
-    "test:chain": "CHAIN=1 vitest run test/chain.test.ts"
+    "test:chain": "CHAIN=1 vitest run test/chain.test.ts",
+    "start": "tsx scripts/serve.ts --migrate"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",
     "@types/node": "^24.13.5",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.10",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
@@ -42,6 +42,7 @@
     "bs58": "^6.0.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.23.0",
+    "tsx": "^4.19.2",
     "tweetnacl": "^1.0.3",
     "zod": "^4.6.5"
   },
