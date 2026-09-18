@@ -34,9 +34,11 @@ if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1))
       maxStake: ceilings[i % ceilings.length]!,
     });
   }
-  await refreshTrueRatings(db);
   console.log(`Seeded a house roster of ${rosterSize} agents across ${ceilings.length} bands`);
 }
+// Brings stored ratings up to date if the roster or the way ratings are computed changed.
+const rerated = await refreshTrueRatings(db);
+if (rerated) console.log(`Re-rated ${rerated} agents`);
 // A host sets PORT and needs every interface; locally, loopback only.
 const { url } = await listen({ db, port: Number(process.env["PORT"] ?? arg("--port", 8787)), host: process.env["HOST"] });
 
@@ -68,7 +70,9 @@ if (rpc) {
       }
     },
   });
-  console.log(`Settling to ${rpc} as ${settler.publicKey.toBase58()}`);
+  // Hosted RPC URLs carry an API key in the query string; keep it out of the logs.
+  const shown = new URL(rpc);
+  console.log(`Settling to ${shown.origin}${shown.pathname} as ${settler.publicKey.toBase58()}`);
 }
 console.log(`Oxude on ${url}`);
 console.log(process.env["ANTHROPIC_API_KEY"] ? "Briefs: on" : "Briefs: off, no ANTHROPIC_API_KEY in the environment or .env; presets only");

@@ -45,7 +45,8 @@ export async function rosterProfile(db: Db): Promise<RosterProfile> {
   return {
     entries,
     agentCount,
-    fingerprint: hash(entries.map((e) => `${e.weight}:${JSON.stringify(e.table)}`).join("|")),
+    // The prefix versions how ratings are computed: bump it and every stored rating goes stale.
+    fingerprint: hash(`v2-self-excluded|${entries.map((e) => `${e.weight}:${JSON.stringify(e.table)}`).join("|")}`),
   };
 }
 
@@ -57,6 +58,31 @@ export function trueRatingAgainst(agent: Agent, profile: RosterProfile): number 
     total += weight * seatAveragedNet(agent, policyAgent(table), OXUDE_RULES);
   }
   return total / profile.agentCount;
+}
+
+/** Key order can differ between a table as written and as stored, so compare canonically. */
+const canonical = (value: unknown): string =>
+  value !== null && typeof value === "object"
+    ? `{${Object.keys(value)
+        .sort()
+        .map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`)
+        .join(",")}}`
+    : JSON.stringify(value);
+
+/**
+ * The roster as one of its own agents faces it: everyone but itself. Other
+ * agents playing the same table still count; they are real opponents. This is
+ * what makes an agent's rating after renting equal the preview it was rented
+ * on, since the preview rated a table that was not yet on the roster.
+ */
+export function rosterWithout(profile: RosterProfile, table: Policy): RosterProfile {
+  const key = canonical(table);
+  const index = profile.entries.findIndex((e) => canonical(e.table) === key);
+  if (index < 0) return profile;
+  const entries = profile.entries
+    .map((e, i) => (i === index ? { ...e, weight: e.weight - 1 } : e))
+    .filter((e) => e.weight > 0);
+  return { ...profile, entries, agentCount: profile.agentCount - 1 };
 }
 
 /**
@@ -94,7 +120,7 @@ export async function refreshTrueRatings(db: Db, options: { force?: boolean } = 
   for (const row of rows) {
     if (row.table === null) continue;
     if (!options.force && row.roster === profile.fingerprint) continue;
-    const rating = trueRatingAgainst(policyAgent(row.table), profile);
+    const rating = trueRatingAgainst(policyAgent(row.table), rosterWithout(profile, row.table));
     await db
       .update(agents)
       .set({ trueRating: rating, trueRatingRoster: profile.fingerprint })

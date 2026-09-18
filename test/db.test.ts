@@ -18,7 +18,7 @@ import {
   updateRating,
   type OpponentPick,
 } from "../src/db/runner.js";
-import { previewPolicy, refreshTrueRatings, rosterProfile, trueRatingAgainst } from "../src/db/rating.js";
+import { previewPolicy, refreshTrueRatings, rosterProfile, rosterWithout, trueRatingAgainst } from "../src/db/rating.js";
 import {
   policyAgent,
   policyFromAgent,
@@ -311,17 +311,34 @@ describe("true rating", () => {
 
     const [row] = await fresh.select().from(agents).where(eq(agents.id, mine.id));
     const half = (a: "Anchor" | "Bully") => seatAveragedNet(policyAgent(snapshotPreset("Mirage")), PRESETS[a], OXUDE_RULES);
-    // Roster is 4 Anchors, 4 Bullys and Mirage itself.
+    // Roster is 4 Anchors, 4 Bullys and Mirage itself; an agent is rated against everyone but itself.
     const profile = await rosterProfile(fresh);
-    const expected = (4 * half("Anchor") + 4 * half("Bully") + 0) / 9;
+    const expected = (4 * half("Anchor") + 4 * half("Bully")) / 8;
     expect(row!.trueRating).toBeCloseTo(expected, 9);
-    expect(trueRatingAgainst(policyAgent(snapshotPreset("Mirage")), profile)).toBeCloseTo(expected, 9);
+    expect(trueRatingAgainst(policyAgent(snapshotPreset("Mirage")), rosterWithout(profile, snapshotPreset("Mirage")))).toBeCloseTo(expected, 9);
 
     // A preview needs no agent row and no match.
     const preview = previewPolicy(snapshotPreset("Bully"), profile);
     expect(preview.roster).toBe(9);
     expect(preview.breakdown).toHaveLength(3);
     expect(preview.trueRating).toBeCloseTo(trueRatingAgainst(PRESETS.Bully, profile), 9);
+    await closeFresh();
+  });
+
+  it("does not move when the previewed table is rented", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    for (let i = 0; i < 6; i++) {
+      await createAgent(fresh, { name: `R${i}`, presetName: (["Anchor", "Bully", "Mirage"] as const)[i % 3]! });
+    }
+    // A Mirage already on the roster still counts as an opponent for a new Mirage.
+    const table = snapshotPreset("Mirage");
+    const preview = previewPolicy(table, await rosterProfile(fresh));
+
+    const mine = await createAgent(fresh, { name: "Mine", brief: "bluff", policyTable: table });
+    await refreshTrueRatings(fresh);
+    const [row] = await fresh.select().from(agents).where(eq(agents.id, mine.id));
+    expect(row!.trueRating).toBeCloseTo(preview.trueRating, 12);
     await closeFresh();
   });
 
