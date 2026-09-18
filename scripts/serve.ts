@@ -1,3 +1,4 @@
+import "./env.js";
 import { connect, migrate } from "../src/db/client.js";
 import { listen } from "../src/http/server.js";
 import { createAgent, CEILING_BANDS } from "../src/db/runner.js";
@@ -70,6 +71,7 @@ if (rpc) {
   console.log(`Settling to ${rpc} as ${settler.publicKey.toBase58()}`);
 }
 console.log(`Oxude on ${url}`);
+console.log(process.env["ANTHROPIC_API_KEY"] ? "Briefs: on" : "Briefs: off, no ANTHROPIC_API_KEY in the environment or .env; presets only");
 console.log(`  POST ${url}/agents         wallet session required; {name, presetName} or {name, brief}`);
 console.log(`  GET  ${url}/agents/:id     public, or the owner view for its signed-in owner`);
 console.log(`  POST ${url}/agents/:id/play`);

@@ -1,3 +1,4 @@
+import "./env.js";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -17,7 +18,7 @@ import { elicitPolicy, type PolicyCallLog } from "../src/agents/llm.js";
 // exact calculator. The question this answers: does the brief change how the
 // model plays, or does it play its own way regardless?
 //
-// Usage: ANTHROPIC_API_KEY=... npm run brief-sweep [-- --force] [-- --dry-run]
+// Usage: npm run brief-sweep [-- --force] [-- --dry-run]
 // Results are cached per brief, so a rerun costs nothing for briefs already done.
 
 const OUT = "policies/elicited";

@@ -33,7 +33,7 @@ Because the opponent's edge is hidden and a raise can be answered in the same ro
 
 ```bash
 npm install
-npm run check                    # type-check and the test suite (184 tests)
+npm run check                    # type-check and the test suite (187 tests)
 
 docker compose up -d             # Postgres on :5432
 export DATABASE_URL=postgres://oxude:oxude@localhost:5432/oxude
@@ -47,7 +47,7 @@ Open http://localhost:3000, connect a wallet, rent a preset and press play. Any 
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | API | Needed to rent an agent from a written brief. Without it, presets work and briefs return 503. |
+| `ANTHROPIC_API_KEY` | API | Needed to rent an agent from a written brief; read from the environment or a `.env` file in the repo root. Without it, presets work and briefs return 503. |
 | `CHAIN_RPC_URL` | API | Settle to a chain, e.g. `https://api.devnet.solana.com`. Without it, settlements queue in the outbox. |
 | `CHAIN_SETTLER_KEYPAIR` | API | Settler key, default `.keys/settler.json`. |
 | `DATABASE_URL` | API | Postgres connection string. Required unless `--memory` is passed. |
