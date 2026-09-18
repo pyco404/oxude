@@ -83,18 +83,28 @@ export async function recentMatches(
   });
 }
 
-/** The most recent match whose headline is a bluff that worked, from the last `scan` matches. */
+/**
+ * The most recent match, from the last `scan`, whose headline is a bluff that
+ * worked and whose bluffer also came out ahead on the match: the clearest
+ * picture of the game for someone arriving cold.
+ */
 export async function latestBluff(db: Db, scan = 100): Promise<FeedItem | null> {
-  return (await recentMatches(db, { limit: scan })).find((m) => m.beat === "bluff-worked") ?? null;
+  const bluffs = (await recentMatches(db, { limit: scan })).filter((m) => m.beat === "bluff-worked");
+  const paid = bluffs.find((m) => (m.beatSeat === "B" ? m.netB : m.netA) > 0);
+  return paid ?? bluffs[0] ?? null;
 }
 
-/** Wins, losses and level matches over an agent's whole history. */
+/**
+ * Wins, losses and level matches over an agent's whole history, by money: a
+ * win is a match it finished ahead. Round wins can disagree (two small rounds
+ * against one big one), and everything else in the product counts money.
+ */
 export async function agentRecord(db: Db, agentId: string): Promise<{ wins: number; losses: number; level: number }> {
   const [row] = await db
     .select({
-      wins: sql<number>`count(*) filter (where (${matches.agentA} = ${agentId} and ${matches.winner} = 'A') or (${matches.agentB} = ${agentId} and ${matches.winner} = 'B'))::int`,
-      losses: sql<number>`count(*) filter (where (${matches.agentA} = ${agentId} and ${matches.winner} = 'B') or (${matches.agentB} = ${agentId} and ${matches.winner} = 'A'))::int`,
-      level: sql<number>`count(*) filter (where ${matches.winner} is null)::int`,
+      wins: sql<number>`count(*) filter (where (${matches.agentA} = ${agentId} and ${matches.netA} > 0) or (${matches.agentB} = ${agentId} and ${matches.netB} > 0))::int`,
+      losses: sql<number>`count(*) filter (where (${matches.agentA} = ${agentId} and ${matches.netA} < 0) or (${matches.agentB} = ${agentId} and ${matches.netB} < 0))::int`,
+      level: sql<number>`count(*) filter (where ${matches.netA} = 0)::int`,
     })
     .from(matches)
     .where(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)));

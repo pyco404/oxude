@@ -33,7 +33,8 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
   const mine = m.a.id === agentId ? "A" : "B";
   const opponent = mine === "A" ? m.b : m.a;
   const net = mine === "A" ? m.netA : m.netB;
-  const result = m.winner === null ? "Level" : m.winner === mine ? "Won" : "Lost";
+  // By money, like the record: a match finished ahead is a win, whoever took more rounds.
+  const result = net === 0 ? "Level" : net > 0 ? "Won" : "Lost";
   return (
     <li className="border-b border-line px-3 py-2.5 last:border-b-0">
       <div className="flex items-baseline gap-2 text-[13px]">

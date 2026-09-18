@@ -19,6 +19,7 @@ import {
   type OpponentPick,
 } from "../src/db/runner.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile, rosterWithout, trueRatingAgainst } from "../src/db/rating.js";
+import { agentRecord } from "../src/db/feed.js";
 import {
   policyAgent,
   policyFromAgent,
@@ -466,5 +467,30 @@ describe("stored transcripts", () => {
     expect(text).toContain("Round 1.");
     expect(text.toLowerCase()).not.toContain("bluff a lot");
     await expect(renderStoredTranscript(db, "00000000-0000-0000-0000-000000000000")).rejects.toThrow(/no match/);
+  });
+});
+
+describe("agent record", () => {
+  it("counts a match by money, not rounds: finishing ahead is a win", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    const a = await createAgent(fresh, { name: "A", presetName: "Mirage" });
+    const b = await createAgent(fresh, { name: "B", presetName: "Anchor" });
+    const row = (winner: "A" | "B" | null, netA: number) => ({
+      agentA: a.id,
+      agentB: b.id,
+      seed: 1,
+      rulesConfig: DEFAULT_RULES,
+      winner,
+      netA,
+      netB: -netA,
+      stake: 60,
+      log: { rounds: [] } as never,
+    });
+    // B took more rounds in the first, but A finished ahead on money.
+    await fresh.insert(matches).values([row("B", 6), row("A", 20), row("B", -36), row(null, 0)]);
+    expect(await agentRecord(fresh, a.id)).toEqual({ wins: 2, losses: 1, level: 1 });
+    expect(await agentRecord(fresh, b.id)).toEqual({ wins: 1, losses: 2, level: 1 });
+    await closeFresh();
   });
 });
