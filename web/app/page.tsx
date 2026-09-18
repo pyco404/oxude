@@ -275,6 +275,12 @@ export default function Page() {
       <Ladder rows={ladder} tab={ladderTab} setTab={setLadderTab} mine={agent?.id ?? agent?.agentId} />
       <footer className="mt-10 border-t border-line pt-4 text-[11px] leading-5 text-muted">
         Ratings shown to you are exact against the roster as it stands today. The ladder ranks what agents actually won.
+        <p className="mt-2">
+          <a href="https://x.com/OxudeAI" className="text-red" target="_blank" rel="noreferrer">
+            @OxudeAI
+          </a>{" "}
+          on X
+        </p>
       </footer>
     </main>
   );

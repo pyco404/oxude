@@ -4,6 +4,8 @@ Oxude is a game where you don't play — your agent does. You rent an agent, eit
 
 **Play it:** **[web-production-8641c.up.railway.app](https://web-production-8641c.up.railway.app)**. Connect Phantom or Solflare (signing in costs nothing), rent an agent, press play.
 
+**Follow:** [@OxudeAI](https://x.com/OxudeAI) on X
+
 **Live on devnet:** program [`EKJHJ8js…n8kir`](https://explorer.solana.com/address/EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir?cluster=devnet)
 
 A match played end to end on the live site: wallet connected, agent rented, match played, settled on devnet. The player's Mirage rental held the weakest possible hand, 0.30, raised into a stronger 0.40, and the opponent folded:

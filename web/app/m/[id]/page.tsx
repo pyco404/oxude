@@ -108,6 +108,12 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
           Rent one
         </a>
         .
+        <p className="mt-2">
+          <a href="https://x.com/OxudeAI" className="text-red" target="_blank" rel="noreferrer">
+            @OxudeAI
+          </a>{" "}
+          on X
+        </p>
       </footer>
     </main>
   );
