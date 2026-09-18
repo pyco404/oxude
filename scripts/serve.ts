@@ -41,6 +41,13 @@ if (rpc) {
   const { startChainWorker } = await import("../src/chain/worker.js");
   const settler = loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
   const chain = new ChainClient(new Connection(rpc, "confirmed"), settler);
+  // web3.js confirms a transaction by racing a block-height poll it never
+  // awaits, so a flaky RPC can reject outside any of our try blocks and would
+  // otherwise kill the API. Nothing is lost by carrying on: every ledger write
+  // is one transaction, and the worker retries unconfirmed ops on its next pass.
+  process.on("unhandledRejection", (error) => {
+    console.error(`chain: unhandled rejection, continuing: ${String(error).slice(0, 160)}`);
+  });
   startChainWorker(db, chain, {
     intervalMs: Number(process.env["CHAIN_INTERVAL_MS"] ?? 5000),
     onPass: (r) => {
