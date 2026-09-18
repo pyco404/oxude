@@ -109,6 +109,12 @@ export class ChainClient {
     return (await this.connection.getAccountInfo(pdas.settlement(matchId), "confirmed")) !== null;
   }
 
+  /** The transaction that created a match's settlement record: the only one that touches it. */
+  async settlementSignature(matchId: string): Promise<string | null> {
+    const sigs = await this.connection.getSignaturesForAddress(pdas.settlement(matchId), {}, "confirmed");
+    return sigs.filter((s) => s.err === null).at(-1)?.signature ?? null;
+  }
+
   async config() {
     return this.program.account.config.fetch(pdas.config());
   }

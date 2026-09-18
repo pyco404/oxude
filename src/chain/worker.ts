@@ -23,6 +23,8 @@ export type ChainPort = {
   hasVault(agentId: string): Promise<boolean>;
   isSettled(matchId: string): Promise<boolean>;
   vaultBalance(agentId: string): Promise<number | null>;
+  /** Recovers the signature of a settlement that landed while its confirmation was lost. */
+  settlementSignature?(matchId: string): Promise<string | null>;
 };
 
 export type DrainResult = { confirmed: number; alreadyOnChain: number; stoppedAt: ChainOpRow | null; error: string | null };
@@ -49,9 +51,12 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
   for (const op of pending) {
     try {
       if (await alreadyDone(chain, op)) {
+        // Without the signature the match page cannot link the transaction.
+        const signature =
+          op.kind === "settle" && chain.settlementSignature ? await chain.settlementSignature(op.matchId!) : null;
         await db
           .update(chainOps)
-          .set({ status: "confirmed", updatedAt: new Date() })
+          .set({ status: "confirmed", signature, updatedAt: new Date() })
           .where(eq(chainOps.id, op.id));
         result.alreadyOnChain++;
         continue;

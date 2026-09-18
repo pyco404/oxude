@@ -33,7 +33,7 @@ Because the opponent's edge is hidden and a raise can be answered in the same ro
 
 ```bash
 npm install
-npm run check                    # type-check and the test suite (183 tests)
+npm run check                    # type-check and the test suite (184 tests)
 
 docker compose up -d             # Postgres on :5432
 export DATABASE_URL=postgres://oxude:oxude@localhost:5432/oxude

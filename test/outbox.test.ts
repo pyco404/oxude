@@ -43,6 +43,9 @@ class FakeChain implements ChainPort {
   async isSettled(matchId: string) {
     return this.settled.has(matchId);
   }
+  async settlementSignature(matchId: string) {
+    return this.settled.has(matchId) ? `sig-settle-${matchId}` : null;
+  }
   async vaultBalance(agentId: string) {
     return this.vaults.get(agentId) ?? null;
   }
@@ -151,6 +154,29 @@ describe("the worker", () => {
     expect(second.confirmed).toBe(0);
     expect(chain.calls.filter((x) => x.startsWith("open"))).toHaveLength(1);
     expect(chain.vaults.get(a.id)).toBe(STARTING_BALANCE); // not funded twice
+    await c();
+  });
+
+  it("recovers the signature of a settlement found already on chain, so its page can link it", async () => {
+    const { db: d, close: c } = await fresh();
+    const a = await createAgent(d, { name: "A", presetName: "Bully" });
+    const b = await createAgent(d, { name: "B", presetName: "Mirage" });
+    const chain = new FakeChain();
+    await drainChainOps(d, chain);
+    let matchId = "";
+    for (let seed = 1; !matchId; seed++) {
+      const { match, settled } = await runMatch(d, a.id, b.id, { seed });
+      if (settled.A !== 0) matchId = match.id;
+    }
+
+    chain.landButThrow = true;
+    expect((await drainChainOps(d, chain)).error).toMatch(/timed out/);
+    chain.landButThrow = false;
+    expect((await drainChainOps(d, chain)).alreadyOnChain).toBe(1);
+
+    const [op] = await d.select().from(chainOps).where(eq(chainOps.matchId, matchId));
+    expect(op!.status).toBe("confirmed");
+    expect(op!.signature).toBe(`sig-settle-${matchId}`);
     await c();
   });
 
