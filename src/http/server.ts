@@ -21,6 +21,7 @@ import {
   type LadderTab,
 } from "../db/runner.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
+import { agentRecord, latestBluff, recentMatches } from "../db/feed.js";
 import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { settlementStatus } from "../chain/worker.js";
@@ -112,7 +113,9 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
     ["POST", /^\/agents\/([^/]+)\/ceiling$/, postCeiling],
     ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
+    ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
+    ["GET", /^\/agents\/([^/]+)\/matches$/, getAgentMatches],
     ["GET", /^\/ladder$/, getLadder],
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
@@ -352,6 +355,32 @@ export function createApp(options: AppOptions): Server {
       settlement: await settlementStatus(db, row.id),
       log: row.log,
     };
+  }
+
+  // The bluff reads up to 100 match logs; every visitor polls the feed, so keep it briefly.
+  let bluffCache: { at: number; value: Awaited<ReturnType<typeof latestBluff>> } | null = null;
+  const BLUFF_TTL_MS = 15_000;
+
+  /** Public: recent matches across the platform, newest first, and the latest bluff that worked. */
+  async function getFeed(ctx: Ctx) {
+    const limit = Number(ctx.query.get("limit") ?? 20) || 20;
+    const beforeParam = ctx.query.get("before");
+    const before = beforeParam === null ? undefined : Number(beforeParam);
+    if (before !== undefined && !Number.isSafeInteger(before)) throw new HttpError(400, "before must be a match seq");
+    const t = (options.now ?? Date.now)();
+    if (!bluffCache || t - bluffCache.at > BLUFF_TTL_MS) bluffCache = { at: t, value: await latestBluff(db) };
+    return {
+      matches: await recentMatches(db, { limit, ...(before !== undefined ? { before } : {}) }),
+      bluff: bluffCache.value,
+    };
+  }
+
+  /** Public: one agent's recent matches, newest first. */
+  async function getAgentMatches(ctx: Ctx) {
+    const id = requireUuid(ctx.params[0]);
+    if (!(await publicAgent(db, id))) throw new HttpError(404, "no such agent");
+    const limit = Number(ctx.query.get("limit") ?? 20) || 20;
+    return { record: await agentRecord(db, id), matches: await recentMatches(db, { limit, agentId: id }) };
   }
 
   async function getLadder(ctx: Ctx) {

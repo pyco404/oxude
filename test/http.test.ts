@@ -580,3 +580,61 @@ describe("client address for rate limits", () => {
     }
   });
 });
+
+describe("match feed and agent pages", () => {
+  it("lists recent matches newest first, signed out, with the headline beat and nothing private", async () => {
+    const owner = "6c6c6c6c-6c6c-4c6c-8c6c-6c6c6c6c6c6c";
+    const secret = "the secret plan nobody else may read";
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Feeder", brief: secret }) }),
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push((await readBody(await api(`/agents/${created.agent.id}/play`, { method: "POST", owner }))).matchId);
+    }
+
+    const res = await api("/matches?limit=50", { owner: null });
+    expect(res.status).toBe(200);
+    const feed = await readBody(res);
+    const seqs = feed.matches.map((m: { seq: number }) => m.seq);
+    expect(seqs).toEqual([...seqs].sort((x: number, y: number) => y - x));
+    expect(feed.matches.slice(0, 3).map((m: { id: string }) => m.id)).toEqual([...ids].reverse());
+    const mine = feed.matches[0];
+    expect(mine.a.name).toBe("Feeder");
+    expect(mine.netA + mine.netB).toBe(0);
+    expect("headline" in mine && "beat" in mine).toBe(true);
+    if (feed.bluff) expect(feed.bluff.beat).toBe("bluff-worked");
+
+    const text = JSON.stringify(feed);
+    for (const leak of [secret, "policyTable", "trueRating", "brief"]) expect(text).not.toContain(leak);
+
+    // Paging continues strictly older.
+    const older = await readBody(await api(`/matches?limit=5&before=${mine.seq}`, { owner: null }));
+    expect(older.matches.every((m: { seq: number }) => m.seq < mine.seq)).toBe(true);
+    expect((await api("/matches?before=soon", { owner: null })).status).toBe(400);
+  });
+
+  it("lists one agent's matches, and its public page never carries its brief", async () => {
+    const owner = "7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d";
+    const secret = "fold everything except the nuts";
+    const created = await readBody(
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Solo", brief: secret }) }),
+    );
+    const played = await readBody(await api(`/agents/${created.agent.id}/play`, { method: "POST", owner }));
+
+    const list = await readBody(await api(`/agents/${created.agent.id}/matches`, { owner: null }));
+    expect(list.matches.map((m: { id: string }) => m.id)).toEqual([played.matchId]);
+    for (const m of list.matches) expect([m.a.id, m.b.id]).toContain(created.agent.id);
+    expect(list.record.wins + list.record.losses + list.record.level).toBe(1);
+
+    const page = await readBody(await api(`/agents/${created.agent.id}`, { owner: null }));
+    expect(page.view).toBe("public");
+    expect(page.agent.presetName).toBeNull();
+    expect(page.agent.house).toBe(false);
+    expect(typeof page.agent.balance).toBe("number");
+    expect(JSON.stringify(page)).not.toContain(secret);
+
+    const missing = "00000000-0000-4000-8000-000000000000";
+    expect((await api(`/agents/${missing}/matches`, { owner: null })).status).toBe(404);
+  });
+});

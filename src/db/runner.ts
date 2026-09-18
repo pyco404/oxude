@@ -391,6 +391,8 @@ export async function publicAgent(db: Db, agentId: string) {
       maxStake: agents.maxStake,
       balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
       retired: sql<boolean>`${agents.retiredAt} is not null`,
+      /** A house agent: unowned, seeded so a first player has someone to meet. */
+      house: sql<boolean>`${agents.ownerId} is null`,
     })
     .from(agents)
     .leftJoin(ratings, eq(ratings.agentId, agents.id))
