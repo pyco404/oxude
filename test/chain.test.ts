@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { ChainClient, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
+import { connect, migrate } from "../src/db/client.js";
+import { balanceOf } from "../src/db/ledger.js";
+import { createAgent, runMatch } from "../src/db/runner.js";
+import { drainChainOps, reconcile } from "../src/chain/worker.js";
 
 // The settlement program on a local validator, loaded at genesis. Needs
 // solana-test-validator on PATH and the program built (anchor build in chain/),
@@ -130,4 +134,36 @@ describe.skipIf(!RUN)("settlement program", () => {
     );
     expect(await chain.vaultBalance(a)).toBe(180);
   });
+
+  it("carries a run of real matches from the ledger to the chain, and they agree", async () => {
+    const { db, close } = await connect();
+    await migrate(db);
+    const roster = [];
+    for (let i = 0; i < 4; i++) roster.push(await createAgent(db, { name: `Chain ${i}`, presetName: i % 2 ? "Bully" : "Mirage" }));
+    let played = 0;
+    for (let seed = 1; played < 12 && seed < 60; seed++) {
+      const [x, y] = [roster[seed % 4]!, roster[(seed + 1 + (seed % 3)) % 4]!];
+      if (x.id === y.id) continue;
+      try {
+        await runMatch(db, x.id, y.id, { seed });
+        played++;
+      } catch {
+        /* retired or unable to cover: sits out */
+      }
+    }
+
+    const drained = await drainChainOps(db, chain, { limit: 1000 });
+    expect(drained.error).toBeNull();
+    expect(drained.confirmed).toBeGreaterThan(4);
+
+    const check = await reconcile(db, chain);
+    expect(check.checked).toBe(4);
+    expect(check.mismatches).toEqual([]);
+    for (const a of roster) expect(await chain.vaultBalance(a.id)).toBe(await balanceOf(db, a.id));
+
+    // Draining again finds nothing to do: every op is confirmed.
+    const again = await drainChainOps(db, chain);
+    expect(again.confirmed + again.alreadyOnChain).toBe(0);
+    await close();
+  }, 120_000);
 });

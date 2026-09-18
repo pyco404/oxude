@@ -11,6 +11,7 @@ import type { TablesRelationalConfig } from "drizzle-orm";
 import { connect, type Db } from "./client.js";
 import {
   agents,
+  chainOps,
   ledger,
   matches,
   ratings,
@@ -87,7 +88,11 @@ export const clampCeiling = (value: number) => Math.max(MIN_STAKE, Math.min(MAX_
 export async function createAgent(db: Db, input: CreateAgentInput) {
   const table = input.policyTable ?? (input.presetName ? snapshotPreset(input.presetName) : undefined);
   if (!table) throw new Error(`agent ${input.name} needs a preset name or a policy table`);
-  const [row] = await db
+  const seed = input.startingBalance ?? STARTING_BALANCE;
+  // The agent, its seeded balance and the chain op that funds its vault land
+  // together, so a vault can never be owed without an agent or vice versa.
+  return db.transaction(async (tx) => {
+  const [row] = await tx
     .insert(agents)
     .values({
       name: input.name,
@@ -99,10 +104,12 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
       maxStake: clampCeiling(input.maxStake ?? MAX_EXPOSURE),
     })
     .returning();
-  await db.insert(ratings).values({ agentId: row!.id });
+  await tx.insert(ratings).values({ agentId: row!.id });
   // Renting seeds the balance: the first movement in this agent's ledger.
-  await record(db, [{ agentId: row!.id, amount: input.startingBalance ?? STARTING_BALANCE, reason: "rental-seed" }]);
+  await record(tx, [{ agentId: row!.id, amount: seed, reason: "rental-seed" }]);
+  await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, amount: seed });
   return row!;
+  });
 }
 
 /** A uint32, which is what the engine's PRNG takes. */
@@ -180,6 +187,17 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
       { agentId: rowA.id, amount: settledA, reason: "match-settlement", matchId: inserted!.id },
       { agentId: rowB.id, amount: -settledA, reason: "match-settlement", matchId: inserted!.id },
     ]);
+    // Queue the same movement for the chain. A level match moves nothing.
+    if (settledA !== 0) {
+      const [loser, winner] = settledA > 0 ? [rowB.id, rowA.id] : [rowA.id, rowB.id];
+      await tx.insert(chainOps).values({
+        kind: "settle",
+        matchId: inserted!.id,
+        fromAgent: loser,
+        toAgent: winner,
+        amount: Math.abs(settledA),
+      });
+    }
     await updateRating(tx, rowA.id);
     await updateRating(tx, rowB.id);
     // An agent with nothing left stops here; its record freezes as it stands.

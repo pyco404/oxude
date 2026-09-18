@@ -170,6 +170,35 @@ export const sessions = pgTable(
   (t) => [index("sessions_owner_idx").on(t.ownerId)],
 );
 
+/**
+ * The outbox between the ledger and the chain. Renting and settling write a
+ * row here in the same transaction as the ledger movement; a worker submits
+ * them to the settlement program in order. A slow or failing chain therefore
+ * never blocks or undoes a match - the ledger is authoritative, and the chain
+ * catches up and records it.
+ */
+export const chainOps = pgTable(
+  "chain_ops",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Submission order: a vault must open before its first settlement. */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    kind: text("kind").$type<"open_vault" | "settle">().notNull(),
+    agentId: uuid("agent_id").references(() => agents.id),
+    matchId: uuid("match_id").references(() => matches.id),
+    fromAgent: uuid("from_agent").references(() => agents.id),
+    toAgent: uuid("to_agent").references(() => agents.id),
+    amount: integer("amount").notNull(),
+    status: text("status").$type<"pending" | "confirmed" | "failed">().notNull().default("pending"),
+    signature: text("signature"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chain_ops_status_idx").on(t.status, t.seq), index("chain_ops_match_idx").on(t.matchId)],
+);
+
 export const ratings = pgTable("ratings", {
   agentId: uuid("agent_id")
     .primaryKey()
@@ -228,3 +257,4 @@ export type AgentRow = typeof agents.$inferSelect;
 export type MatchRow = typeof matches.$inferSelect;
 export type RatingRow = typeof ratings.$inferSelect;
 export type LedgerRow = typeof ledger.$inferSelect;
+export type ChainOpRow = typeof chainOps.$inferSelect;
