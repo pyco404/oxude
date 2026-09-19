@@ -1,17 +1,8 @@
 /**
- * One emoji per playstyle, so a reader can tell how an agent plays at a glance.
- * Fixed by preset, never per agent: two Mirages always look alike. An agent
- * rented from a brief gets a neutral mark - its strategy is private.
+ * The playstyle label shown beside every agent's name: its preset, or "custom"
+ * for an agent rented from a brief. Identity is the agent's own emoji, which the
+ * API assigns (src/marks.ts); this is behaviour.
  */
-const MARKS: Record<string, string> = {
-  Anchor: "⚓",
-  Hammer: "🔨",
-  Mirage: "🎭",
-  Bully: "💢",
-};
-export const CUSTOM_MARK = "📝";
-
-export function agentMark(presetName: string | null | undefined): { emoji: string; label: string } {
-  if (presetName && MARKS[presetName]) return { emoji: MARKS[presetName], label: `${presetName} preset` };
-  return { emoji: CUSTOM_MARK, label: "Custom brief" };
+export function presetLabel(presetName: string | null | undefined): string {
+  return presetName ? presetName.toLowerCase() : "custom";
 }

@@ -1,4 +1,4 @@
-import { agentMark } from "@/lib/agent-mark";
+import { presetLabel } from "@/lib/agent-mark";
 import { ImageResponse } from "next/og";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -45,8 +45,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
             // reads first must be the positive one, or a win looks like a loss.
             const aheadSeat = summary.netA > 0 ? "A" : summary.netB > 0 ? "B" : null;
             // Each name carries its playstyle mark, as everywhere else on the site.
-            const marked = (seat: "A" | "B") =>
-              `${agentMark(seat === "A" ? data?.match.agentA.presetName : data?.match.agentB.presetName).emoji} ${summary.names[seat]}`;
+            const side = (seat: "A" | "B") => (seat === "A" ? data?.match.agentA : data?.match.agentB);
+            const marked = (seat: "A" | "B") => `${side(seat)?.mark ? `${side(seat)!.mark} ` : ""}${summary.names[seat]}`;
+            const label = (seat: "A" | "B") => presetLabel(side(seat)?.presetName);
             const ahead = aheadSeat === null ? null : marked(aheadSeat);
             const behind = aheadSeat === null ? null : marked(aheadSeat === "A" ? "B" : "A");
             const amount = aheadSeat === "A" ? summary.netA : summary.netB;
@@ -54,10 +55,15 @@ export default async function Image({ params }: { params: Promise<{ id: string }
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 {ahead ? (
                   <div style={{ display: "flex", flexDirection: "column" }}>
-                    <div style={{ fontSize: 56, display: "flex" }}>{ahead}</div>
+                    <div style={{ fontSize: 56, display: "flex", alignItems: "baseline", gap: 18 }}>
+                      <span>{ahead}</span>
+                      <span style={{ fontSize: 22, color: "#8a8a93", letterSpacing: 3 }}>{label(aheadSeat!).toUpperCase()}</span>
+                    </div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 24 }}>
                       <span style={{ fontSize: 104, color: "#ff2d2d", fontWeight: 700 }}>{signed(amount)}</span>
-                      <span style={{ fontSize: 38, color: "#8a8a93" }}>from {behind}</span>
+                      <span style={{ fontSize: 38, color: "#8a8a93" }}>
+                        from {behind} · {label(aheadSeat === "A" ? "B" : "A")}
+                      </span>
                     </div>
                   </div>
                 ) : (

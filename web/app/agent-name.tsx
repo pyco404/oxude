@@ -1,11 +1,29 @@
-import { agentMark } from "@/lib/agent-mark";
+import { presetLabel } from "@/lib/agent-mark";
 
-/** An agent's playstyle mark, for beside its name. Labelled for screen readers. */
-export function AgentMark({ preset, className = "" }: { preset: string | null | undefined; className?: string }) {
-  const { emoji, label } = agentMark(preset);
+/**
+ * How an agent is named everywhere: its own emoji (identity, unique to it), its
+ * name, and a small label saying how it plays - the preset, or "custom" for a
+ * brief, whose strategy stays private. The emoji says which agent; the label
+ * says what kind.
+ */
+export function AgentName({
+  name,
+  mark,
+  preset,
+}: {
+  name: string;
+  mark: string | null | undefined;
+  preset: string | null | undefined;
+}) {
   return (
-    <span role="img" aria-label={label} title={label} className={`mr-1 not-italic ${className}`}>
-      {emoji}
-    </span>
+    <>
+      {mark ? (
+        <span aria-hidden className="mr-1 not-italic">
+          {mark}
+        </span>
+      ) : null}
+      {name}
+      <span className="ml-1.5 align-[1px] font-mono text-[9px] uppercase tracking-wider text-muted">{presetLabel(preset)}</span>
+    </>
   );
 }

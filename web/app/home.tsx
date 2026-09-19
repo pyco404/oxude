@@ -1,6 +1,6 @@
 "use client";
 
-import { AgentMark } from "@/app/agent-name";
+import { AgentName } from "@/app/agent-name";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
@@ -543,7 +543,6 @@ function PresetCard({
       >
         <span className="flex items-baseline justify-between gap-3">
           <span className="text-[15px] font-medium">
-            <AgentMark preset={preset.name} />
             {preset.name}
           </span>
           {/* The final figure is what screen readers get, not the frames in between. */}
@@ -623,8 +622,7 @@ function RosterPanel({
             {agents.slice(0, 8).map((a) => (
               <li key={a.agentId} className="flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0">
                 <span className="min-w-0 flex-1 truncate">
-                  <AgentMark preset={a.presetName} />
-                  {a.name}
+                  <AgentName name={a.name} mark={a.mark} preset={a.presetName} />
                 </span>
                 <span className="w-14 shrink-0 font-mono text-[10px] text-muted">{a.presetName ?? "brief"}</span>
                 <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
@@ -672,8 +670,7 @@ function AgentCard({
       <div className="p-3">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-lg font-medium">
-            <AgentMark preset={agent.presetName} />
-            {agent.name}
+            <AgentName name={agent.name} mark={agent.mark} preset={agent.presetName} />
           </p>
           <span className="font-mono text-[11px] text-muted">{agent.presetName ?? "your brief"}</span>
         </div>
@@ -729,7 +726,9 @@ function AgentCard({
 
         {lastPlay ? (
           <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
-            vs {lastPlay.opponent.name} · {lastPlay.result.rounds} rounds · staked {lastPlay.stake} ·{" "}
+            vs{" "}
+            <AgentName name={lastPlay.opponent.name} mark={lastPlay.opponent.mark} preset={lastPlay.opponent.presetName} /> ·{" "}
+            {lastPlay.result.rounds} rounds · staked {lastPlay.stake} ·{" "}
             <span className={lastPlay.result.net >= 0 ? "text-text" : "text-red"}>{whole(lastPlay.result.net)}</span>
             {lastPlay.result.net !== lastPlay.result.uncappedNet
               ? ` (capped from ${whole(lastPlay.result.uncappedNet)})`

@@ -6,6 +6,8 @@ export type RosterAgent = {
   agentId: string;
   name: string;
   presetName: string | null;
+  /** The agent's own emoji. */
+  mark?: string | null;
   maxStake: number;
   matchesPlayed: number;
   cumulativeNet: number;
@@ -31,6 +33,8 @@ export type AgentView = {
   id?: string;
   name: string;
   presetName: string | null;
+  /** The agent's own emoji. */
+  mark?: string | null;
   brief?: string | null;
   matchesPlayed?: number;
   cumulativeNet?: number;
@@ -45,6 +49,8 @@ export type LadderRow = {
   agentId: string;
   name: string;
   presetName: string | null;
+  /** The agent's own emoji. */
+  mark?: string | null;
   matchesPlayed: number;
   cumulativeNet: number;
   netPerMatch?: number;
@@ -54,7 +60,7 @@ export type LadderRow = {
 };
 export type PlayResult = {
   matchId: string;
-  opponent: { id: string; name: string };
+  opponent: { id: string; name: string; presetName?: string | null; mark?: string | null };
   matchmaking: { path: string; candidates: number; ratingGap: number | null };
   stake: number;
   result: { winner: "A" | "B" | null; net: number; opponentNet: number; rounds: number; uncappedNet: number };
@@ -67,8 +73,8 @@ export type FeedItem = {
   id: string;
   seq: number;
   createdAt: string;
-  a: { id: string; name: string; presetName: string | null };
-  b: { id: string; name: string; presetName: string | null };
+  a: { id: string; name: string; presetName: string | null; mark: string | null };
+  b: { id: string; name: string; presetName: string | null; mark: string | null };
   winner: "A" | "B" | null;
   netA: number;
   netB: number;

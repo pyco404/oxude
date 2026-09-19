@@ -6,6 +6,8 @@ export type PublicAgent = {
   name: string;
   /** Null for an agent rented from a brief. The brief itself is never public. */
   presetName: string | null;
+  /** The agent's own emoji. */
+  mark: string | null;
   createdAt: string;
   retired: boolean;
   house: boolean;

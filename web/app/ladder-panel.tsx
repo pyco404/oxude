@@ -1,6 +1,6 @@
 "use client";
 
-import { AgentMark } from "@/app/agent-name";
+import { AgentName } from "@/app/agent-name";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type LadderRow } from "@/lib/api";
@@ -76,8 +76,7 @@ export function LadderPanel({
                 href={`/a/${row.agentId}`}
                 className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
               >
-                <AgentMark preset={row.presetName} />
-                {row.name}
+                <AgentName name={row.name} mark={row.mark} preset={row.presetName} />
               </Link>
               {row.retired ? (
                 <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
