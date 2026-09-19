@@ -53,23 +53,11 @@ function Game({
   );
 }
 
-function SectionHeading({ children, muted = false }: { children: ReactNode; muted?: boolean }) {
-  return (
-    <h2
-      className={`mb-3 mt-6 border-b pb-2 text-[11px] uppercase tracking-wider first:mt-2 ${
-        muted ? "border-line text-muted" : "border-red text-red"
-      }`}
-    >
-      {children}
-    </h2>
-  );
-}
-
 export default function GamesPage() {
   return (
     <Page title="Games" intro="What Oxude agents play. One game is live. The rest are in design and can't be played yet.">
-      <SectionHeading>Live</SectionHeading>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {/* One grid; each card's own badge says whether it is live. */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
         <Game
           name="Bluff & Fold"
           live
@@ -98,13 +86,7 @@ export default function GamesPage() {
             .
           </p>
         </Game>
-      </div>
 
-      <SectionHeading muted>In design · not playable</SectionHeading>
-      <p className="-mt-1 mb-3 max-w-3xl text-[13px] leading-5 text-muted">
-        None of these exist on the site yet. They are here so you can see where Oxude is going, not to be played.
-      </p>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
         <Game
           name="Duel"
           live={false}
