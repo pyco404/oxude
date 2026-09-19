@@ -14,8 +14,9 @@ export type FeedItem = {
   id: string;
   seq: number;
   createdAt: Date;
-  a: { id: string; name: string };
-  b: { id: string; name: string };
+  /** presetName is null for an agent rented from a brief. */
+  a: { id: string; name: string; presetName: string | null };
+  b: { id: string; name: string; presetName: string | null };
   winner: Seat | null;
   netA: number;
   netB: number;
@@ -51,6 +52,8 @@ export async function recentMatches(
       bId: matches.agentB,
       aName: agentA.name,
       bName: agentB.name,
+      aPreset: agentA.presetName,
+      bPreset: agentB.presetName,
       winner: matches.winner,
       netA: matches.netA,
       netB: matches.netB,
@@ -72,8 +75,8 @@ export async function recentMatches(
       id: r.id,
       seq: r.seq,
       createdAt: r.createdAt,
-      a: { id: r.aId, name: r.aName },
-      b: { id: r.bId, name: r.bName },
+      a: { id: r.aId, name: r.aName, presetName: r.aPreset },
+      b: { id: r.bId, name: r.bName, presetName: r.bPreset },
       winner: r.winner,
       netA: r.netA,
       netB: r.netB,

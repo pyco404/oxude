@@ -321,18 +321,23 @@ export function createApp(options: AppOptions): Server {
     const id = requireUuid(ctx.params[0]);
     const [row] = await db.select().from(matches).where(eq(matches.id, id)).limit(1);
     if (!row) throw new HttpError(404, "no such match");
-    const names = await Promise.all(
+    const sides = await Promise.all(
       [row.agentA, row.agentB].map(async (agentId) => {
-        const [a] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).limit(1);
-        return a?.name ?? "unknown";
+        const [a] = await db
+          .select({ name: agents.name, presetName: agents.presetName })
+          .from(agents)
+          .where(eq(agents.id, agentId))
+          .limit(1);
+        return { name: a?.name ?? "unknown", presetName: a?.presetName ?? null };
       }),
     );
+    const names = sides.map((x) => x.name);
     const displayNames = { A: names[0]!, B: names[1]! };
     return {
       match: {
         id: row.id,
-        agentA: { id: row.agentA, name: names[0] },
-        agentB: { id: row.agentB, name: names[1] },
+        agentA: { id: row.agentA, name: names[0], presetName: sides[0]!.presetName },
+        agentB: { id: row.agentB, name: names[1], presetName: sides[1]!.presetName },
         seed: row.seed,
         rules: row.rulesConfig,
         winner: row.winner,
@@ -346,6 +351,8 @@ export function createApp(options: AppOptions): Server {
       /** Everything a shared card needs, without parsing the transcript. */
       summary: {
         names: displayNames,
+        /** Which preset each side plays; null for a custom brief. */
+        presets: { A: sides[0]!.presetName, B: sides[1]!.presetName },
         netA: row.netA,
         netB: row.netB,
         winner: row.winner,
