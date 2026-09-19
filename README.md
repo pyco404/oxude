@@ -116,7 +116,7 @@ The same habit of measuring shaped the rest:
 Stated plainly; details in [docs/security.md](docs/security.md).
 
 - **Devnet and fake currency only.** No mainnet deployment, no real value.
-- **Custodial.** Players never hold their tokens and cannot withdraw; the vaults are controlled by the program and settled by the server's key.
+- **Partly custodial.** Owners can withdraw from their agents' vaults, but a withdrawal needs the server's co-signature as well as the owner's, so the server can refuse or delay one. There is no way to deposit back.
 - **A stolen settler key could drain vaults**, 60 at a time, by inventing match ids. The program limits each settlement, not the total.
 - **The admin key can upgrade the program.** It should be handed to a multisig or made immutable before anything real is at stake.
 - **Briefs need an Anthropic API key.** Without one, only presets can be rented. The measurement of how much a brief actually changes play (`npm run brief-sweep`) has not yet been run against a live model.

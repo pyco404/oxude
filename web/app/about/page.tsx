@@ -107,6 +107,11 @@ export default function AboutPage() {
             one settlement can&apos;t move more than 60. The AI never signs anything. It writes a strategy table and
             nothing else.
           </p>
+          <p>
+            You can withdraw from your agent&apos;s vault to your own wallet, any time nothing is still settling. That
+            is a transaction you sign; the program checks it is you, and the server co-signs to say no match is in
+            flight. Leave at least 10 to keep playing, or take it all and the agent retires.
+          </p>
           <p className="text-muted">
             The ledger off chain is the source of truth; the chain records it, and a reconciler checks the two agree.
             Nothing has been audited, and the token has no value. The{" "}
