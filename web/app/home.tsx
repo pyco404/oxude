@@ -5,15 +5,12 @@ import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
 import { LadderPanel } from "@/app/ladder-panel";
 import { Segmented } from "@/app/ui";
+import { useWallet } from "@/app/wallet-context";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
 import {
-  installedWallets,
   installUrl,
-  loadSession,
   shortKey,
-  signInWith,
-  signOut,
   type Session,
   type WalletName,
 } from "@/lib/wallet";
@@ -27,8 +24,9 @@ const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
 
 export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const feed = useFeed(initialFeed);
-  const [session, setSession] = useState<Session | null>(null);
-  const [wallets, setWallets] = useState<WalletName[]>([]);
+  // Sign-in is site-wide: the mobile top bar and this page share one session.
+  const wallet = useWallet();
+  const { session, wallets } = wallet;
   const token = session?.token ?? null;
   const [agent, setAgent] = useState<AgentView | null>(null);
   const [tab, setTab] = useState<"preset" | "brief">("preset");
@@ -56,27 +54,19 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const briefTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    setSession(loadSession());
-    // Wallets inject after load; look again shortly so a slow extension still shows up.
-    setWallets(installedWallets());
-    const late = setTimeout(() => setWallets(installedWallets()), 600);
     void api.presets().then((r) => {
       setPresets(r.presets);
       setChosen((c) => c || r.presets[0]?.name || "");
     });
-    return () => clearTimeout(late);
   }, []);
 
-  const connect = (name: WalletName) =>
-    run("connect", async () => {
-      setSession(await signInWith(name));
-    });
-  const disconnect = () =>
-    run("disconnect", async () => {
-      await signOut(session);
-      setSession(null);
-      setAgent(null);
-    });
+  // Signing out, from here or the top bar, puts the agent card away.
+  useEffect(() => {
+    if (!session) setAgent(null);
+  }, [session]);
+
+  const connect = (name: WalletName) => void wallet.connect(name);
+  const disconnect = () => void wallet.disconnect();
 
   const refreshAgent = useCallback(
     async (id: string, sessionToken: string | null) => {
@@ -268,11 +258,11 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
 
   return (
     <main className="w-full px-4 pb-10 pt-5 lg:px-10 lg:pt-8">
-      <Header session={session} onDisconnect={disconnect} busy={busy === "disconnect"} />
+      <Header session={session} onDisconnect={disconnect} busy={wallet.busy === "disconnect"} />
 
-      {error ? (
+      {error ?? wallet.error ? (
         <p className="mb-4 border border-red/40 bg-red-dim/20 px-3 py-2 text-[13px] text-red" role="alert">
-          {error}
+          {error ?? wallet.error}
         </p>
       ) : null}
 
@@ -292,7 +282,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         </div>
 
         <div className="flex min-w-0 flex-col gap-3 *:m-0">
-          {session ? null : <ConnectPanel wallets={wallets} onConnect={connect} busy={busy === "connect"} />}
+          {session ? null : <ConnectPanel wallets={wallets} onConnect={connect} busy={wallet.busy === "connect"} />}
           {session ? null : agentOrRent}
           {session ? null : <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />}
           <RosterPanel
@@ -321,7 +311,7 @@ function Header({ session, onDisconnect, busy }: { session: Session | null; onDi
         <button
           onClick={onDisconnect}
           disabled={busy}
-          className="shrink-0 border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red"
+          className="hidden shrink-0 border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red lg:block"
           title="Sign out"
         >
           {shortKey(session.ownerId)}

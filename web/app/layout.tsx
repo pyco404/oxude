@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Sidebar } from "./sidebar";
+import { WalletProvider } from "./wallet-context";
 import { SiteFooter } from "./site-header";
 
 /**
@@ -22,13 +23,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-dvh bg-ink text-text antialiased">
-        <div className="lg:flex">
-          <Sidebar />
-          <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
-            <div className="flex-1">{children}</div>
-            <SiteFooter />
+        <WalletProvider>
+          <div className="lg:flex">
+            <Sidebar />
+            <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
+              <div className="flex-1">{children}</div>
+              <SiteFooter />
+            </div>
           </div>
-        </div>
+        </WalletProvider>
       </body>
     </html>
   );

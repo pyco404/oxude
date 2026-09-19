@@ -1,7 +1,9 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { installUrl, shortKey, type WalletName } from "@/lib/wallet";
+import { useWallet } from "./wallet-context";
 import { REWARDS_LINKED } from "./site-header";
 
 const NAV = [
@@ -36,6 +38,100 @@ function Mark({ onClick }: { onClick?: () => void }) {
 }
 
 /**
+ * The wallet in the mobile top bar: "Connect wallet" signed out, the short
+ * address signed in. Either opens a small menu rather than acting on one tap,
+ * so a stray tap can't sign anyone out.
+ */
+function TopbarWallet() {
+  const { session, wallets, busy, error, connect, disconnect } = useWallet();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  // Close once signing in or out finishes.
+  useEffect(() => setOpen(false), [session]);
+
+  const all: WalletName[] = ["Phantom", "Solflare"];
+  return (
+    <div ref={box} className="relative min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={session ? `Wallet ${session.ownerId}` : "Connect wallet"}
+        className={`h-9 max-w-full truncate border px-3 text-[12px] ${
+          session ? "border-line font-mono text-text" : "border-red bg-red font-medium text-ink"
+        }`}
+      >
+        {busy === "connect" ? "Waiting…" : session ? shortKey(session.ownerId) : "Connect wallet"}
+      </button>
+      {open ? (
+        <div role="menu" className="absolute right-0 top-11 z-40 w-64 border border-line bg-panel p-3 text-[12px] leading-5">
+          {session ? (
+            <>
+              <p className="text-muted">Signed in with {session.wallet}</p>
+              <p className="mt-1 break-all font-mono text-[11px]">{session.ownerId}</p>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void disconnect()}
+                disabled={busy === "disconnect"}
+                className="mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:text-red"
+              >
+                {busy === "disconnect" ? "Signing out…" : "Sign out"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-muted">You sign a message, not a transaction. It costs nothing and moves nothing.</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {all.map((name) =>
+                  wallets.includes(name) ? (
+                    <button
+                      key={name}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void connect(name)}
+                      disabled={busy === "connect"}
+                      className="bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+                    >
+                      {name}
+                    </button>
+                  ) : (
+                    <a
+                      key={name}
+                      role="menuitem"
+                      href={installUrl(name)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="border border-line px-3 py-2 text-center text-[13px] text-muted"
+                    >
+                      Get {name}
+                    </a>
+                  ),
+                )}
+              </div>
+            </>
+          )}
+          {error ? <p className="mt-2 text-red">{error}</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * Desktop: a fixed sidebar, always there. Below lg: an off-canvas drawer behind
  * a hamburger, closed by the X, the backdrop, Escape or following a link, with
  * the page behind it locked from scrolling.
@@ -63,15 +159,21 @@ export function Sidebar() {
   return (
     <>
       {/* Mobile top bar. */}
-      <div className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-ink px-4 py-3 lg:hidden">
-        <Mark />
+      <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-ink px-4 py-3 lg:hidden">
+        {/* The bull alone: the wordmark is in the drawer, and the room goes to the wallet. */}
+        <a href="/" aria-label="Oxude home" className="shrink-0">
+          <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
+        </a>
+        <div className="flex min-w-0 flex-1 justify-end">
+          <TopbarWallet />
+        </div>
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="Open navigation"
           aria-expanded={open}
           aria-controls="site-nav"
-          className="flex h-9 w-9 flex-col items-center justify-center gap-1.5 border border-line"
+          className="flex h-9 w-9 shrink-0 flex-col items-center justify-center gap-1.5 border border-line"
         >
           <span className="block h-px w-4 bg-text" />
           <span className="block h-px w-4 bg-text" />
