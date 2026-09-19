@@ -1,7 +1,38 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { installedWallets, loadSession, signInWith, signOut, type Session, type WalletName } from "@/lib/wallet";
+import dynamic from "next/dynamic";
+import { Component, createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  installedWallets,
+  loadSession,
+  signInWith,
+  signInWithSigner,
+  signOut,
+  type Session,
+  type WalletName,
+} from "@/lib/wallet";
+import type { PrivyApi } from "./privy-bridge";
+
+/**
+ * Privy is a second way in, behind a flag: only with NEXT_PUBLIC_PRIVY_APP_ID
+ * set, loaded as its own chunk, and caught if it fails, so the extension
+ * wallets work exactly as before whether or not it ever loads.
+ */
+const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
+const PrivyBridge = PRIVY_APP_ID ? dynamic(() => import("./privy-bridge"), { ssr: false, loading: () => null }) : null;
+
+class Contained extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.warn("Privy failed to load; wallet extensions still work.", error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 type WalletState = {
   session: Session | null;
@@ -11,6 +42,9 @@ type WalletState = {
   error: string | null;
   connect: (name: WalletName) => Promise<void>;
   disconnect: () => Promise<void>;
+  /** True once Privy has loaded and can take an email or X login. */
+  privyReady: boolean;
+  connectPrivy: () => Promise<void>;
 };
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -21,6 +55,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [wallets, setWallets] = useState<WalletName[]>([]);
   const [busy, setBusy] = useState<WalletState["busy"]>(null);
   const [error, setError] = useState<string | null>(null);
+  const [privy, setPrivy] = useState<PrivyApi | null>(null);
 
   useEffect(() => {
     setSession(loadSession());
@@ -42,21 +77,45 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const connectPrivy = useCallback(async () => {
+    if (!privy) return;
+    setBusy("connect");
+    setError(null);
+    try {
+      const signer = await privy.signIn();
+      setSession(await signInWithSigner(signer.publicKey, signer.sign, "Privy"));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [privy]);
+
   const disconnect = useCallback(async () => {
     setBusy("disconnect");
     setError(null);
     try {
       await signOut(session);
+      if (session?.wallet === "Privy") await privy?.logout().catch(() => undefined);
       setSession(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(null);
     }
-  }, [session]);
+  }, [session, privy]);
 
   return (
-    <WalletContext.Provider value={{ session, wallets, busy, error, connect, disconnect }}>{children}</WalletContext.Provider>
+    <WalletContext.Provider
+      value={{ session, wallets, busy, error, connect, disconnect, privyReady: privy !== null, connectPrivy }}
+    >
+      {children}
+      {PrivyBridge ? (
+        <Contained>
+          <PrivyBridge appId={PRIVY_APP_ID} onReady={setPrivy} />
+        </Contained>
+      ) : null}
+    </WalletContext.Provider>
   );
 }
 

@@ -279,7 +279,12 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         </div>
 
         <div className="flex min-w-0 flex-col gap-3 *:m-0">
-          {session ? null : <ConnectPanel wallets={wallets} onConnect={connect} busy={wallet.busy === "connect"} />}
+          {session ? null : <ConnectPanel
+              wallets={wallets}
+              onConnect={connect}
+              busy={wallet.busy === "connect"}
+              onPrivy={wallet.privyReady ? () => void wallet.connectPrivy() : null}
+            />}
           {session ? null : agentOrRent}
           {session ? null : <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />}
           <RosterPanel
@@ -314,10 +319,13 @@ function ConnectPanel({
   wallets,
   onConnect,
   busy,
+  onPrivy,
 }: {
   wallets: WalletName[];
   onConnect: (name: WalletName) => void;
   busy: boolean;
+  /** Email or X login through Privy; null when Privy is off or hasn't loaded. */
+  onPrivy: (() => void) | null;
 }) {
   const all: WalletName[] = ["Phantom", "Solflare"];
   return (
@@ -350,6 +358,15 @@ function ConnectPanel({
           ),
         )}
       </div>
+      {onPrivy ? (
+        <button
+          onClick={onPrivy}
+          disabled={busy}
+          className="mt-2 w-full border border-line px-3 py-2 text-[13px] text-text hover:border-red disabled:text-muted"
+        >
+          No wallet? Sign in with email or X
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -41,7 +41,10 @@ const INSTALL_URL: Record<WalletName, string> = {
 };
 export const installUrl = (name: WalletName) => INSTALL_URL[name];
 
-export type Session = { token: string; ownerId: string; wallet: WalletName; expiresAt: string };
+/** "Privy" is an embedded wallet made by email or X login; the others are browser extensions. */
+export type SignInMethod = WalletName | "Privy";
+
+export type Session = { token: string; ownerId: string; wallet: SignInMethod; expiresAt: string };
 
 const SESSION_KEY = "oxude.session";
 
@@ -108,10 +111,32 @@ export async function signInWith(name: WalletName): Promise<Session> {
   return session;
 }
 
+/**
+ * The same exchange as signInWith, for a signer that isn't an injected
+ * extension (a Privy embedded wallet). Same nonce, same message, same
+ * verification: the server can't tell the two apart, and owner_id is the key.
+ */
+export async function signInWithSigner(
+  publicKey: string,
+  sign: (message: Uint8Array) => Promise<Uint8Array>,
+  wallet: SignInMethod,
+): Promise<Session> {
+  const issued = await post<{ nonce: string; message: string }>("/auth/nonce", { publicKey });
+  const signature = bs58.encode(await sign(new TextEncoder().encode(issued.message)));
+  const verified = await post<{ token: string; ownerId: string; expiresAt: string }>("/auth/verify", {
+    publicKey,
+    nonce: issued.nonce,
+    signature,
+  });
+  const session: Session = { ...verified, wallet };
+  saveSession(session);
+  return session;
+}
+
 export async function signOut(session: Session | null): Promise<void> {
   if (session) {
     await post("/auth/logout", {}, session.token).catch(() => undefined);
-    await providerFor(session.wallet)?.disconnect?.().catch(() => undefined);
+    if (session.wallet !== "Privy") await providerFor(session.wallet)?.disconnect?.().catch(() => undefined);
   }
   saveSession(null);
 }

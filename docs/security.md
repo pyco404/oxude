@@ -25,6 +25,7 @@ Game tokens in per-agent vaults on Solana devnet, and the accuracy of the off-ch
 - **Verification.** The server rebuilds the exact message it issued and checks the ed25519 signature. It never trusts message text sent back by the client.
 - **Replay.** A nonce is burnt with a conditional update, so two concurrent verifications of one signature cannot both open a session. Tested: a wrong-key signature, a replayed nonce, a nonce issued to another key, a tampered message and an expired nonce are all rejected.
 - **Sessions.** 32 random bytes, returned once and stored only as a SHA-256 hash, valid 7 days, revoked on sign-out. Sent as `Authorization: Bearer`.
+- **Email or X, through Privy (optional).** With `NEXT_PUBLIC_PRIVY_APP_ID` set, a Privy embedded Solana wallet can sign in too. It signs the same nonce message and the server verifies it the same way, so the owner is still the public key and nothing downstream knows the difference. The key lives in Privy's isolated iframe, not the page. Unset, no Privy code is loaded.
 
 ## Money: ledger and chain
 
@@ -59,6 +60,7 @@ These are real, and would each need fixing before anything of value were at stak
 7. **Rate limits are in memory**, per process. They reset on restart and are not shared across instances.
 8. **Each settlement record costs the settler about 0.0015 SOL in rent.** At scale this is a steady SOL drain; old records could be closed to recover it, but there is no instruction for that yet.
 9. **Unaudited.** The program, the auth flow and the ledger have tests, not an audit.
+10. **Privy is third-party script in the page.** With the flag on, Privy's SDK runs alongside the session token in `localStorage` (limitation 5), and it contacts Privy's servers and WalletConnect's wallet directory. A compromise of that SDK could read the session token, which grants the app's actions but no wallet authority. Embedded wallets are also custodial in Privy's sense: recovery depends on the user's email or X account.
 
 ## Reporting
 

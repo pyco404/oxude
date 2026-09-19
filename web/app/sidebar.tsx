@@ -50,7 +50,7 @@ function Mark({ onClick }: { onClick?: () => void }) {
  * so a stray tap can't sign anyone out.
  */
 function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
-  const { session, wallets, busy, error, connect, disconnect } = useWallet();
+  const { session, wallets, busy, error, connect, disconnect, privyReady, connectPrivy } = useWallet();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -93,7 +93,9 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
         >
           {session ? (
             <>
-              <p className="text-muted">Signed in with {session.wallet}</p>
+              <p className="text-muted">
+                Signed in with {session.wallet === "Privy" ? "an email or X wallet" : session.wallet}
+              </p>
               <p className="mt-1 break-all font-mono text-[11px]">{session.ownerId}</p>
               <button
                 type="button"
@@ -135,6 +137,18 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                   ),
                 )}
               </div>
+              {/* A second way in: an embedded wallet from an email or X login, when Privy has loaded. */}
+              {privyReady ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void connectPrivy()}
+                  disabled={busy === "connect"}
+                  className="mt-2 w-full border border-line px-3 py-2 text-[13px] text-text hover:border-red disabled:text-muted"
+                >
+                  Email or X
+                </button>
+              ) : null}
             </>
           )}
           {error ? <p className="mt-2 text-red">{error}</p> : null}
