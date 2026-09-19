@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { installUrl, shortKey, type WalletName } from "@/lib/wallet";
+import { PrivyOption } from "./privy-option";
 import { useWallet } from "./wallet-context";
 import { REWARDS_LINKED } from "./site-header";
 
@@ -50,7 +51,7 @@ function Mark({ onClick }: { onClick?: () => void }) {
  * so a stray tap can't sign anyone out.
  */
 function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
-  const { session, wallets, busy, error, connect, disconnect, privyReady, connectPrivy } = useWallet();
+  const { session, wallets, busy, error, connect, disconnect } = useWallet();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -137,18 +138,8 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                   ),
                 )}
               </div>
-              {/* A second way in: an embedded wallet from an email or X login, when Privy has loaded. */}
-              {privyReady ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => void connectPrivy()}
-                  disabled={busy === "connect"}
-                  className="mt-2 w-full border border-line px-3 py-2 text-[13px] text-text hover:border-red disabled:text-muted"
-                >
-                  Email or X
-                </button>
-              ) : null}
+              {/* A second way in: an embedded wallet from an email or X login. */}
+              <PrivyOption menu />
             </>
           )}
           {error ? <p className="mt-2 text-red">{error}</p> : null}

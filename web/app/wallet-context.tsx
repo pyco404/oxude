@@ -19,15 +19,41 @@ import type { PrivyApi } from "./privy-bridge";
  * wallets work exactly as before whether or not it ever loads.
  */
 const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
-const PrivyBridge = PRIVY_APP_ID ? dynamic(() => import("./privy-bridge"), { ssr: false, loading: () => null }) : null;
+const PrivyBridge = PRIVY_APP_ID
+  ? dynamic(
+      () =>
+        import("./privy-bridge").catch((error) => {
+          // A chunk that can't load (blocked, offline) must not take the page with it.
+          reportPrivy("failed", `couldn't load Privy (${(error as Error).message})`);
+          return { default: () => null };
+        }),
+      { ssr: false, loading: () => null },
+    )
+  : null;
+/** How long Privy gets to become ready before the page says it didn't. */
+const PRIVY_READY_TIMEOUT_MS = 20_000;
 
-class Contained extends Component<{ children: ReactNode }, { failed: boolean }> {
+export type PrivyStatus = "off" | "loading" | "ready" | "failed";
+
+/**
+ * Privy's state, kept where it can be seen: on window.__oxudePrivy and in the
+ * console, and in the UI as a loading or failed line. A silent failure here is
+ * indistinguishable from the feature not existing.
+ */
+let reportPrivy: (status: PrivyStatus, reason?: string) => void = () => {};
+function publish(status: PrivyStatus, reason: string | null, startedAt: number) {
+  const state = { status, reason, afterMs: Math.round(performance.now() - startedAt) };
+  (window as unknown as { __oxudePrivy?: typeof state }).__oxudePrivy = state;
+  (status === "failed" ? console.warn : console.info)(`[oxude] Privy ${status}${reason ? `: ${reason}` : ""} after ${state.afterMs}ms`);
+}
+
+class Contained extends Component<{ children: ReactNode; onError: (reason: string) => void }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
   }
   componentDidCatch(error: unknown) {
-    console.warn("Privy failed to load; wallet extensions still work.", error);
+    this.props.onError(`Privy crashed (${(error as Error)?.message ?? String(error)})`);
   }
   render() {
     return this.state.failed ? null : this.props.children;
@@ -44,6 +70,9 @@ type WalletState = {
   disconnect: () => Promise<void>;
   /** True once Privy has loaded and can take an email or X login. */
   privyReady: boolean;
+  privyStatus: PrivyStatus;
+  /** Why Privy isn't available, when it failed. */
+  privyReason: string | null;
   connectPrivy: () => Promise<void>;
 };
 
@@ -56,6 +85,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState<WalletState["busy"]>(null);
   const [error, setError] = useState<string | null>(null);
   const [privy, setPrivy] = useState<PrivyApi | null>(null);
+  const [privyStatus, setPrivyStatus] = useState<PrivyStatus>(PRIVY_APP_ID ? "loading" : "off");
+  const [privyReason, setPrivyReason] = useState<string | null>(null);
+
+  // Track Privy's state, give up visibly after a while, and publish it for debugging.
+  useEffect(() => {
+    if (!PRIVY_APP_ID) return;
+    const startedAt = performance.now();
+    let settled = false;
+    reportPrivy = (status, reason) => {
+      if (settled && status !== "ready") return;
+      if (status !== "loading") settled = true;
+      setPrivyStatus(status);
+      setPrivyReason(reason ?? null);
+      publish(status, reason ?? null, startedAt);
+    };
+    publish("loading", null, startedAt);
+    const timer = setTimeout(() => reportPrivy("failed", `not ready after ${PRIVY_READY_TIMEOUT_MS / 1000}s`), PRIVY_READY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const onPrivyReady = useCallback((api: PrivyApi | null) => {
+    setPrivy(api);
+    if (api) reportPrivy("ready");
+  }, []);
 
   useEffect(() => {
     setSession(loadSession());
@@ -107,12 +159,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ session, wallets, busy, error, connect, disconnect, privyReady: privy !== null, connectPrivy }}
+      value={{
+        session,
+        wallets,
+        busy,
+        error,
+        connect,
+        disconnect,
+        privyReady: privy !== null,
+        privyStatus,
+        privyReason,
+        connectPrivy,
+      }}
     >
       {children}
       {PrivyBridge ? (
-        <Contained>
-          <PrivyBridge appId={PRIVY_APP_ID} onReady={setPrivy} />
+        <Contained onError={(reason) => reportPrivy("failed", reason)}>
+          <PrivyBridge appId={PRIVY_APP_ID} onReady={onPrivyReady} />
         </Contained>
       ) : null}
     </WalletContext.Provider>

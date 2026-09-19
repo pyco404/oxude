@@ -5,6 +5,7 @@ import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
 import { LadderPanel } from "@/app/ladder-panel";
 import { Segmented } from "@/app/ui";
+import { PrivyOption } from "@/app/privy-option";
 import { useWallet } from "@/app/wallet-context";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
@@ -283,7 +284,6 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
               wallets={wallets}
               onConnect={connect}
               busy={wallet.busy === "connect"}
-              onPrivy={wallet.privyReady ? () => void wallet.connectPrivy() : null}
             />}
           {session ? null : agentOrRent}
           {session ? null : <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />}
@@ -319,13 +319,10 @@ function ConnectPanel({
   wallets,
   onConnect,
   busy,
-  onPrivy,
 }: {
   wallets: WalletName[];
   onConnect: (name: WalletName) => void;
   busy: boolean;
-  /** Email or X login through Privy; null when Privy is off or hasn't loaded. */
-  onPrivy: (() => void) | null;
 }) {
   const all: WalletName[] = ["Phantom", "Solflare"];
   return (
@@ -358,15 +355,7 @@ function ConnectPanel({
           ),
         )}
       </div>
-      {onPrivy ? (
-        <button
-          onClick={onPrivy}
-          disabled={busy}
-          className="mt-2 w-full border border-line px-3 py-2 text-[13px] text-text hover:border-red disabled:text-muted"
-        >
-          No wallet? Sign in with email or X
-        </button>
-      ) : null}
+      <PrivyOption label="No wallet? Sign in with email or X" />
     </div>
   );
 }
