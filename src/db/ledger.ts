@@ -64,20 +64,22 @@ export class StakeError extends Error {}
 
 /**
  * What a match between these two puts at risk: what both can actually cover,
- * and never more than one match can move. Ceilings do not enter this - they
- * decide who meets whom, not what a match is worth. Throws when either side
- * cannot cover the minimum.
+ * within both owners' per-match ceilings, and never more than one match can
+ * move. The ceiling is a promise to the owner - "never risk more than this in
+ * one match" - so the lower of the two governs. A low ceiling can pull an
+ * opponent's stake down, but matchmaking only pairs agents in the same band, so
+ * never below that band's floor. Throws when either side cannot cover the minimum.
  */
 export function stakeBetween(
-  a: { name: string; balance: number },
-  b: { name: string; balance: number },
+  a: { name: string; balance: number; ceiling?: number },
+  b: { name: string; balance: number; ceiling?: number },
 ): number {
   for (const side of [a, b]) {
     if (side.balance < MIN_STAKE) {
       throw new StakeError(`${side.name} cannot cover a stake: balance ${side.balance}, minimum ${MIN_STAKE}`);
     }
   }
-  return Math.min(a.balance, b.balance, MAX_EXPOSURE);
+  return Math.min(a.balance, b.balance, a.ceiling ?? MAX_EXPOSURE, b.ceiling ?? MAX_EXPOSURE, MAX_EXPOSURE);
 }
 
 /** Nobody can lose money they do not have: the stake is what both could cover. */

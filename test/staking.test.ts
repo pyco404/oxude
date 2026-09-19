@@ -55,6 +55,10 @@ describe("stakes", () => {
     expect(stakeBetween(rich, rich)).toBe(MAX_EXPOSURE);
     expect(stakeBetween({ ...rich, balance: 20 }, rich)).toBe(20);
     expect(stakeBetween(rich, { ...rich, balance: 35 })).toBe(35);
+    // The lower of the two ceilings caps it: an owner never risks more than they chose.
+    expect(stakeBetween({ ...rich, ceiling: 30 }, rich)).toBe(30);
+    expect(stakeBetween({ ...rich, ceiling: 40 }, { ...rich, ceiling: 25 })).toBe(25);
+    expect(stakeBetween({ ...rich, balance: 18, ceiling: 30 }, rich)).toBe(18);
   });
 
   it("refuse a side that cannot cover the minimum", () => {
@@ -106,25 +110,25 @@ describe("settlement", () => {
     await c();
   });
 
-  it("is not capped by a ceiling: a low ceiling cannot drag an opponent down", async () => {
+  it("is capped by the lower ceiling: neither owner risks more than they chose", async () => {
     const { db: d, close: c } = await fresh();
-    const careful = await createAgent(d, { name: "Careful", presetName: "Bully", maxStake: MIN_STAKE });
+    const careful = await createAgent(d, { name: "Careful", presetName: "Bully", maxStake: 30 });
     const bold = await createAgent(d, { name: "Bold", presetName: "Mirage", maxStake: 60 });
 
-    // Runner-level: settlement follows the money both can cover, not the ceiling.
-    let sawMoreThanCeiling = false;
-    for (let seed = 1; seed <= 25; seed++) {
+    let sawTheCap = false;
+    for (let seed = 1; seed <= 200 && !sawTheCap; seed++) {
       const before = { a: await balanceOf(d, careful.id), b: await balanceOf(d, bold.id) };
       if (Math.min(before.a, before.b) < MIN_STAKE) break;
       const { stake, match } = await runMatch(d, careful.id, bold.id, { seed });
-      // The stake is what both can cover, with the ceiling nowhere in it.
-      expect(stake).toBe(Math.min(before.a, before.b, MAX_EXPOSURE));
+      // The stake is what both can cover, within the lower ceiling.
+      expect(stake).toBe(Math.min(before.a, before.b, 30, MAX_EXPOSURE));
       const [row] = await d.select().from(matches).where(eq(matches.id, match.id));
-      // While both can cover it, what the play was worth is what settled.
-      if (Math.abs(row!.log.nets.A) <= stake) expect(row!.netA).toBe(row!.log.nets.A);
-      if (Math.abs(row!.netA) > MIN_STAKE) sawMoreThanCeiling = true;
+      // Nobody moves more than the careful owner's ceiling.
+      expect(Math.abs(row!.netA)).toBeLessThanOrEqual(30);
+      if (Math.abs(row!.log.nets.A) > 30) sawTheCap = true;
     }
-    expect(sawMoreThanCeiling).toBe(true);
+    // At least one match was worth more than 30 in play, and the ceiling held it.
+    expect(sawTheCap).toBe(true);
     await c();
   });
 

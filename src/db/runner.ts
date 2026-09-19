@@ -160,8 +160,8 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   // What both sides can cover, under both owners' ceilings.
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, ceiling: rowA.maxStake },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, ceiling: rowB.maxStake },
   );
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
@@ -239,8 +239,8 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
   const rules = DEFAULT_RULES;
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, ceiling: rowA.maxStake },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, ceiling: rowB.maxStake },
   );
   const seed = options.seed ?? newSeed();
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });

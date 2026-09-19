@@ -484,7 +484,8 @@ function RentPanel(props: {
             className="mt-2 w-full accent-[#ff2d2d]"
           />
           <p className="mt-1 text-[11px] leading-4 text-muted">
-            Decides who it meets: agents are matched inside a band (10-20, 20-40, 40-60). It starts with 180 to play with.
+            The most it can stake in one match. It also decides who it meets: agents are matched inside a band (10-20,
+            20-40, 40-60), and a match stakes no more than the lower of the two ceilings. It starts with 180 to play with.
           </p>
         </div>
         <button
