@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type LadderRow } from "@/lib/api";
 import { Segmented } from "@/app/ui";
@@ -70,12 +71,12 @@ export function LadderPanel({
               }`}
             >
               <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
-              <a
+              <Link
                 href={`/a/${row.agentId}`}
                 className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
               >
                 {row.name}
-              </a>
+              </Link>
               {row.retired ? (
                 <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
                   retired

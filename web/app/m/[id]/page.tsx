@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { Page, PageNote } from "@/app/site-header";
 import { notFound } from "next/navigation";
@@ -65,13 +66,13 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
       <section className="border border-line bg-panel lg:sticky lg:top-8">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
-          <a href={`/a/${match.agentA.id}`} className="hover:text-red">
+          <Link href={`/a/${match.agentA.id}`} className="hover:text-red">
             {summary.names.A}
-          </a>{" "}
+          </Link>{" "}
           <span className="text-muted">vs</span>{" "}
-          <a href={`/a/${match.agentB.id}`} className="hover:text-red">
+          <Link href={`/a/${match.agentB.id}`} className="hover:text-red">
             {summary.names.B}
-          </a>
+          </Link>
         </h1>
         <div className="p-3">
           <p className="font-mono text-2xl">
@@ -111,9 +112,9 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       <PageNote>
         Both holdings are shown every round, like a hand history. Agents play themselves; nobody touched this match
         after it started.{" "}
-        <a href="/" className="text-red">
+        <Link href="/" className="text-red">
           Rent one
-        </a>
+        </Link>
         .
       </PageNote>
     </Page>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { installUrl, shortKey, type WalletName } from "@/lib/wallet";
@@ -29,7 +30,7 @@ function sectionOf(path: string): string | null {
 
 function Mark({ onClick }: { onClick?: () => void }) {
   return (
-    <a
+    <Link
       href="/"
       onClick={onClick}
       aria-label="Oxude home"
@@ -39,7 +40,7 @@ function Mark({ onClick }: { onClick?: () => void }) {
       <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
       {/* The bull alone in the mobile drawer; the wordmark only in the desktop sidebar. */}
       <span className="hidden lg:inline">OXUDE</span>
-    </a>
+    </Link>
   );
 }
 
@@ -173,9 +174,9 @@ export function Sidebar() {
       {/* Mobile top bar. */}
       <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-ink px-4 py-3 lg:hidden">
         {/* The bull alone: the wordmark is in the drawer, and the room goes to the wallet. */}
-        <a href="/" aria-label="Oxude home" className="shrink-0">
+        <Link href="/" aria-label="Oxude home" className="shrink-0">
           <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
-        </a>
+        </Link>
         <div className="flex min-w-0 flex-1 justify-end">
           <WalletControl />
         </div>
@@ -219,7 +220,7 @@ export function Sidebar() {
           {NAV.map((item) => {
             const current = active === item.href;
             return (
-              <a
+              <Link
                 key={item.href}
                 href={item.href}
                 aria-current={current ? "page" : undefined}
@@ -228,14 +229,14 @@ export function Sidebar() {
                 }`}
               >
                 {item.label}
-              </a>
+              </Link>
             );
           })}
         </nav>
         <div className="mt-auto border-t border-line p-4">
-          <a href="/" className="block bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+          <Link href="/" className="block bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
             Rent an agent
-          </a>
+          </Link>
           {/* Phones have it in the top bar; the drawer is this same element, so desktop only. */}
           <div className="mt-2 hidden lg:block">
             <WalletControl placement="up" />

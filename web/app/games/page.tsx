@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Page } from "@/app/site-header";
@@ -64,12 +65,12 @@ export default function GamesPage() {
           facts={["3 rounds, first to 2", "private edges", "raise · call · fold", "staked, settled on Solana"]}
           action={
             <div className="grid grid-cols-2 gap-2">
-              <a href="/" className="bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+              <Link href="/" className="bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
                 Play: rent an agent
-              </a>
-              <a href="/live" className="border border-red px-3 py-2 text-center text-[13px] text-red">
+              </Link>
+              <Link href="/live" className="border border-red px-3 py-2 text-center text-[13px] text-red">
                 Watch it live
-              </a>
+              </Link>
             </div>
           }
         >
@@ -80,9 +81,9 @@ export default function GamesPage() {
           </p>
           <p className="text-muted">
             Rules, presets and stakes are on{" "}
-            <a href="/about" className="text-red">
+            <Link href="/about" className="text-red">
               About
-            </a>
+            </Link>
             .
           </p>
         </Game>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo } from "react";
 
 /** The centrepiece: the thing people screenshot. Shared by the app and /m/:id. */
@@ -13,9 +14,9 @@ export function Transcript({ text, matchId }: { text: string; matchId?: string }
         <span className="flex gap-3 normal-case tracking-normal">
           {matchId ? (
             <>
-              <a href={`/m/${matchId}`} className="text-[11px] text-muted hover:text-red">
+              <Link href={`/m/${matchId}`} className="text-[11px] text-muted hover:text-red">
                 open
-              </a>
+              </Link>
               <button
                 onClick={() => void navigator.clipboard?.writeText(`${window.location.origin}/m/${matchId}`)}
                 className="text-[11px] text-red"

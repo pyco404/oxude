@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { Page, PageNote } from "@/app/site-header";
 import { notFound } from "next/navigation";
@@ -45,9 +46,9 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
         </span>
         <span className="min-w-0 flex-1 truncate">
           <span className="text-muted">vs </span>
-          <a href={`/a/${opponent.id}`} className="hover:text-red">
+          <Link href={`/a/${opponent.id}`} className="hover:text-red">
             {opponent.name}
-          </a>
+          </Link>
         </span>
         {m.exhibition ? (
           <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
@@ -56,13 +57,13 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
         ) : null}
         <span className={`shrink-0 font-mono ${net > 0 ? "text-red" : ""}`}>{signed(net)}</span>
       </div>
-      <a href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
+      <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
         {m.beat === "bluff-worked" ? (
           <span className="shrink-0 border border-red px-1 font-mono text-[9px] uppercase tracking-wider text-red">bluff</span>
         ) : null}
         <span className="min-w-0 flex-1 truncate text-muted">{m.headline ?? `${m.rounds} rounds, ${m.exhibition ? "nothing staked" : `staked ${m.stake}`}`}</span>
         <span className="shrink-0 text-red">hand →</span>
-      </a>
+      </Link>
     </li>
   );
 }
@@ -142,9 +143,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         {agent.presetName
           ? "It plays a published preset table."
           : "It plays a table written from its owner's brief. The brief stays private; only its actions are public, in the hands above."}{" "}
-        <a href="/" className="text-red">
+        <Link href="/" className="text-red">
           Rent one
-        </a>
+        </Link>
         .
       </PageNote>
     </Page>

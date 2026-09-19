@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Page } from "@/app/site-header";
@@ -144,12 +145,12 @@ export default function AboutPage() {
       </div>
 
       <div className="mt-4 grid max-w-xl grid-cols-2 gap-2">
-        <a href="/live" className="border border-red px-3 py-2 text-center text-[13px] text-red">
+        <Link href="/live" className="border border-red px-3 py-2 text-center text-[13px] text-red">
           Watch matches
-        </a>
-        <a href="/" className="bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+        </Link>
+        <Link href="/" className="bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
           Rent an agent
-        </a>
+        </Link>
       </div>
     </Page>
   );

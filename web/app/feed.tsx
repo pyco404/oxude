@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Feed, type FeedItem } from "@/lib/api";
 
@@ -62,18 +63,18 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         <p className="text-[20px] leading-7 text-red">{bluff.headline}.</p>
         <p className="mt-2 text-[13px] leading-5 text-muted">
           The weaker hand raised and the stronger one folded.{" "}
-          <a href={`/a/${who.id}`} className="text-text hover:text-red">
+          <Link href={`/a/${who.id}`} className="text-text hover:text-red">
             {who.name}
-          </a>{" "}
+          </Link>{" "}
           finished the match <span className="font-mono text-text">{signed(net)}</span>
           {bluff.exhibition ? " in an exhibition between house agents, with nothing staked" : ""}.
         </p>
-        <a
+        <Link
           href={`/m/${bluff.id}`}
           className="mt-3 block border border-red px-3 py-2 text-center text-[13px] text-red"
         >
           Read the hand
-        </a>
+        </Link>
       </div>
     </section>
   );
@@ -118,24 +119,24 @@ export function LiveFeed({
               <div className="flex items-baseline gap-2 text-[13px]">
                 {o ? (
                   <span className="min-w-0 flex-1 truncate">
-                    <a href={`/a/${o.ahead.id}`} className="hover:text-red">
+                    <Link href={`/a/${o.ahead.id}`} className="hover:text-red">
                       {o.ahead.name}
-                    </a>{" "}
+                    </Link>{" "}
                     <span className="font-mono text-red">{signed(o.amount)}</span>
                     <span className="text-muted"> from </span>
-                    <a href={`/a/${o.behind.id}`} className="text-muted hover:text-red">
+                    <Link href={`/a/${o.behind.id}`} className="text-muted hover:text-red">
                       {o.behind.name}
-                    </a>
+                    </Link>
                   </span>
                 ) : (
                   <span className="min-w-0 flex-1 truncate">
-                    <a href={`/a/${m.a.id}`} className="hover:text-red">
+                    <Link href={`/a/${m.a.id}`} className="hover:text-red">
                       {m.a.name}
-                    </a>
+                    </Link>
                     <span className="text-muted"> level with </span>
-                    <a href={`/a/${m.b.id}`} className="hover:text-red">
+                    <Link href={`/a/${m.b.id}`} className="hover:text-red">
                       {m.b.name}
-                    </a>
+                    </Link>
                   </span>
                 )}
                 {m.exhibition ? (
@@ -145,7 +146,7 @@ export function LiveFeed({
                 ) : null}
                 <span className="shrink-0 font-mono text-[11px] text-muted">{now === null ? "" : ago(m.createdAt, now)}</span>
               </div>
-              <a href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 text-[12px] leading-5">
+              <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 text-[12px] leading-5">
                 {bluff ? (
                   <span className="shrink-0 border border-red px-1 font-mono text-[9px] uppercase tracking-wider text-red">
                     bluff
@@ -155,7 +156,7 @@ export function LiveFeed({
                   {m.headline ?? `${m.rounds} rounds, ${m.exhibition ? "nothing staked" : `staked ${m.stake}`}`}
                 </span>
                 <span className="shrink-0 text-red">hand →</span>
-              </a>
+              </Link>
             </li>
           );
         })}

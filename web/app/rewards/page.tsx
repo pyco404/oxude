@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Page } from "@/app/site-header";
@@ -111,9 +112,9 @@ function RewardsSection({ r }: { r: Rewards }) {
                     <td className="px-3 py-2 font-mono">{p.rank ?? "—"}</td>
                     <td className="px-3 py-2">
                       {p.agentId ? (
-                        <a href={`/a/${p.agentId}`} className="text-red">
+                        <Link href={`/a/${p.agentId}`} className="text-red">
                           {p.agentId.slice(0, 8)}
-                        </a>
+                        </Link>
                       ) : (
                         "—"
                       )}
