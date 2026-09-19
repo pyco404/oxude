@@ -193,6 +193,28 @@ describe("the worker", () => {
     await c();
   });
 
+  it("gives up on an op no instruction can take any more, instead of retrying it forever", async () => {
+    const { db: d, close: c } = await fresh();
+    const a = await createAgent(d, { name: "Legacy", presetName: "Anchor" });
+    // As the old server queued them: a vault op with no salt, and a separate owner record.
+    await d.update(chainOps).set({ salt: null }).where(eq(chainOps.agentId, a.id));
+    await d.insert(chainOps).values({ kind: "register_owner", agentId: a.id, owner: "who", amount: 0 });
+    const b = await createAgent(d, { name: "Current", presetName: "Bully" });
+
+    const chain = new FakeChain();
+    const pass = await drainChainOps(d, chain);
+    expect(pass.stoppedAt).toBeNull();
+    const ops = await d.select().from(chainOps).orderBy(asc(chainOps.seq));
+    expect(ops.filter((o) => o.agentId === a.id).map((o) => o.status)).toEqual(["failed", "failed"]);
+    expect(ops.find((o) => o.agentId === a.id)!.lastError).toMatch(/no salt/);
+    // The agent queued after them opened all the same.
+    expect(await chain.hasVault(b.id)).toBe(true);
+    // And they are not tried again.
+    const again = await drainChainOps(d, chain);
+    expect(again.deferred).toBe(0);
+    await c();
+  });
+
   it("does not submit twice when an earlier attempt landed but was never confirmed", async () => {
     const { db: d, close: c } = await fresh();
     const a = await createAgent(d, { name: "A", presetName: "Anchor" });

@@ -54,13 +54,22 @@ async function alreadyDone(chain: ChainPort, op: ChainOpRow): Promise<boolean> {
 }
 
 async function submit(chain: ChainPort, op: ChainOpRow): Promise<string> {
-  if (op.kind === "open_vault") {
-    if (!op.salt) throw new Error("this vault op has no salt; the program opens only vaults whose id derives from one");
-    return chain.openVault({ agentId: op.agentId!, owner: op.owner, salt: op.salt, amount: op.amount });
-  }
-  // Owners are recorded as their vault opens now; an old record that never landed can't be made any more.
-  if (op.kind === "register_owner") throw new Error("register_owner is no longer an instruction");
+  if (op.kind === "open_vault") return chain.openVault({ agentId: op.agentId!, owner: op.owner, salt: op.salt!, amount: op.amount });
   return chain.settle({ matchId: op.matchId!, fromAgent: op.fromAgent!, toAgent: op.toAgent!, amount: op.amount });
+}
+
+/**
+ * Why this op can never be sent, if so. Both cases are ops queued by an older
+ * version of the server: the program now opens vaults only under an id derived
+ * from an owner and salt, and records the owner as it does, so there is no
+ * instruction left to send these to. They are marked failed rather than
+ * retried forever, so they don't hold up the queue; the ledger is unaffected,
+ * and `reconcile` reports the agent as a disagreement to look at.
+ */
+function unsendable(op: ChainOpRow): string | null {
+  if (op.kind === "open_vault" && !op.salt) return "queued before ids were derived from owners: it has no salt, so no vault can be opened under it";
+  if (op.kind === "register_owner") return "owners are recorded as their vault opens; register_owner is no longer an instruction";
+  return null;
 }
 
 /** A refusal the program will give again on any retry: retrying is pointless. */
@@ -115,6 +124,13 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
       if (op.kind === "withdraw") {
         const outcome = await settleWithdrawal(db, chain, op);
         if (outcome === "done") result.confirmed++;
+        continue;
+      }
+      const dead = unsendable(op);
+      if (dead && !(await alreadyDone(chain, op))) {
+        await db.update(chainOps).set({ status: "failed", lastError: dead, updatedAt: new Date() }).where(eq(chainOps.id, op.id));
+        result.error ??= dead;
+        result.deferred++;
         continue;
       }
       if (await alreadyDone(chain, op)) {
