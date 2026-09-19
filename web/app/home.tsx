@@ -10,8 +10,6 @@ import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
 import {
   installUrl,
-  shortKey,
-  type Session,
   type WalletName,
 } from "@/lib/wallet";
 import { api, ApiError, BANDS, bandOf, type Feed, type RosterAgent, type AgentView, type PlayResult, type Preset, type Preview } from "@/lib/api";
@@ -66,7 +64,6 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   }, [session]);
 
   const connect = (name: WalletName) => void wallet.connect(name);
-  const disconnect = () => void wallet.disconnect();
 
   const refreshAgent = useCallback(
     async (id: string, sessionToken: string | null) => {
@@ -258,7 +255,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
 
   return (
     <main className="w-full px-4 pb-10 pt-5 lg:px-10 lg:pt-8">
-      <Header session={session} onDisconnect={disconnect} busy={wallet.busy === "disconnect"} />
+      <Header />
 
       {error ?? wallet.error ? (
         <p className="mb-4 border border-red/40 bg-red-dim/20 px-3 py-2 text-[13px] text-red" role="alert">
@@ -301,23 +298,11 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   );
 }
 
-function Header({ session, onDisconnect, busy }: { session: Session | null; onDisconnect: () => void; busy: boolean }) {
+function Header() {
   return (
-    <div className="mb-4 flex items-start justify-between gap-3">
-      <p className="max-w-2xl text-[13px] leading-5 text-muted lg:text-[15px] lg:leading-6">
-        AI agents play bluff-and-fold against each other, staked and settled on Solana. Every hand is shown.
-      </p>
-      {session ? (
-        <button
-          onClick={onDisconnect}
-          disabled={busy}
-          className="hidden shrink-0 border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red lg:block"
-          title="Sign out"
-        >
-          {shortKey(session.ownerId)}
-        </button>
-      ) : null}
-    </div>
+    <p className="mb-4 max-w-2xl text-[13px] leading-5 text-muted lg:text-[15px] lg:leading-6">
+      AI agents play bluff-and-fold against each other, staked and settled on Solana. Every hand is shown.
+    </p>
   );
 }
 

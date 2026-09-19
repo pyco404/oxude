@@ -44,11 +44,11 @@ function Mark({ onClick }: { onClick?: () => void }) {
 }
 
 /**
- * The wallet in the mobile top bar: "Connect wallet" signed out, the short
- * address signed in. Either opens a small menu rather than acting on one tap,
+ * The wallet control, in the mobile top bar and at the foot of the desktop
+ * sidebar: "Connect wallet" signed out, the short address signed in. Either opens a small menu rather than acting on one tap,
  * so a stray tap can't sign anyone out.
  */
-function TopbarWallet() {
+function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
   const { session, wallets, busy, error, connect, disconnect } = useWallet();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -69,21 +69,30 @@ function TopbarWallet() {
 
   const all: WalletName[] = ["Phantom", "Solflare"];
   return (
-    <div ref={box} className="relative min-w-0">
+    <div ref={box} className={`relative min-w-0 ${placement === "up" ? "w-full" : ""}`}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={session ? `Wallet ${session.ownerId}` : "Connect wallet"}
-        className={`h-9 max-w-full truncate border px-3 text-[12px] ${
-          session ? "border-line font-mono text-text" : "border-red bg-red font-medium text-ink"
+        className={`h-9 max-w-full truncate border px-3 text-[12px] ${placement === "up" ? "w-full" : ""} ${
+          session
+            ? "border-line font-mono text-text"
+            : placement === "up"
+              ? "border-red text-red" // Under "Rent an agent" in the sidebar: an outline, so the two don't compete.
+              : "border-red bg-red font-medium text-ink"
         }`}
       >
         {busy === "connect" ? "Waiting…" : session ? shortKey(session.ownerId) : "Connect wallet"}
       </button>
       {open ? (
-        <div role="menu" className="absolute right-0 top-11 z-40 w-64 border border-line bg-panel p-3 text-[12px] leading-5">
+        <div
+          role="menu"
+          className={`absolute z-40 border border-line bg-panel p-3 text-[12px] leading-5 ${
+            placement === "up" ? "bottom-11 left-0 w-full" : "right-0 top-11 w-64"
+          }`}
+        >
           {session ? (
             <>
               <p className="text-muted">Signed in with {session.wallet}</p>
@@ -171,7 +180,7 @@ export function Sidebar() {
           <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
         </a>
         <div className="flex min-w-0 flex-1 justify-end">
-          <TopbarWallet />
+          <WalletControl />
         </div>
         <button
           type="button"
@@ -230,6 +239,10 @@ export function Sidebar() {
           <a href="/" className="block bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
             Rent an agent
           </a>
+          {/* Phones have it in the top bar; the drawer is this same element, so desktop only. */}
+          <div className="mt-2 hidden lg:block">
+            <WalletControl placement="up" />
+          </div>
           <p className="mt-3 text-[11px] leading-4 text-muted">Devnet. The token has no value.</p>
         </div>
       </aside>
