@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { ChainClient, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
+import { ChainClient, PROGRAM_ID, pdas, uuidBytes } from "../src/chain/settlement.js";
+import { EventParser } from "@coral-xyz/anchor";
 import { connect, migrate } from "../src/db/client.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
@@ -166,4 +167,139 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect(again.confirmed + again.alreadyOnChain).toBe(0);
     await close();
   }, 120_000);
+
+  describe("withdrawals", () => {
+    /** Registers an owner for a fresh funded vault; returns the agent and owner. */
+    async function ownedVault(amount = 180) {
+      const agent = randomUUID();
+      const owner = Keypair.generate();
+      await chain.openVault(agent, amount);
+      await chain.registerOwner(agent, owner.publicKey.toBase58());
+      return { agent, owner };
+    }
+    /** Builds with the settler's co-signature, adds the owner's, sends. */
+    async function withdraw(
+      input: { agent: string; owner: Keypair; amount: number; remaining: number; id?: string },
+      signAs: Keypair = input.owner,
+      via: ChainClient = chain,
+    ) {
+      const prepared = await via.prepareWithdrawal({
+        withdrawalId: input.id ?? randomUUID(),
+        agentId: input.agent,
+        owner: input.owner.publicKey.toBase58(),
+        amount: input.amount,
+        remaining: input.remaining,
+      });
+      prepared.transaction.partialSign(signAs);
+      const raw = prepared.transaction.serialize();
+      return { raw, signature: await via.submitWithdrawal(raw, prepared.lastValidBlockHeight) };
+    }
+
+    it("records an owner once, and only the settler can", async () => {
+      const agent = randomUUID();
+      await chain.openVault(agent, 50);
+      const intruder = Keypair.generate();
+      await airdrop(intruder, 1);
+      const asIntruder = new ChainClient(connection, intruder);
+      await expect(asIntruder.registerOwner(agent, intruder.publicKey.toBase58())).rejects.toThrow(/Error Code: NotSettler/);
+      const owner = Keypair.generate().publicKey.toBase58();
+      await chain.registerOwner(agent, owner);
+      expect(await chain.ownerOf(agent)).toBe(owner);
+      // Never changed afterwards, not even by the settler.
+      await expect(chain.registerOwner(agent, Keypair.generate().publicKey.toBase58())).rejects.toThrow();
+      expect(await chain.ownerOf(agent)).toBe(owner);
+    });
+
+    it("pays the owner, leaves the vault where the ledger says, and emits an event", async () => {
+      const { agent, owner } = await ownedVault(180);
+      const id = randomUUID();
+      const { signature } = await withdraw({ agent, owner, amount: 50, remaining: 130, id });
+      expect(await chain.vaultBalance(agent)).toBe(130);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(50);
+
+      const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
+      const withdrawn = events.find((e) => e.name === "withdrawn")!;
+      expect(withdrawn).toBeDefined();
+      expect(Array.from(withdrawn.data.withdrawalId as number[])).toEqual(uuidBytes(id));
+      expect((withdrawn.data.owner as { toBase58(): string }).toBase58()).toBe(owner.publicKey.toBase58());
+      expect(Number(withdrawn.data.amount)).toBe(50);
+      expect(Number(withdrawn.data.remaining)).toBe(130);
+    });
+
+    it("refuses anyone but the recorded owner, even with the settler co-signing", async () => {
+      const { agent } = await ownedVault(100);
+      const thief = Keypair.generate();
+      await expect(withdraw({ agent, owner: thief, amount: 40, remaining: 60 })).rejects.toThrow(/Error Code: NotOwner\b/);
+      expect(await chain.vaultBalance(agent)).toBe(100);
+    });
+
+    it("refuses the owner alone: the settler must co-sign", async () => {
+      const { agent, owner } = await ownedVault(100);
+      await airdrop(owner, 1);
+      // The owner builds it themselves, as settler and owner both: the program wants the configured settler.
+      const asOwner = new ChainClient(connection, owner);
+      await expect(withdraw({ agent, owner, amount: 40, remaining: 60 }, owner, asOwner)).rejects.toThrow(/Error Code: NotSettler/);
+      expect(await chain.vaultBalance(agent)).toBe(100);
+    });
+
+    it("refuses to pay into anyone else's token account", async () => {
+      const { agent, owner } = await ownedVault(100);
+      const prepared = await chain.prepareWithdrawal({
+        withdrawalId: randomUUID(),
+        agentId: agent,
+        owner: owner.publicKey.toBase58(),
+        amount: 40,
+        remaining: 60,
+      });
+      // Swap the destination for another wallet's account, then sign it all again.
+      const other = Keypair.generate().publicKey;
+      const { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } = await import("@solana/spl-token");
+      const otherAta = getAssociatedTokenAddressSync(pdas.mint(), other);
+      const ix = prepared.transaction.instructions[1]!;
+      const dest = ix.keys.findIndex((k) => k.pubkey.equals(getAssociatedTokenAddressSync(pdas.mint(), owner.publicKey)));
+      ix.keys[dest] = { ...ix.keys[dest]!, pubkey: otherAta };
+      prepared.transaction.instructions[0] = createAssociatedTokenAccountIdempotentInstruction(settler.publicKey, otherAta, other, pdas.mint());
+      prepared.transaction.signatures = prepared.transaction.signatures.map((s) => ({ ...s, signature: null }));
+      prepared.transaction.partialSign(settler, owner);
+      await expect(chain.submitWithdrawal(prepared.transaction.serialize(), prepared.lastValidBlockHeight)).rejects.toThrow(/Error Code: NotOwnersAccount/);
+      expect(await chain.vaultBalance(agent)).toBe(100);
+    });
+
+    it("refuses while the vault disagrees with the ledger: a match is still settling", async () => {
+      const { agent, owner } = await ownedVault(100);
+      // The ledger already took a 20-chip loss the chain hasn't settled yet: it thinks 80 remain after 30 out.
+      await expect(withdraw({ agent, owner, amount: 30, remaining: 50 })).rejects.toThrow(/Error Code: LedgerMismatch/);
+      expect(await chain.vaultBalance(agent)).toBe(100);
+    });
+
+    it("refuses to leave a vault that can't play: nothing, or at least the minimum stake", async () => {
+      const { agent, owner } = await ownedVault(100);
+      await expect(withdraw({ agent, owner, amount: 95, remaining: 5 })).rejects.toThrow(/Error Code: Unplayable/);
+      expect(await chain.vaultBalance(agent)).toBe(100);
+      await withdraw({ agent, owner, amount: 90, remaining: 10 });
+      expect(await chain.vaultBalance(agent)).toBe(10);
+    });
+
+    it("takes the lot on a full withdrawal", async () => {
+      const { agent, owner } = await ownedVault(70);
+      await withdraw({ agent, owner, amount: 70, remaining: 0 });
+      expect(await chain.vaultBalance(agent)).toBe(0);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(70);
+    });
+
+    it("never pays twice: not the same bytes again, not the same withdrawal id again", async () => {
+      const { agent, owner } = await ownedVault(100);
+      const id = randomUUID();
+      const { raw } = await withdraw({ agent, owner, amount: 40, remaining: 60, id });
+      // The same signed transaction again: the network knows it, and the vault doesn't move.
+      await chain.submitWithdrawal(raw, (await connection.getLatestBlockhash()).lastValidBlockHeight).catch(() => undefined);
+      expect(await chain.vaultBalance(agent)).toBe(60);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(40);
+      // A fresh transaction reusing the withdrawal id: its record already exists.
+      await expect(withdraw({ agent, owner, amount: 40, remaining: 20, id })).rejects.toThrow(/already in use/);
+      expect(await chain.vaultBalance(agent)).toBe(60);
+      expect(await chain.isWithdrawn(id)).toBe(true);
+    });
+  });
 });

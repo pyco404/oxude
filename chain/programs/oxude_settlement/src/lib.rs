@@ -10,7 +10,14 @@
 //! - each match settles at most once, because its record is a PDA seeded by the
 //!   match id and cannot be created twice;
 //! - vaults are PDAs whose authority is the config PDA, so no private key -
-//!   the server's included - can move vault funds except through `settle`.
+//!   the server's included - can move vault funds except through `settle`
+//!   and `withdraw`;
+//! - a withdrawal needs the agent's owner to sign, checked against the owner
+//!   recorded on chain (set once, never changed), and the settler to co-sign;
+//!   it goes only to the owner's own token account, must leave the vault at
+//!   exactly the balance the ledger says (so an unsettled match makes it
+//!   refuse), must leave it empty or playable, and happens at most once per
+//!   withdrawal id.
 //!
 //! No model is involved in anything here. An agent's decision table produces a
 //! match result off chain; the server validates it; only then does the settler
@@ -25,6 +32,11 @@ pub const CONFIG_SEED: &[u8] = b"config";
 pub const MINT_SEED: &[u8] = b"mint";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const SETTLEMENT_SEED: &[u8] = b"settlement";
+pub const OWNER_SEED: &[u8] = b"owner";
+pub const WITHDRAWAL_SEED: &[u8] = b"withdrawal";
+/// The smallest stake a match can have. A vault left with less than this
+/// could never play again, so a withdrawal must leave nothing or at least this.
+pub const MIN_STAKE: u64 = 10;
 
 #[program]
 pub mod oxude_settlement {
@@ -106,6 +118,63 @@ pub mod oxude_settlement {
         emit!(Settled { match_id, from_agent, to_agent, amount });
         Ok(())
     }
+
+    /// Records who owns an agent. Settler-only, and only once per agent: the
+    /// record is a PDA that cannot be created twice, so an owner once set can
+    /// never be changed - not by the server, not by anyone.
+    pub fn register_owner(ctx: Context<RegisterOwner>, agent_id: [u8; 16], owner: Pubkey) -> Result<()> {
+        let record = &mut ctx.accounts.agent_owner;
+        record.agent_id = agent_id;
+        record.owner = owner;
+        record.bump = ctx.bumps.agent_owner;
+        emit!(OwnerRegistered { agent_id, owner });
+        Ok(())
+    }
+
+    /// Moves tokens from an agent's vault to its owner. The owner must sign,
+    /// and must be the owner recorded on chain; the settler co-signs to say
+    /// nothing is in flight. `remaining` is what the ledger says the vault
+    /// holds afterwards: if the vault disagrees, a settlement hasn't landed yet
+    /// and this refuses. The vault is left empty or playable, never between.
+    pub fn withdraw(
+        ctx: Context<Withdraw>,
+        withdrawal_id: [u8; 16],
+        agent_id: [u8; 16],
+        amount: u64,
+        remaining: u64,
+    ) -> Result<()> {
+        require!(amount > 0, OxudeError::ZeroAmount);
+        let held = ctx.accounts.vault.amount;
+        require!(held >= amount, OxudeError::InsufficientVault);
+        require!(held - amount == remaining, OxudeError::LedgerMismatch);
+        require!(remaining == 0 || remaining >= MIN_STAKE, OxudeError::Unplayable);
+
+        let bump = ctx.accounts.config.bump;
+        let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[bump]]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.destination.to_account_info(),
+                    authority: ctx.accounts.config.to_account_info(),
+                },
+                signer,
+            ),
+            amount,
+        )?;
+
+        let record = &mut ctx.accounts.withdrawal;
+        record.withdrawal_id = withdrawal_id;
+        record.agent_id = agent_id;
+        record.owner = ctx.accounts.owner.key();
+        record.amount = amount;
+        record.remaining = remaining;
+        record.slot = Clock::get()?.slot;
+        record.bump = ctx.bumps.withdrawal;
+        emit!(Withdrawn { withdrawal_id, agent_id, owner: record.owner, amount, remaining });
+        Ok(())
+    }
 }
 
 #[account]
@@ -129,6 +198,28 @@ pub struct Settlement {
     pub from_agent: [u8; 16],
     pub to_agent: [u8; 16],
     pub amount: u64,
+    pub slot: u64,
+    pub bump: u8,
+}
+
+/// One per agent with an owner: who may withdraw from its vault.
+#[account]
+#[derive(InitSpace)]
+pub struct AgentOwner {
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+    pub bump: u8,
+}
+
+/// One per withdrawal: its existence is what stops a withdrawal paying twice.
+#[account]
+#[derive(InitSpace)]
+pub struct Withdrawal {
+    pub withdrawal_id: [u8; 16],
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub remaining: u64,
     pub slot: u64,
     pub bump: u8,
 }
@@ -190,6 +281,75 @@ pub struct Settle<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+#[derive(Accounts)]
+#[instruction(agent_id: [u8; 16])]
+pub struct RegisterOwner<'info> {
+    #[account(mut)]
+    pub settler: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler)]
+    pub config: Account<'info, Config>,
+    /// The agent must have a vault: an owner for nothing is meaningless.
+    #[account(seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = settler,
+        space = 8 + AgentOwner::INIT_SPACE,
+        seeds = [OWNER_SEED, agent_id.as_ref()],
+        bump
+    )]
+    pub agent_owner: Account<'info, AgentOwner>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(withdrawal_id: [u8; 16], agent_id: [u8; 16])]
+pub struct Withdraw<'info> {
+    /// Co-signs to say nothing is in flight, and pays the fees and rent.
+    #[account(mut)]
+    pub settler: Signer<'info>,
+    /// Must be the owner recorded on chain for this agent.
+    pub owner: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler)]
+    pub config: Account<'info, Config>,
+    #[account(seeds = [OWNER_SEED, agent_id.as_ref()], bump = agent_owner.bump, has_one = owner @ OxudeError::NotOwner)]
+    pub agent_owner: Account<'info, AgentOwner>,
+    #[account(mut, seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
+    pub vault: Account<'info, TokenAccount>,
+    /// The owner's own token account for the game currency, and nobody else's.
+    #[account(
+        mut,
+        token::mint = config.mint,
+        constraint = destination.owner == owner.key() @ OxudeError::NotOwnersAccount
+    )]
+    pub destination: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = settler,
+        space = 8 + Withdrawal::INIT_SPACE,
+        seeds = [WITHDRAWAL_SEED, withdrawal_id.as_ref()],
+        bump
+    )]
+    pub withdrawal: Account<'info, Withdrawal>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[event]
+pub struct OwnerRegistered {
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+}
+
+#[event]
+pub struct Withdrawn {
+    pub withdrawal_id: [u8; 16],
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub remaining: u64,
+}
+
 #[event]
 pub struct VaultOpened {
     pub agent_id: [u8; 16],
@@ -218,4 +378,12 @@ pub enum OxudeError {
     InsufficientVault,
     #[msg("Limit must be greater than zero")]
     InvalidLimit,
+    #[msg("Only the agent's recorded owner can withdraw")]
+    NotOwner,
+    #[msg("Withdrawals go only to the owner's own token account")]
+    NotOwnersAccount,
+    #[msg("The vault doesn't match the ledger: a settlement is still in flight")]
+    LedgerMismatch,
+    #[msg("A withdrawal must leave the vault empty or with at least the minimum stake")]
+    Unplayable,
 }

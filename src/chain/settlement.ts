@@ -2,9 +2,13 @@ import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
 // From bn.js directly: under plain Node ESM, @coral-xyz/anchor only exposes BN
 // on its default export, so a named import works in vitest and fails in tsx.
 import BN from "bn.js";
-import { getAccount } from "@solana/spl-token";
-import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAccount,
+  getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { readFileSync } from "node:fs";
 import idl from "./idl.json" with { type: "json" };
 import type { OxudeSettlement } from "./idl-types.js";
@@ -32,6 +36,17 @@ export const pdas = {
     PublicKey.findProgramAddressSync([Buffer.from("vault"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
   settlement: (matchId: string) =>
     PublicKey.findProgramAddressSync([Buffer.from("settlement"), Buffer.from(uuidBytes(matchId))], PROGRAM_ID)[0],
+  owner: (agentId: string) =>
+    PublicKey.findProgramAddressSync([Buffer.from("owner"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
+  withdrawal: (withdrawalId: string) =>
+    PublicKey.findProgramAddressSync([Buffer.from("withdrawal"), Buffer.from(uuidBytes(withdrawalId))], PROGRAM_ID)[0],
+};
+
+/** A withdrawal built and co-signed by the settler, waiting for the owner's signature. */
+export type PreparedWithdrawal = {
+  transaction: Transaction;
+  /** After this block height the transaction can never land, signed or not. */
+  lastValidBlockHeight: number;
 };
 
 export function loadKeypair(path: string): Keypair {
@@ -117,5 +132,98 @@ export class ChainClient {
 
   async config() {
     return this.program.account.config.fetch(pdas.config());
+  }
+
+  /** Records an agent's owner on chain. Once per agent; the program refuses a second time. */
+  async registerOwner(agentId: string, owner: string): Promise<string> {
+    return this.program.methods
+      .registerOwner(uuidBytes(agentId), new PublicKey(owner))
+      .accountsPartial({
+        settler: this.signer.publicKey,
+        config: pdas.config(),
+        vault: pdas.vault(agentId),
+        agentOwner: pdas.owner(agentId),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+  }
+
+  /** The owner recorded on chain for an agent, or null if none has been. */
+  async ownerOf(agentId: string): Promise<string | null> {
+    const record = await this.program.account.agentOwner.fetchNullable(pdas.owner(agentId), "confirmed");
+    return record ? record.owner.toBase58() : null;
+  }
+
+  /**
+   * Builds a withdrawal: make sure the owner has a token account for the game
+   * currency, then withdraw into it. The settler pays and co-signs; the owner's
+   * signature is the one thing still missing. `remaining` is the ledger's
+   * balance after the withdrawal, which the program checks against the vault.
+   */
+  async prepareWithdrawal(input: {
+    withdrawalId: string;
+    agentId: string;
+    owner: string;
+    amount: number;
+    remaining: number;
+  }): Promise<PreparedWithdrawal> {
+    const owner = new PublicKey(input.owner);
+    const mint = pdas.mint();
+    const destination = getAssociatedTokenAddressSync(mint, owner);
+    const withdraw = await this.program.methods
+      .withdraw(uuidBytes(input.withdrawalId), uuidBytes(input.agentId), new BN(input.amount), new BN(input.remaining))
+      .accountsPartial({
+        settler: this.signer.publicKey,
+        owner,
+        config: pdas.config(),
+        agentOwner: pdas.owner(input.agentId),
+        vault: pdas.vault(input.agentId),
+        destination,
+        withdrawal: pdas.withdrawal(input.withdrawalId),
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .instruction();
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash("confirmed");
+    const transaction = new Transaction({ feePayer: this.signer.publicKey, blockhash, lastValidBlockHeight }).add(
+      createAssociatedTokenAccountIdempotentInstruction(this.signer.publicKey, destination, owner, mint),
+      withdraw,
+    );
+    transaction.partialSign(this.signer);
+    return { transaction, lastValidBlockHeight };
+  }
+
+  /**
+   * Sends a fully signed withdrawal and waits for it. Sending the same bytes
+   * again is harmless: it is the same transaction, and the withdrawal record
+   * means its effect can only happen once.
+   */
+  async submitWithdrawal(raw: Uint8Array, lastValidBlockHeight: number): Promise<string> {
+    const signature = await this.connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 5 });
+    const { recentBlockhash: blockhash } = Transaction.from(raw);
+    const result = await this.connection.confirmTransaction(
+      { signature, blockhash: blockhash!, lastValidBlockHeight },
+      "confirmed",
+    );
+    if (result.value.err) throw new Error(`withdrawal failed on chain: ${JSON.stringify(result.value.err)}`);
+    return signature;
+  }
+
+  async isWithdrawn(withdrawalId: string): Promise<boolean> {
+    return (await this.connection.getAccountInfo(pdas.withdrawal(withdrawalId), "confirmed")) !== null;
+  }
+
+  /** True once no transaction built before now can land any more. */
+  async blockHeightPassed(lastValidBlockHeight: number): Promise<boolean> {
+    return (await this.connection.getBlockHeight("confirmed")) > lastValidBlockHeight;
+  }
+
+  async tokenBalance(owner: string): Promise<number> {
+    try {
+      const account = await getAccount(this.connection, getAssociatedTokenAddressSync(pdas.mint(), new PublicKey(owner)), "confirmed");
+      return Number(account.amount);
+    } catch {
+      return 0;
+    }
   }
 }
