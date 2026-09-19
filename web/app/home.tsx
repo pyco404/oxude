@@ -43,7 +43,8 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const [firstFreeUsed, setFirstFreeUsed] = useState(false);
   const [ceiling, setCeiling] = useState(60);
   const [presetRatings, setPresetRatings] = useState<Record<string, number>>({});
-  const [roster, setRoster] = useState<RosterAgent[] | null>([]);
+  // undefined while loading, null if the request failed: neither may read as "nobody here".
+  const [roster, setRoster] = useState<RosterAgent[] | null | undefined>(undefined);
   // Set once the player moves the slider, so the busiest-band default never overrides a choice.
   const ceilingTouched = useRef(false);
   const [transcript, setTranscript] = useState<string>("");
@@ -287,7 +288,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />
       <RosterPanel
         band={band}
-        agents={roster === null ? null : roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId))}
+        agents={roster ? roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId)) : roster}
         fromAgent={Boolean(agent)}
       />
       <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} />
@@ -592,7 +593,15 @@ function Behaviour({ table, delayMs = 0 }: { table: Record<string, Record<string
 }
 
 /** Who you would meet: the agents in your band. */
-function RosterPanel({ band, agents, fromAgent }: { band: string; agents: RosterAgent[] | null; fromAgent: boolean }) {
+function RosterPanel({
+  band,
+  agents,
+  fromAgent,
+}: {
+  band: string;
+  agents: RosterAgent[] | null | undefined;
+  fromAgent: boolean;
+}) {
   return (
     <section className="mt-3 border border-line bg-panel">
       <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
@@ -605,7 +614,9 @@ function RosterPanel({ band, agents, fromAgent }: { band: string; agents: Roster
             ? "Your ceiling puts you in this band. You are only matched inside it."
             : "The ceiling you rent at decides the band. You are only matched inside it."}
         </p>
-        {agents === null ? (
+        {agents === undefined ? (
+          <p className="text-[13px] text-muted">Loading…</p>
+        ) : agents === null ? (
           <p className="text-[13px] text-muted">Couldn&apos;t reach the server. Try again in a moment.</p>
         ) : agents.length === 0 ? (
           <p className="text-[13px] text-muted">Nobody in this band right now.</p>
