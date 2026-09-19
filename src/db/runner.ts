@@ -1,4 +1,5 @@
-import { and, desc, eq, gt, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { firstFreeMark } from "../marks.js";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
 import { OXUDE_RULES, type Stakes } from "../round.js";
@@ -111,8 +112,45 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
   await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, amount: seed });
   // A player's agent gets its owner recorded on chain too, after the vault: that's who can withdraw.
   if (row!.ownerId) await tx.insert(chainOps).values({ kind: "register_owner", agentId: row!.id, owner: row!.ownerId, amount: 0 });
-  return row!;
+  // Its emoji, unique across all agents, chosen with the agent.
+  return { ...row!, mark: await assignMark(tx as unknown as Db, row!.id) };
   });
+}
+
+/**
+ * Gives an agent the first mark its id leads to that no agent has yet
+ * (src/marks.ts). A unique index backs it: if a concurrent rental takes the
+ * same mark first, this one moves on to its next candidate.
+ */
+export async function assignMark(db: Db, agentId: string): Promise<string> {
+  const taken = new Set(
+    (await db.select({ mark: agents.mark }).from(agents).where(isNotNull(agents.mark))).map((r) => r.mark!),
+  );
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const mark = firstFreeMark(agentId, taken);
+    try {
+      // A savepoint, so a clash doesn't abort the surrounding transaction.
+      await db.transaction(async (sp) => {
+        await sp.update(agents).set({ mark }).where(eq(agents.id, agentId));
+      });
+      return mark;
+    } catch (error) {
+      if (!/agents_mark_unique|duplicate key|23505/.test(String((error as { cause?: unknown }).cause ?? error))) throw error;
+      taken.add(mark);
+    }
+  }
+  throw new Error(`could not give ${agentId} a unique mark`);
+}
+
+/** Marks every agent that has none, oldest first: the backfill, and harmless to run again. */
+export async function assignMissingMarks(db: Db): Promise<number> {
+  const missing = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(isNull(agents.mark))
+    .orderBy(agents.createdAt, agents.id);
+  for (const { id } of missing) await assignMark(db, id);
+  return missing.length;
 }
 
 /** A uint32, which is what the engine's PRNG takes. */
@@ -405,6 +443,7 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
       agentId: agents.id,
       name: agents.name,
       presetName: agents.presetName,
+      mark: agents.mark,
       matchesPlayed: ratings.matchesPlayed,
       cumulativeNet: ratings.cumulativeNet,
       netPerMatch,
@@ -441,6 +480,7 @@ export async function publicAgent(db: Db, agentId: string) {
       agentId: agents.id,
       name: agents.name,
       presetName: agents.presetName,
+      mark: agents.mark,
       createdAt: agents.createdAt,
       retiredAt: agents.retiredAt,
       matchesPlayed: ratings.matchesPlayed,
@@ -485,6 +525,7 @@ export async function roster(db: Db, options: { band?: CeilingBand; limit?: numb
       agentId: agents.id,
       name: agents.name,
       presetName: agents.presetName,
+      mark: agents.mark,
       maxStake: agents.maxStake,
       matchesPlayed: ratings.matchesPlayed,
       cumulativeNet: ratings.cumulativeNet,

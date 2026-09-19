@@ -457,6 +457,8 @@ describe("sharing and the roster", () => {
     const match = await readBody(await api(`/matches/${played.matchId}`, { owner: null }));
     expect(match.summary.names.A).toBe("Sharer");
     expect(match.summary.presets.A).toBe("Mirage");
+    expect(typeof match.summary.marks.A).toBe("string");
+    expect(match.summary.marks.A).not.toBe(match.summary.marks.B);
     expect(match.match.agentA.presetName).toBe("Mirage");
     expect(match.summary.netA + match.summary.netB).toBe(0);
     expect(match.summary.rounds).toBe(match.log.rounds.length);
@@ -609,6 +611,9 @@ describe("match feed and agent pages", () => {
     // Playstyle rides along for display: null for a brief, the preset's name otherwise.
     expect(mine.a.presetName).toBeNull();
     expect(["Anchor", "Hammer", "Mirage", "Bully"]).toContain(mine.b.presetName);
+    // Every agent has its own mark.
+    expect(typeof mine.a.mark).toBe("string");
+    expect(mine.a.mark).not.toBe(mine.b.mark);
     expect(mine.netA + mine.netB).toBe(0);
     expect("headline" in mine && "beat" in mine).toBe(true);
     if (feed.bluff) expect(feed.bluff.beat).toBe("bluff-worked");

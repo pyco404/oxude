@@ -48,6 +48,8 @@ export const agents = pgTable(
      * The owner's per-match ceiling. It decides which band the agent plays in,
      * and so who it meets; it does not cap what a match settles.
      */
+    /** The agent's emoji: its identity at a glance, unique across all agents. See src/marks.ts. */
+    mark: text("mark").unique(),
     maxStake: integer("max_stake").notNull().default(60),
     /**
      * Exact expected net against the roster, from the calculator. Private: shown

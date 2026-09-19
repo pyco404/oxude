@@ -1,7 +1,7 @@
 import "./env.js";
 import { connect, migrate } from "../src/db/client.js";
 import { listen } from "../src/http/server.js";
-import { createAgent, CEILING_BANDS } from "../src/db/runner.js";
+import { assignMissingMarks, createAgent, CEILING_BANDS } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { agents } from "../src/db/schema.js";
 import { mulberry32, PRESET_NAMES } from "../src/index.js";
@@ -36,6 +36,9 @@ if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1))
   }
   console.log(`Seeded a house roster of ${rosterSize} agents across ${ceilings.length} bands`);
 }
+// Every agent has its own emoji; agents from before marks existed get theirs now, oldest first.
+const marked = await assignMissingMarks(db);
+if (marked) console.log(`Gave ${marked} agents their marks`);
 // Brings stored ratings up to date if the roster or the way ratings are computed changed.
 const rerated = await refreshTrueRatings(db);
 if (rerated) console.log(`Re-rated ${rerated} agents`);

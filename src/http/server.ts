@@ -289,11 +289,15 @@ export function createApp(options: AppOptions): Server {
       throw error;
     }
     const { match, log, stake, settled, retired } = played;
-    const [opponent] = await db.select({ name: agents.name }).from(agents).where(eq(agents.id, pick.opponentId)).limit(1);
+    const [opponent] = await db
+      .select({ name: agents.name, presetName: agents.presetName, mark: agents.mark })
+      .from(agents)
+      .where(eq(agents.id, pick.opponentId))
+      .limit(1);
     const after = await publicAgent(db, id);
     return {
       matchId: match.id,
-      opponent: { id: pick.opponentId, name: opponent?.name },
+      opponent: { id: pick.opponentId, name: opponent?.name, presetName: opponent?.presetName ?? null, mark: opponent?.mark ?? null },
       matchmaking: { path: pick.path, candidates: pick.candidates, ratingGap: pick.ratingGap },
       stake,
       result: {
@@ -337,11 +341,11 @@ export function createApp(options: AppOptions): Server {
     const sides = await Promise.all(
       [row.agentA, row.agentB].map(async (agentId) => {
         const [a] = await db
-          .select({ name: agents.name, presetName: agents.presetName })
+          .select({ name: agents.name, presetName: agents.presetName, mark: agents.mark })
           .from(agents)
           .where(eq(agents.id, agentId))
           .limit(1);
-        return { name: a?.name ?? "unknown", presetName: a?.presetName ?? null };
+        return { name: a?.name ?? "unknown", presetName: a?.presetName ?? null, mark: a?.mark ?? null };
       }),
     );
     const names = sides.map((x) => x.name);
@@ -349,8 +353,8 @@ export function createApp(options: AppOptions): Server {
     return {
       match: {
         id: row.id,
-        agentA: { id: row.agentA, name: names[0], presetName: sides[0]!.presetName },
-        agentB: { id: row.agentB, name: names[1], presetName: sides[1]!.presetName },
+        agentA: { id: row.agentA, name: names[0], presetName: sides[0]!.presetName, mark: sides[0]!.mark },
+        agentB: { id: row.agentB, name: names[1], presetName: sides[1]!.presetName, mark: sides[1]!.mark },
         seed: row.seed,
         rules: row.rulesConfig,
         winner: row.winner,
@@ -366,6 +370,8 @@ export function createApp(options: AppOptions): Server {
         names: displayNames,
         /** Which preset each side plays; null for a custom brief. */
         presets: { A: sides[0]!.presetName, B: sides[1]!.presetName },
+        /** Each side's emoji, its identity. */
+        marks: { A: sides[0]!.mark, B: sides[1]!.mark },
         netA: row.netA,
         netB: row.netB,
         winner: row.winner,
