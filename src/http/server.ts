@@ -22,7 +22,7 @@ import {
   bandCounts,
 } from "../db/runner.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
-import { agentRecord, latestBluff, recentMatches } from "../db/feed.js";
+import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
 import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { settlementStatus } from "../chain/worker.js";
@@ -118,6 +118,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
     ["GET", /^\/agents\/([^/]+)\/matches$/, getAgentMatches],
     ["GET", /^\/ladder$/, getLadder],
+    ["GET", /^\/stats$/, getStats],
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
     ["POST", /^\/preview$/, postPreview],
@@ -384,6 +385,11 @@ export function createApp(options: AppOptions): Server {
     if (!(await publicAgent(db, id))) throw new HttpError(404, "no such agent");
     const limit = Number(ctx.query.get("limit") ?? 20) || 20;
     return { record: await agentRecord(db, id), matches: await recentMatches(db, { limit, agentId: id }) };
+  }
+
+  /** Public: platform-wide activity in staked matches. */
+  async function getStats() {
+    return { activity: await matchActivity(db) };
   }
 
   async function getLadder(ctx: Ctx) {

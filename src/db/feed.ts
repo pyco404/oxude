@@ -115,3 +115,31 @@ export async function agentRecord(db: Db, agentId: string): Promise<{ wins: numb
     .where(and(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)), eq(matches.exhibition, false)));
   return { wins: Number(row?.wins ?? 0), losses: Number(row?.losses ?? 0), level: Number(row?.level ?? 0) };
 }
+
+/**
+ * Platform-wide match activity, staked matches only (exhibitions stake nothing).
+ * Stakes are zero-sum between agents, so there is no platform take to report.
+ */
+export async function matchActivity(db: Db): Promise<{
+  stakedMatches: number;
+  /** Chips put at risk, both sides counted. */
+  totalStaked: number;
+  /** The most chips that changed hands in one match. */
+  largestPot: number;
+  exhibitions: number;
+}> {
+  const [row] = await db
+    .select({
+      staked: sql<number>`count(*) filter (where not ${matches.exhibition})::int`,
+      totalStaked: sql<number>`coalesce(sum(${matches.stake} * 2) filter (where not ${matches.exhibition}), 0)::bigint`,
+      largest: sql<number>`coalesce(max(abs(${matches.netA})) filter (where not ${matches.exhibition}), 0)::int`,
+      exhibitions: sql<number>`count(*) filter (where ${matches.exhibition})::int`,
+    })
+    .from(matches);
+  return {
+    stakedMatches: Number(row?.staked ?? 0),
+    totalStaked: Number(row?.totalStaked ?? 0),
+    largestPot: Number(row?.largest ?? 0),
+    exhibitions: Number(row?.exhibitions ?? 0),
+  };
+}

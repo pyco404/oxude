@@ -4,7 +4,7 @@ import { connect, migrate } from "../src/db/client.js";
 import { agents, chainOps, ledger, matches, ratings } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runExhibition, runMatch } from "../src/db/runner.js";
-import { agentRecord, recentMatches } from "../src/db/feed.js";
+import { agentRecord, matchActivity, recentMatches } from "../src/db/feed.js";
 import { pickHousePair, startHouseExhibitions } from "../src/db/house.js";
 import { StakeError } from "../src/db/ledger.js";
 
@@ -103,6 +103,22 @@ describe("house exhibitions", () => {
     } finally {
       loop.stop();
     }
+    await close();
+  });
+
+  it("leave platform activity to staked matches only", async () => {
+    const { db, close } = await fresh();
+    const a = await createAgent(db, { name: "HouseA", presetName: "Mirage" });
+    const b = await createAgent(db, { name: "HouseB", presetName: "Bully" });
+    for (let seed = 1; seed <= 3; seed++) await runExhibition(db, a.id, b.id, { seed });
+    expect(await matchActivity(db)).toEqual({ stakedMatches: 0, totalStaked: 0, largestPot: 0, exhibitions: 3 });
+
+    const played = await runMatch(db, a.id, b.id, { seed: 5 });
+    const activity = await matchActivity(db);
+    expect(activity.stakedMatches).toBe(1);
+    expect(activity.totalStaked).toBe(played.stake * 2);
+    expect(activity.largestPot).toBe(Math.abs(played.settled.A));
+    expect(activity.exhibitions).toBe(3);
     await close();
   });
 });
