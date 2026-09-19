@@ -1,7 +1,8 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { balancesOf } from "../db/ledger.js";
-import { agents, chainOps, type ChainOpRow } from "../db/schema.js";
+import { agents, chainOps, withdrawals, type ChainOpRow } from "../db/schema.js";
+import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
 
 /**
  * Drains the outbox into the settlement program, strictly in order.
@@ -23,6 +24,12 @@ export type ChainPort = {
   hasVault(agentId: string): Promise<boolean>;
   isSettled(matchId: string): Promise<boolean>;
   vaultBalance(agentId: string): Promise<number | null>;
+  registerOwner(agentId: string, owner: string): Promise<string>;
+  ownerOf(agentId: string): Promise<string | null>;
+  submitWithdrawal(raw: Uint8Array, lastValidBlockHeight: number): Promise<string>;
+  isWithdrawn(withdrawalId: string): Promise<boolean>;
+  /** True once no transaction with this last valid block height can land any more. */
+  blockHeightPassed(lastValidBlockHeight: number): Promise<boolean>;
   /** Recovers the signature of a settlement that landed while its confirmation was lost. */
   settlementSignature?(matchId: string): Promise<string | null>;
 };
@@ -31,12 +38,52 @@ export type DrainResult = { confirmed: number; alreadyOnChain: number; stoppedAt
 
 async function alreadyDone(chain: ChainPort, op: ChainOpRow): Promise<boolean> {
   if (op.kind === "open_vault") return chain.hasVault(op.agentId!);
+  if (op.kind === "register_owner") return (await chain.ownerOf(op.agentId!)) !== null;
   return chain.isSettled(op.matchId!);
 }
 
 async function submit(chain: ChainPort, op: ChainOpRow): Promise<string> {
   if (op.kind === "open_vault") return chain.openVault(op.agentId!, op.amount);
+  if (op.kind === "register_owner") return chain.registerOwner(op.agentId!, op.owner!);
   return chain.settle({ matchId: op.matchId!, fromAgent: op.fromAgent!, toAgent: op.toAgent!, amount: op.amount });
+}
+
+/** A refusal the program will give again on any retry: retrying is pointless. */
+const refusedByProgram = (message: string) => /Error Code:|custom program error/i.test(message);
+
+/**
+ * A withdrawal's op: send the owner-signed transaction (the same bytes as ever,
+ * so sending twice is harmless, and the program pays a withdrawal once). Done
+ * when its record exists on chain. If it can never land - the blockhash has
+ * expired unsent, or the program refused it - the ledger is put back, and the
+ * queue moves on rather than blocking every settlement behind it.
+ */
+async function settleWithdrawal(db: Db, chain: ChainPort, op: ChainOpRow): Promise<"done" | "expired" | "retry"> {
+  const [w] = await db.select().from(withdrawals).where(eq(withdrawals.id, op.withdrawalId!)).limit(1);
+  if (!w || !w.signedTx) {
+    await expireWithdrawal(db, op.withdrawalId!, "no signed transaction on record");
+    return "expired";
+  }
+  if (await chain.isWithdrawn(w.id)) {
+    await markWithdrawn(db, w.id, w.signature);
+    return "done";
+  }
+  try {
+    const signature = await chain.submitWithdrawal(Buffer.from(w.signedTx, "base64"), w.lastValidBlockHeight);
+    await markWithdrawn(db, w.id, signature);
+    return "done";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (await chain.isWithdrawn(w.id)) {
+      await markWithdrawn(db, w.id, null);
+      return "done";
+    }
+    if (refusedByProgram(message) || (await chain.blockHeightPassed(w.lastValidBlockHeight))) {
+      await expireWithdrawal(db, w.id, message);
+      return "expired";
+    }
+    throw error;
+  }
 }
 
 export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?: number } = {}): Promise<DrainResult> {
@@ -50,6 +97,11 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
   const result: DrainResult = { confirmed: 0, alreadyOnChain: 0, stoppedAt: null, error: null };
   for (const op of pending) {
     try {
+      if (op.kind === "withdraw") {
+        const outcome = await settleWithdrawal(db, chain, op);
+        if (outcome === "done") result.confirmed++;
+        continue;
+      }
       if (await alreadyDone(chain, op)) {
         // Without the signature the match page cannot link the transaction.
         const signature =

@@ -1,0 +1,285 @@
+import { Transaction } from "@solana/web3.js";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import type { PreparedWithdrawal } from "../chain/settlement.js";
+import type { Db } from "./client.js";
+import { balanceOf, record } from "./ledger.js";
+import { agents, chainOps, MIN_STAKE, withdrawals, type WithdrawalStatus } from "./schema.js";
+
+/**
+ * Withdrawals from an agent's vault to its owner.
+ *
+ * The ledger stays authoritative. A withdrawal is prepared (the server builds
+ * the transaction and the settler co-signs it), signed by the owner, and only
+ * then recorded: the ledger row, the outbox row and, for the lot, the agent's
+ * retirement, in one database transaction. The program checks everything that
+ * matters again on chain - the owner, the co-signature, that the vault matches
+ * the ledger, that it's left empty or playable, and that the withdrawal pays
+ * once.
+ */
+
+/** What the server needs from the chain to prepare and send a withdrawal. */
+export type WithdrawalChain = {
+  prepareWithdrawal(input: {
+    withdrawalId: string;
+    agentId: string;
+    owner: string;
+    amount: number;
+    remaining: number;
+  }): Promise<PreparedWithdrawal>;
+  submitWithdrawal(raw: Uint8Array, lastValidBlockHeight: number): Promise<string>;
+};
+
+export class WithdrawalError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Ops that touch this agent and haven't landed on chain yet. */
+async function unsettledOps(db: Db, agentId: string) {
+  return db
+    .select({ kind: chainOps.kind, amount: chainOps.amount, fromAgent: chainOps.fromAgent, toAgent: chainOps.toAgent })
+    .from(chainOps)
+    .where(
+      and(
+        eq(chainOps.status, "pending"),
+        or(eq(chainOps.agentId, agentId), eq(chainOps.fromAgent, agentId), eq(chainOps.toAgent, agentId)),
+      ),
+    );
+}
+
+/** A withdrawal submitted and not yet landed or expired: the agent is spoken for until it resolves. */
+export async function openWithdrawal(db: Db, agentId: string) {
+  const [row] = await db
+    .select()
+    .from(withdrawals)
+    .where(and(eq(withdrawals.agentId, agentId), eq(withdrawals.status, "submitted")))
+    .limit(1);
+  return row ?? null;
+}
+
+async function ownerRegistered(db: Db, agentId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: chainOps.id })
+    .from(chainOps)
+    .where(and(eq(chainOps.kind, "register_owner"), eq(chainOps.agentId, agentId), eq(chainOps.status, "confirmed")))
+    .limit(1);
+  return Boolean(row);
+}
+
+export type Withdrawable = {
+  balance: number;
+  /** What can be taken right now. */
+  withdrawable: number;
+  /** Chips still moving on chain in settlements, and so not yet withdrawable. */
+  locked: number;
+  /** The largest partial withdrawal, leaving the minimum stake to play on. */
+  maxPartial: number;
+  minStake: number;
+  /** Why nothing can be taken right now, if so. */
+  reason: string | null;
+};
+
+/** What the owner can take now, and what is locked while matches settle. */
+export async function withdrawable(db: Db, agentId: string): Promise<Withdrawable> {
+  const [agent] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
+  if (!agent) throw new WithdrawalError(404, "no such agent");
+  const balance = await balanceOf(db, agentId);
+  const pending = await unsettledOps(db, agentId);
+  const locked = pending.filter((op) => op.kind === "settle").reduce((sum, op) => sum + op.amount, 0);
+  let reason: string | null = null;
+  if (agent.retiredAt !== null) reason = "this agent is retired";
+  else if (!agent.ownerId) reason = "house agents have no owner";
+  else if (await openWithdrawal(db, agentId)) reason = "a withdrawal is already on its way";
+  else if (pending.some((op) => op.kind === "settle")) reason = "a match is still settling on chain";
+  else if (pending.length > 0 || !(await ownerRegistered(db, agentId))) reason = "the vault is still being set up on chain";
+  else if (balance <= 0) reason = "nothing to withdraw";
+  const available = reason ? 0 : balance;
+  return {
+    balance,
+    withdrawable: available,
+    locked,
+    maxPartial: available >= MIN_STAKE ? available - MIN_STAKE : 0,
+    minStake: MIN_STAKE,
+    reason,
+  };
+}
+
+/**
+ * Builds a withdrawal for the owner to sign. `amount: "all"` takes the lot and
+ * retires the agent; otherwise it must leave at least the minimum stake.
+ */
+export async function prepareWithdrawal(
+  db: Db,
+  chain: WithdrawalChain,
+  input: { agentId: string; ownerId: string; amount: number | "all" },
+) {
+  const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
+  if (!agent) throw new WithdrawalError(404, "no such agent");
+  if (agent.ownerId !== input.ownerId) throw new WithdrawalError(403, "that agent belongs to someone else");
+  const state = await withdrawable(db, input.agentId);
+  if (state.reason) throw new WithdrawalError(409, `can't withdraw now: ${state.reason}`);
+
+  const amount: number = input.amount === "all" ? state.balance : input.amount;
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw new WithdrawalError(400, "amount must be a whole number above zero");
+  if (amount > state.balance) throw new WithdrawalError(400, `only ${state.balance} to withdraw`);
+  const remaining = state.balance - amount;
+  if (remaining !== 0 && remaining < MIN_STAKE) {
+    throw new WithdrawalError(
+      400,
+      `that would leave ${remaining}, too little to play: take it all and retire, or leave at least ${MIN_STAKE}`,
+    );
+  }
+
+  const [row] = await db
+    .insert(withdrawals)
+    .values({
+      agentId: input.agentId,
+      ownerId: input.ownerId,
+      amount,
+      remaining,
+      retire: remaining === 0,
+      preparedTx: "",
+      lastValidBlockHeight: 0,
+    })
+    .returning();
+  const prepared = await chain.prepareWithdrawal({
+    withdrawalId: row!.id,
+    agentId: input.agentId,
+    owner: input.ownerId,
+    amount,
+    remaining,
+  });
+  const preparedTx = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+  await db
+    .update(withdrawals)
+    .set({ preparedTx, lastValidBlockHeight: prepared.lastValidBlockHeight, updatedAt: new Date() })
+    .where(eq(withdrawals.id, row!.id));
+  return { withdrawalId: row!.id, amount, remaining, retire: remaining === 0, transaction: preparedTx };
+}
+
+/**
+ * Takes the owner-signed transaction, checks it is exactly what was prepared
+ * and properly signed, records it, and sends it. The ledger row, the outbox
+ * row and any retirement are written together; the chain follows.
+ */
+export async function submitWithdrawal(
+  db: Db,
+  chain: WithdrawalChain,
+  input: { withdrawalId: string; ownerId: string; signedTx: string },
+): Promise<{ status: WithdrawalStatus; signature: string | null }> {
+  const [w] = await db.select().from(withdrawals).where(eq(withdrawals.id, input.withdrawalId)).limit(1);
+  if (!w) throw new WithdrawalError(404, "no such withdrawal");
+  if (w.ownerId !== input.ownerId) throw new WithdrawalError(403, "that withdrawal belongs to someone else");
+  if (w.status !== "prepared") throw new WithdrawalError(409, `this withdrawal is already ${w.status}`);
+
+  let signed: Transaction;
+  try {
+    signed = Transaction.from(Buffer.from(input.signedTx, "base64"));
+  } catch {
+    throw new WithdrawalError(400, "not a transaction");
+  }
+  const prepared = Transaction.from(Buffer.from(w.preparedTx, "base64"));
+  // Exactly what was prepared - same instructions, accounts, amount, blockhash - and every signature valid.
+  if (!signed.serializeMessage().equals(prepared.serializeMessage())) {
+    throw new WithdrawalError(400, "that transaction isn't the one prepared for this withdrawal");
+  }
+  if (!signed.verifySignatures()) throw new WithdrawalError(400, "the transaction isn't fully signed");
+
+  await db.transaction(async (tx) => {
+    // Claim it: of two submissions of the same withdrawal, only one gets past here.
+    const claimed = await tx
+      .update(withdrawals)
+      .set({ status: "submitted", signedTx: input.signedTx, updatedAt: new Date() })
+      .where(and(eq(withdrawals.id, w.id), eq(withdrawals.status, "prepared")))
+      .returning({ id: withdrawals.id });
+    if (claimed.length === 0) throw new WithdrawalError(409, "this withdrawal was already submitted");
+    // Serialise against matches for this agent: nothing moves its balance while this runs.
+    await tx.execute(sql`select id from ${agents} where ${agents.id} = ${w.agentId} for update`);
+    const balance = await balanceOf(tx as unknown as Db, w.agentId);
+    if (balance !== w.amount + w.remaining) {
+      throw new WithdrawalError(409, "the balance changed since this was prepared: prepare it again");
+    }
+    const pending = await unsettledOps(tx as unknown as Db, w.agentId);
+    if (pending.length > 0) throw new WithdrawalError(409, "can't withdraw now: a match is still settling on chain");
+    const [agent] = await tx.select({ retiredAt: agents.retiredAt }).from(agents).where(eq(agents.id, w.agentId));
+    if (agent?.retiredAt) throw new WithdrawalError(409, "this agent is retired");
+
+    await record(tx, [{ agentId: w.agentId, amount: -w.amount, reason: "withdrawal", withdrawalId: w.id }]);
+    await tx.insert(chainOps).values({ kind: "withdraw", agentId: w.agentId, amount: w.amount, withdrawalId: w.id });
+    // Taking the lot retires it; its record freezes as it stands.
+    if (w.retire) await tx.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, w.agentId));
+  });
+
+  // Send now rather than wait for the worker: the transaction only lives for a minute or two.
+  try {
+    const signature = await chain.submitWithdrawal(Buffer.from(input.signedTx, "base64"), w.lastValidBlockHeight);
+    await markWithdrawn(db, w.id, signature);
+    return { status: "confirmed", signature };
+  } catch {
+    // Not lost: the outbox has it, and the worker either lands it or, once it can never land, puts the ledger back.
+    return { status: "submitted", signature: null };
+  }
+}
+
+/** A withdrawal landed: the withdrawal and its outbox op are done. */
+export async function markWithdrawn(db: Db, withdrawalId: string, signature: string | null) {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(withdrawals)
+      .set({ status: "confirmed", signature, updatedAt: new Date() })
+      .where(and(eq(withdrawals.id, withdrawalId), inArray(withdrawals.status, ["submitted", "confirmed"])));
+    await tx
+      .update(chainOps)
+      .set({ status: "confirmed", signature, updatedAt: new Date() })
+      .where(and(eq(chainOps.withdrawalId, withdrawalId), eq(chainOps.kind, "withdraw")));
+  });
+}
+
+/**
+ * A withdrawal that can never land (its blockhash expired unsent, or the
+ * program refused it): the ledger is put back and a retirement it caused is
+ * undone, in one transaction, so ledger and vault agree again.
+ */
+export async function expireWithdrawal(db: Db, withdrawalId: string, why: string) {
+  await db.transaction(async (tx) => {
+    const [w] = await tx.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId)).limit(1);
+    if (!w || w.status !== "submitted") return;
+    await record(tx, [{ agentId: w.agentId, amount: w.amount, reason: "withdrawal-reversed", withdrawalId: w.id }]);
+    if (w.retire) await tx.update(agents).set({ retiredAt: null }).where(eq(agents.id, w.agentId));
+    await tx
+      .update(withdrawals)
+      .set({ status: "expired", error: why.slice(0, 2000), updatedAt: new Date() })
+      .where(eq(withdrawals.id, w.id));
+    await tx
+      .update(chainOps)
+      .set({ status: "failed", lastError: why.slice(0, 2000), updatedAt: new Date() })
+      .where(and(eq(chainOps.withdrawalId, w.id), eq(chainOps.kind, "withdraw")));
+  });
+}
+
+/**
+ * Queues an on-chain owner record for every owned agent that has a vault and
+ * no record queued yet: the one-time backfill, and harmless to run again.
+ */
+export async function queueOwnerRegistrations(db: Db): Promise<number> {
+  const owned = await db
+    .select({ id: agents.id, ownerId: agents.ownerId })
+    .from(agents)
+    .where(
+      and(
+        sql`${agents.ownerId} is not null`,
+        sql`exists (select 1 from ${chainOps} where ${chainOps.agentId} = ${agents.id} and ${chainOps.kind} = 'open_vault')`,
+        sql`not exists (select 1 from ${chainOps} where ${chainOps.agentId} = ${agents.id} and ${chainOps.kind} = 'register_owner')`,
+        isNull(agents.retiredAt),
+      ),
+    );
+  for (const a of owned) {
+    await db.insert(chainOps).values({ kind: "register_owner", agentId: a.id, owner: a.ownerId, amount: 0 });
+  }
+  return owned.length;
+}
+

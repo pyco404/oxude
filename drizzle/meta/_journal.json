@@ -50,6 +50,13 @@
       "when": 1789768590547,
       "tag": "0006_exhibition_matches",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789837584539,
+      "tag": "0007_withdrawals",
+      "breakpoints": true
     }
   ]
 }

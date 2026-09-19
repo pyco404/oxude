@@ -5,7 +5,7 @@ import { validatePolicy, type Policy } from "../agents/policy.js";
 import { headlineFor, renderTranscript } from "../transcript.js";
 import { PRESET_DESCRIPTIONS, PRESET_NAMES, type PresetName } from "../presets.js";
 import type { Db } from "../db/client.js";
-import { agents, matches } from "../db/schema.js";
+import { agents, matches, withdrawals } from "../db/schema.js";
 import { isFirstElicitationFree, recordElicitation, StakeError, statement } from "../db/ledger.js";
 import {
   clampCeiling,
@@ -23,6 +23,13 @@ import {
 } from "../db/runner.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
+import {
+  prepareWithdrawal,
+  submitWithdrawal,
+  withdrawable,
+  WithdrawalError,
+  type WithdrawalChain,
+} from "../db/withdrawals.js";
 import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { settlementStatus } from "../chain/worker.js";
@@ -58,6 +65,8 @@ export type AppOptions = {
    */
   corsOrigin?: string;
   now?: () => number;
+  /** The chain, for withdrawals: the settler builds and co-signs them. Without it they are unavailable. */
+  chain?: WithdrawalChain;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -117,6 +126,10 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
     ["GET", /^\/agents\/([^/]+)\/matches$/, getAgentMatches],
+    ["GET", /^\/agents\/([^/]+)\/withdrawable$/, getWithdrawable],
+    ["POST", /^\/agents\/([^/]+)\/withdrawals$/, postWithdrawal],
+    ["POST", /^\/withdrawals\/([^/]+)\/submit$/, postWithdrawalSubmit],
+    ["GET", /^\/withdrawals\/([^/]+)$/, getWithdrawal],
     ["GET", /^\/ladder$/, getLadder],
     ["GET", /^\/stats$/, getStats],
     ["GET", /^\/presets$/, getPresets],
@@ -397,6 +410,75 @@ export function createApp(options: AppOptions): Server {
   /** Public: platform-wide activity in staked matches. */
   async function getStats() {
     return { activity: await matchActivity(db) };
+  }
+
+  /** Runs a withdrawal step, turning its refusals into HTTP answers. */
+  async function withdrawalStep<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error instanceof WithdrawalError) throw new HttpError(error.status, error.message);
+      throw error;
+    }
+  }
+  const needChain = () => {
+    if (!options.chain) throw new HttpError(503, "withdrawals are unavailable: this server isn't connected to the chain");
+    return options.chain;
+  };
+  /** The owner's own agent, or a refusal. */
+  async function ownAgent(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    const [row] = await db.select({ ownerId: agents.ownerId }).from(agents).where(eq(agents.id, id)).limit(1);
+    if (!row) throw new HttpError(404, "no such agent");
+    if (row.ownerId !== ownerId) throw new HttpError(403, "that agent belongs to someone else");
+    return { id, ownerId };
+  }
+
+  /** Owner only: what can be withdrawn now, and what is locked while matches settle. */
+  async function getWithdrawable(ctx: Ctx) {
+    const { id } = await ownAgent(ctx);
+    return { withdrawable: await withdrawalStep(() => withdrawable(db, id)) };
+  }
+
+  /** Owner only: builds a withdrawal for the owner's wallet to sign. {amount: n} or {amount: "all"}. */
+  async function postWithdrawal(ctx: Ctx) {
+    const { id, ownerId } = await ownAgent(ctx);
+    const raw = ctx.body["amount"];
+    const amount = raw === "all" ? "all" : typeof raw === "number" ? raw : NaN;
+    if (amount !== "all" && !Number.isFinite(amount)) throw new HttpError(400, 'amount must be a number or "all"');
+    const chain = needChain();
+    return { withdrawal: await withdrawalStep(() => prepareWithdrawal(db, chain, { agentId: id, ownerId, amount })) };
+  }
+
+  /** Owner only: the signed transaction back; recorded, then sent. */
+  async function postWithdrawalSubmit(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const withdrawalId = requireUuid(ctx.params[0]);
+    const signed = ctx.body["transaction"];
+    if (typeof signed !== "string" || !signed) throw new HttpError(400, "transaction is required (base64)");
+    const chain = needChain();
+    return { withdrawal: await withdrawalStep(() => submitWithdrawal(db, chain, { withdrawalId, ownerId, signedTx: signed })) };
+  }
+
+  /** Owner only: where a withdrawal has got to. */
+  async function getWithdrawal(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    const [w] = await db.select().from(withdrawals).where(eq(withdrawals.id, id)).limit(1);
+    if (!w || w.ownerId !== ownerId) throw new HttpError(404, "no such withdrawal");
+    return {
+      withdrawal: {
+        id: w.id,
+        agentId: w.agentId,
+        amount: w.amount,
+        remaining: w.remaining,
+        retire: w.retire,
+        status: w.status,
+        signature: w.signature,
+        error: w.status === "expired" ? w.error : null,
+      },
+    };
   }
 
   async function getLadder(ctx: Ctx) {

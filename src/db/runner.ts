@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
 import { OXUDE_RULES, type Stakes } from "../round.js";
@@ -14,6 +14,7 @@ import {
   chainOps,
   ledger,
   matches,
+  withdrawals,
   ratings,
   bandOf,
   CEILING_BANDS,
@@ -108,6 +109,8 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
   // Renting seeds the balance: the first movement in this agent's ledger.
   await record(tx, [{ agentId: row!.id, amount: seed, reason: "rental-seed" }]);
   await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, amount: seed });
+  // A player's agent gets its owner recorded on chain too, after the vault: that's who can withdraw.
+  if (row!.ownerId) await tx.insert(chainOps).values({ kind: "register_owner", agentId: row!.id, owner: row!.ownerId, amount: 0 });
   return row!;
   });
 }
@@ -169,6 +172,17 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   // Capped by the stake: a match can never take more than was put at risk.
   const settledA = settle(log.nets.A, stake);
   const { match, retired } = await db.transaction(async (tx) => {
+    // Lock both agents, then make sure neither has a withdrawal on its way: while one is
+    // in flight the vault is spoken for, and a match would move money the chain isn't expecting.
+    await tx.execute(sql`select id from ${agents} where ${agents.id} in (${rowA.id}, ${rowB.id}) for update`);
+    const busy = await tx
+      .select({ agentId: withdrawals.agentId })
+      .from(withdrawals)
+      .where(and(inArray(withdrawals.agentId, [rowA.id, rowB.id]), eq(withdrawals.status, "submitted")));
+    if (busy.length > 0) {
+      const name = busy[0]!.agentId === rowA.id ? rowA.name : rowB.name;
+      throw new StakeError(`${name} has a withdrawal on its way; it can play again once that lands`);
+    }
     const [inserted] = await tx
       .insert(matches)
       .values({
@@ -334,6 +348,8 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
         inBand,
         // Two agents with no owner are not the same owner.
         me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId)),
+        // Not one with a withdrawal on its way: it can't play until that lands.
+        sql`not exists (select 1 from ${withdrawals} where ${withdrawals.agentId} = ${agents.id} and ${withdrawals.status} = 'submitted')`,
       ),
     );
 

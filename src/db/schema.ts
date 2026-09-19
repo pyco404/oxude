@@ -122,12 +122,21 @@ export const ledger = pgTable(
     reason: text("reason").$type<LedgerReason>().notNull(),
     /** Set for settlements. */
     matchId: uuid("match_id").references(() => matches.id),
+    /** Set for withdrawals, and for reversing one that never landed. */
+    withdrawalId: uuid("withdrawal_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("ledger_agent_idx").on(t.agentId, t.seq), index("ledger_match_idx").on(t.matchId)],
 );
 
-export type LedgerReason = "rental-seed" | "match-settlement" | "adjustment";
+export type LedgerReason =
+  | "rental-seed"
+  | "match-settlement"
+  | "adjustment"
+  /** Money out of an agent's vault to its owner. */
+  | "withdrawal"
+  /** A withdrawal that could never land on chain, put back. */
+  | "withdrawal-reversed";
 
 /** One row per model call, so the first elicitation for an owner can be free. */
 export const elicitations = pgTable(
@@ -189,12 +198,16 @@ export const chainOps = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     /** Submission order: a vault must open before its first settlement. */
     seq: bigserial("seq", { mode: "number" }).notNull(),
-    kind: text("kind").$type<"open_vault" | "settle">().notNull(),
+    kind: text("kind").$type<"open_vault" | "settle" | "register_owner" | "withdraw">().notNull(),
     agentId: uuid("agent_id").references(() => agents.id),
     matchId: uuid("match_id").references(() => matches.id),
     fromAgent: uuid("from_agent").references(() => agents.id),
     toAgent: uuid("to_agent").references(() => agents.id),
     amount: integer("amount").notNull(),
+    /** register_owner: the owner's wallet. */
+    owner: text("owner"),
+    /** withdraw: which withdrawal, whose signed transaction the op sends. */
+    withdrawalId: uuid("withdrawal_id"),
     status: text("status").$type<"pending" | "confirmed" | "failed">().notNull().default("pending"),
     signature: text("signature"),
     attempts: integer("attempts").notNull().default(0),
@@ -204,6 +217,41 @@ export const chainOps = pgTable(
   },
   (t) => [index("chain_ops_status_idx").on(t.status, t.seq), index("chain_ops_match_idx").on(t.matchId)],
 );
+
+/**
+ * A withdrawal from an agent's vault to its owner. Prepared by the server
+ * (which co-signs), signed by the owner, then recorded in the ledger and the
+ * outbox together and sent. "expired" means it could never land any more and
+ * the ledger was put back.
+ */
+export const withdrawals = pgTable(
+  "withdrawals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    ownerId: text("owner_id").notNull(),
+    amount: integer("amount").notNull(),
+    /** What the vault holds afterwards; the program checks this against the vault. */
+    remaining: integer("remaining").notNull(),
+    /** Taking the lot retires the agent. */
+    retire: boolean("retire").notNull(),
+    status: text("status").$type<WithdrawalStatus>().notNull().default("prepared"),
+    /** The transaction as prepared, settler-signed, base64; the owner must sign exactly this. */
+    preparedTx: text("prepared_tx").notNull(),
+    /** The same, with the owner's signature. */
+    signedTx: text("signed_tx"),
+    lastValidBlockHeight: bigint("last_valid_block_height", { mode: "number" }).notNull(),
+    signature: text("signature"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("withdrawals_agent_idx").on(t.agentId, t.status)],
+);
+
+export type WithdrawalStatus = "prepared" | "submitted" | "confirmed" | "expired";
 
 export const ratings = pgTable("ratings", {
   agentId: uuid("agent_id")

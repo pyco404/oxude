@@ -49,6 +49,26 @@ class FakeChain implements ChainPort {
   async vaultBalance(agentId: string) {
     return this.vaults.get(agentId) ?? null;
   }
+  owners = new Map<string, string>();
+  async registerOwner(agentId: string, owner: string) {
+    this.calls.push(`owner ${agentId.slice(0, 4)}`);
+    if (this.owners.has(agentId)) throw new Error("owner already in use");
+    this.owners.set(agentId, owner);
+    return `sig-owner-${agentId}`;
+  }
+  async ownerOf(agentId: string) {
+    return this.owners.get(agentId) ?? null;
+  }
+  // Withdrawals are exercised in withdraw.test.ts with a fake that checks transactions.
+  async submitWithdrawal(): Promise<string> {
+    throw new Error("not used here");
+  }
+  async isWithdrawn() {
+    return false;
+  }
+  async blockHeightPassed() {
+    return false;
+  }
 }
 
 let db: Db;

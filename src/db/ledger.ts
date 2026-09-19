@@ -15,7 +15,7 @@ import {
  * so a balance is always the sum of movements that actually happened.
  */
 
-export type Movement = { agentId: string; amount: number; reason: LedgerReason; matchId?: string };
+export type Movement = { agentId: string; amount: number; reason: LedgerReason; matchId?: string; withdrawalId?: string };
 
 type Writable = Pick<Db, "insert" | "select" | "update">;
 
@@ -27,6 +27,7 @@ export async function record(db: Writable, movements: Movement[]): Promise<void>
       amount: m.amount,
       reason: m.reason,
       ...(m.matchId ? { matchId: m.matchId } : {}),
+      ...(m.withdrawalId ? { withdrawalId: m.withdrawalId } : {}),
     })),
   );
 }
