@@ -77,7 +77,8 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
         aria-haspopup="menu"
         aria-label={session ? `Wallet ${session.ownerId}` : "Connect wallet"}
         className={`h-9 max-w-full truncate border px-3 text-[12px] ${placement === "up" ? "w-full" : ""} ${
-          session ? "border-line font-mono text-text" : "border-red bg-red font-medium text-ink"
+          // One look everywhere: dark, red text, a 1px red border.
+          session ? "border-line font-mono text-text" : "border-red bg-ink text-red"
         }`}
       >
         {busy === "connect" ? "Waiting…" : session ? shortKey(session.ownerId) : "Connect wallet"}
