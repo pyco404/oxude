@@ -29,10 +29,16 @@ function sectionOf(path: string): string | null {
 
 function Mark({ onClick }: { onClick?: () => void }) {
   return (
-    <a href="/" onClick={onClick} className="flex items-center gap-2 text-xl font-semibold tracking-[0.2em] text-red">
+    <a
+      href="/"
+      onClick={onClick}
+      aria-label="Oxude home"
+      className="flex items-center gap-2 text-xl font-semibold tracking-[0.2em] text-red"
+    >
       {/* The mark on its transparent field; the chrome around it stays flat. */}
       <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
-      OXUDE
+      {/* The bull alone in the mobile drawer; the wordmark only in the desktop sidebar. */}
+      <span className="hidden lg:inline">OXUDE</span>
     </a>
   );
 }
