@@ -15,6 +15,7 @@ import {
 } from "../src/db/ledger.js";
 import { clampCeiling, createAgent, leaderboard, pickOpponent, runMatch, setCeiling } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
+import { someWallet } from "./helpers.js";
 
 let db: Db;
 let close: () => Promise<void>;
@@ -134,7 +135,7 @@ describe("settlement", () => {
 
   it("the ceiling decides the band an agent is matched in", async () => {
     const { db: d, close: c } = await fresh();
-    const owner = "99999999-9999-4999-8999-999999999999";
+    const owner = someWallet();
     const cautious = await createAgent(d, { name: "Cautious", presetName: "Anchor", ownerId: owner, maxStake: 15 });
     // Four in the cautious band, four well above it.
     const low = [];
@@ -219,7 +220,7 @@ describe("running out", () => {
 describe("first elicitation", () => {
   it("is free once per owner, then counts", async () => {
     const { db: d, close: c } = await fresh();
-    const owner = "12121212-1212-4212-8212-121212121212";
+    const owner = someWallet();
     const other = "34343434-3434-4434-8434-343434343434";
 
     expect(await isFirstElicitationFree(d, owner)).toBe(true);

@@ -6,14 +6,23 @@
 //! what the server's key can do:
 //!
 //! - only the configured settler key can open vaults or settle;
-//! - a single settlement can never move more than `max_settlement`;
+//! - a single settlement can never move more than `max_settlement`, and no
+//!   vault can pay out more than `OUTFLOW_CAP` through settlements in one
+//!   window of `WINDOW_SLOTS`; a vault opens with at most `MAX_SEED`, and all
+//!   vaults opened in one window mint at most `MINT_CAP` between them - so a
+//!   stolen settler key drains and mints slowly enough to be stopped;
+//! - an agent id is bound to its owner: it is the hash of the owner's key and
+//!   a salt, checked as the vault opens, and the owner is recorded in that same
+//!   instruction. No key - the settler's included - can record anyone else as
+//!   the owner of that agent;
 //! - each match settles at most once, because its record is a PDA seeded by the
 //!   match id and cannot be created twice;
 //! - vaults are PDAs whose authority is the config PDA, so no private key -
 //!   the server's included - can move vault funds except through `settle`
 //!   and `withdraw`;
 //! - a withdrawal needs the agent's owner to sign, checked against the owner
-//!   recorded on chain (set once, never changed), and the settler to co-sign;
+//!   recorded on chain (set as the vault opens, never changed), and the
+//!   settler to co-sign;
 //!   it goes only to the owner's own token account, must leave the vault at
 //!   exactly the balance the ledger says (so an unsettled match makes it
 //!   refuse), must leave it empty or playable, and happens at most once per
@@ -24,6 +33,7 @@
 //! sign a settlement.
 
 use anchor_lang::prelude::*;
+use solana_sha256_hasher::hashv;
 use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount, Transfer};
 
 declare_id!("EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir");
@@ -34,6 +44,18 @@ pub const VAULT_SEED: &[u8] = b"vault";
 pub const SETTLEMENT_SEED: &[u8] = b"settlement";
 pub const OWNER_SEED: &[u8] = b"owner";
 pub const WITHDRAWAL_SEED: &[u8] = b"withdrawal";
+pub const OUTFLOW_SEED: &[u8] = b"outflow";
+pub const MINT_BUDGET_SEED: &[u8] = b"mint_budget";
+/// Mixed into every agent id, so an id can't be confused with any other hash.
+pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
+/// A rate-limit window: about ten minutes of slots.
+pub const WINDOW_SLOTS: u64 = 1_500;
+/// The most one vault can pay out through settlements in one window.
+pub const OUTFLOW_CAP: u64 = 120;
+/// The most a vault can be opened with: the starting balance.
+pub const MAX_SEED: u64 = 180;
+/// The most all vaults opened in one window can mint between them.
+pub const MINT_CAP: u64 = 100 * MAX_SEED;
 /// The smallest stake a match can have. A vault left with less than this
 /// could never play again, so a withdrawal must leave nothing or at least this.
 pub const MIN_STAKE: u64 = 10;
@@ -58,23 +80,34 @@ pub mod oxude_settlement {
 
     /// Opens an agent's vault and funds it with its starting balance. Called
     /// when an agent is rented.
-    pub fn open_vault(ctx: Context<OpenVault>, agent_id: [u8; 16], amount: u64) -> Result<()> {
-        require!(amount > 0, OxudeError::ZeroAmount);
-        let bump = ctx.accounts.config.bump;
-        let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[bump]]];
-        token::mint_to(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                MintTo {
-                    mint: ctx.accounts.mint.to_account_info(),
-                    to: ctx.accounts.vault.to_account_info(),
-                    authority: ctx.accounts.config.to_account_info(),
-                },
-                signer,
-            ),
-            amount,
-        )?;
-        emit!(VaultOpened { agent_id, amount });
+    pub fn open_vault(mut ctx: Context<OpenVault>, agent_id: [u8; 16], salt: [u8; 16], amount: u64) -> Result<()> {
+        require!(agent_id == agent_id_for(&Pubkey::default(), &salt), OxudeError::AgentIdMismatch);
+        let accounts = &mut ctx.accounts;
+        fund_vault(&accounts.config, &mut accounts.mint_budget, ctx.bumps.mint_budget, &accounts.mint, &accounts.vault, &accounts.token_program, amount)?;
+        emit!(VaultOpened { agent_id, owner: None, amount });
+        Ok(())
+    }
+
+    /// Opens a player's agent's vault and records its owner, together. The
+    /// agent id must be the hash of that owner's key and the salt, so this is
+    /// the only owner the agent can ever have: whoever sends it, the settler
+    /// included, can't record another, and the record can't be created twice.
+    pub fn open_owned_vault(
+        mut ctx: Context<OpenOwnedVault>,
+        agent_id: [u8; 16],
+        salt: [u8; 16],
+        owner: Pubkey,
+        amount: u64,
+    ) -> Result<()> {
+        require!(owner != Pubkey::default(), OxudeError::AgentIdMismatch);
+        require!(agent_id == agent_id_for(&owner, &salt), OxudeError::AgentIdMismatch);
+        let accounts = &mut ctx.accounts;
+        fund_vault(&accounts.config, &mut accounts.mint_budget, ctx.bumps.mint_budget, &accounts.mint, &accounts.vault, &accounts.token_program, amount)?;
+        let record = &mut accounts.agent_owner;
+        record.agent_id = agent_id;
+        record.owner = owner;
+        record.bump = ctx.bumps.agent_owner;
+        emit!(VaultOpened { agent_id, owner: Some(owner), amount });
         Ok(())
     }
 
@@ -92,6 +125,11 @@ pub mod oxude_settlement {
         require!(amount <= ctx.accounts.config.max_settlement, OxudeError::OverLimit);
         require!(from_agent != to_agent, OxudeError::SameAgent);
         require!(ctx.accounts.from_vault.amount >= amount, OxudeError::InsufficientVault);
+        let slot = Clock::get()?.slot;
+        let outflow = &mut ctx.accounts.outflow;
+        outflow.bump = ctx.bumps.outflow;
+        (outflow.window_start, outflow.spent) = charge(outflow.window_start, outflow.spent, slot, amount, OUTFLOW_CAP)
+            .ok_or(OxudeError::OutflowLimit)?;
 
         let bump = ctx.accounts.config.bump;
         let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[bump]]];
@@ -113,21 +151,9 @@ pub mod oxude_settlement {
         record.from_agent = from_agent;
         record.to_agent = to_agent;
         record.amount = amount;
-        record.slot = Clock::get()?.slot;
+        record.slot = slot;
         record.bump = ctx.bumps.settlement;
         emit!(Settled { match_id, from_agent, to_agent, amount });
-        Ok(())
-    }
-
-    /// Records who owns an agent. Settler-only, and only once per agent: the
-    /// record is a PDA that cannot be created twice, so an owner once set can
-    /// never be changed - not by the server, not by anyone.
-    pub fn register_owner(ctx: Context<RegisterOwner>, agent_id: [u8; 16], owner: Pubkey) -> Result<()> {
-        let record = &mut ctx.accounts.agent_owner;
-        record.agent_id = agent_id;
-        record.owner = owner;
-        record.bump = ctx.bumps.agent_owner;
-        emit!(OwnerRegistered { agent_id, owner });
         Ok(())
     }
 
@@ -177,6 +203,50 @@ pub mod oxude_settlement {
     }
 }
 
+/// An agent's id: the first 16 bytes of the hash of the domain, its owner's
+/// key (all zeros for a house agent) and a salt.
+pub fn agent_id_for(owner: &Pubkey, salt: &[u8; 16]) -> [u8; 16] {
+    let hash = hashv(&[AGENT_ID_DOMAIN, owner.as_ref(), salt]).to_bytes();
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&hash[..16]);
+    id
+}
+
+/// A fixed-window budget: `(window_start, spent)` after charging `amount` at
+/// `slot`, or None if it would go over `cap`. A window that has run its course
+/// starts again from this slot.
+pub fn charge(window_start: u64, spent: u64, slot: u64, amount: u64, cap: u64) -> Option<(u64, u64)> {
+    let (start, spent) = if slot >= window_start.saturating_add(WINDOW_SLOTS) { (slot, 0) } else { (window_start, spent) };
+    let spent = spent.checked_add(amount)?;
+    (spent <= cap).then_some((start, spent))
+}
+
+/// Mints a new vault's starting balance, within the per-vault and per-window limits.
+fn fund_vault<'info>(
+    config: &Account<'info, Config>,
+    budget: &mut Account<'info, MintBudget>,
+    budget_bump: u8,
+    mint: &Account<'info, Mint>,
+    vault: &Account<'info, TokenAccount>,
+    token_program: &Program<'info, Token>,
+    amount: u64,
+) -> Result<()> {
+    require!(amount > 0, OxudeError::ZeroAmount);
+    require!(amount <= MAX_SEED, OxudeError::OverLimit);
+    budget.bump = budget_bump;
+    (budget.window_start, budget.spent) =
+        charge(budget.window_start, budget.spent, Clock::get()?.slot, amount, MINT_CAP).ok_or(OxudeError::MintLimit)?;
+    let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config.bump]]];
+    token::mint_to(
+        CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            MintTo { mint: mint.to_account_info(), to: vault.to_account_info(), authority: config.to_account_info() },
+            signer,
+        ),
+        amount,
+    )
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Config {
@@ -224,6 +294,24 @@ pub struct Withdrawal {
     pub bump: u8,
 }
 
+/// One per agent that has paid out through a settlement: its current window.
+#[account]
+#[derive(InitSpace)]
+pub struct Outflow {
+    pub window_start: u64,
+    pub spent: u64,
+    pub bump: u8,
+}
+
+/// One for the program: how much new vaults have minted in the current window.
+#[account]
+#[derive(InitSpace)]
+pub struct MintBudget {
+    pub window_start: u64,
+    pub spent: u64,
+    pub bump: u8,
+}
+
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(mut)]
@@ -246,6 +334,14 @@ pub struct OpenVault<'info> {
     #[account(mut)]
     pub mint: Account<'info, Mint>,
     #[account(
+        init_if_needed,
+        payer = settler,
+        space = 8 + MintBudget::INIT_SPACE,
+        seeds = [MINT_BUDGET_SEED],
+        bump
+    )]
+    pub mint_budget: Account<'info, MintBudget>,
+    #[account(
         init,
         payer = settler,
         token::mint = mint,
@@ -254,6 +350,44 @@ pub struct OpenVault<'info> {
         bump
     )]
     pub vault: Account<'info, TokenAccount>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent_id: [u8; 16])]
+pub struct OpenOwnedVault<'info> {
+    #[account(mut)]
+    pub settler: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler, has_one = mint)]
+    pub config: Account<'info, Config>,
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    #[account(
+        init_if_needed,
+        payer = settler,
+        space = 8 + MintBudget::INIT_SPACE,
+        seeds = [MINT_BUDGET_SEED],
+        bump
+    )]
+    pub mint_budget: Account<'info, MintBudget>,
+    #[account(
+        init,
+        payer = settler,
+        token::mint = mint,
+        token::authority = config,
+        seeds = [VAULT_SEED, agent_id.as_ref()],
+        bump
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = settler,
+        space = 8 + AgentOwner::INIT_SPACE,
+        seeds = [OWNER_SEED, agent_id.as_ref()],
+        bump
+    )]
+    pub agent_owner: Account<'info, AgentOwner>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
 }
@@ -269,6 +403,15 @@ pub struct Settle<'info> {
     pub from_vault: Account<'info, TokenAccount>,
     #[account(mut, seeds = [VAULT_SEED, to_agent.as_ref()], bump, token::mint = config.mint)]
     pub to_vault: Account<'info, TokenAccount>,
+    /// The paying vault's outflow window, made the first time it pays.
+    #[account(
+        init_if_needed,
+        payer = settler,
+        space = 8 + Outflow::INIT_SPACE,
+        seeds = [OUTFLOW_SEED, from_agent.as_ref()],
+        bump
+    )]
+    pub outflow: Account<'info, Outflow>,
     #[account(
         init,
         payer = settler,
@@ -279,27 +422,6 @@ pub struct Settle<'info> {
     pub settlement: Account<'info, Settlement>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
-}
-
-#[derive(Accounts)]
-#[instruction(agent_id: [u8; 16])]
-pub struct RegisterOwner<'info> {
-    #[account(mut)]
-    pub settler: Signer<'info>,
-    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler)]
-    pub config: Account<'info, Config>,
-    /// The agent must have a vault: an owner for nothing is meaningless.
-    #[account(seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
-    pub vault: Account<'info, TokenAccount>,
-    #[account(
-        init,
-        payer = settler,
-        space = 8 + AgentOwner::INIT_SPACE,
-        seeds = [OWNER_SEED, agent_id.as_ref()],
-        bump
-    )]
-    pub agent_owner: Account<'info, AgentOwner>,
-    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -336,12 +458,6 @@ pub struct Withdraw<'info> {
 }
 
 #[event]
-pub struct OwnerRegistered {
-    pub agent_id: [u8; 16],
-    pub owner: Pubkey,
-}
-
-#[event]
 pub struct Withdrawn {
     pub withdrawal_id: [u8; 16],
     pub agent_id: [u8; 16],
@@ -353,6 +469,8 @@ pub struct Withdrawn {
 #[event]
 pub struct VaultOpened {
     pub agent_id: [u8; 16],
+    /// None for a house agent.
+    pub owner: Option<Pubkey>,
     pub amount: u64,
 }
 
@@ -386,4 +504,40 @@ pub enum OxudeError {
     LedgerMismatch,
     #[msg("A withdrawal must leave the vault empty or with at least the minimum stake")]
     Unplayable,
+    #[msg("The agent id isn't the hash of this owner and salt")]
+    AgentIdMismatch,
+    #[msg("This vault has paid out all it can in this window")]
+    OutflowLimit,
+    #[msg("New vaults have minted all they can in this window")]
+    MintLimit,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn charge_stays_within_the_cap_and_resets_with_the_window() {
+        assert_eq!(charge(0, 0, 100, 60, 120), Some((0, 60)));
+        assert_eq!(charge(0, 60, 200, 60, 120), Some((0, 120)));
+        assert_eq!(charge(0, 120, 300, 1, 120), None);
+        // Still inside the window, one slot before it ends.
+        assert_eq!(charge(0, 120, WINDOW_SLOTS - 1, 1, 120), None);
+        // The window has run its course: a fresh one starts at this slot.
+        assert_eq!(charge(0, 120, WINDOW_SLOTS, 60, 120), Some((WINDOW_SLOTS, 60)));
+        // One charge can never exceed the cap on its own.
+        assert_eq!(charge(0, 0, 5_000, 121, 120), None);
+        assert_eq!(charge(0, u64::MAX, 1, 1, u64::MAX), None);
+    }
+
+    #[test]
+    fn an_agent_id_is_bound_to_its_owner_and_salt() {
+        let owner = Pubkey::new_unique();
+        let salt = [7u8; 16];
+        let id = agent_id_for(&owner, &salt);
+        assert_eq!(id, agent_id_for(&owner, &salt));
+        assert_ne!(id, agent_id_for(&Pubkey::new_unique(), &salt));
+        assert_ne!(id, agent_id_for(&owner, &[8u8; 16]));
+        assert_ne!(id, agent_id_for(&Pubkey::default(), &salt));
+    }
 }

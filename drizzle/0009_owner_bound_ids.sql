@@ -1,0 +1,1 @@
+ALTER TABLE "chain_ops" ADD COLUMN "salt" text;

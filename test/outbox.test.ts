@@ -5,6 +5,8 @@ import { chainOps, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
+import type { OpenVaultInput } from "../src/chain/settlement.js";
+import { agentIdFor } from "../src/agent-id.js";
 
 /** An in-memory stand-in for the program, with the same guarantees it enforces. */
 class FakeChain implements ChainPort {
@@ -12,14 +14,18 @@ class FakeChain implements ChainPort {
   settled = new Set<string>();
   calls: string[] = [];
   failNext: string | null = null;
+  /** Agents whose vault has paid out its limit for this window: the program refuses, for now. */
+  throttled = new Set<string>();
   /** Simulates a submission that landed but whose confirmation was lost. */
   landButThrow = false;
 
-  async openVault(agentId: string, amount: number) {
+  async openVault({ agentId, owner, salt, amount }: OpenVaultInput) {
     this.calls.push(`open ${agentId.slice(0, 4)}`);
     if (this.failNext) throw new Error(this.failNext);
+    if (agentIdFor(owner, salt) !== agentId) throw new Error("Error Code: AgentIdMismatch");
     if (this.vaults.has(agentId)) throw new Error("vault already in use");
     this.vaults.set(agentId, amount);
+    if (owner) this.owners.set(agentId, owner);
     if (this.landButThrow) throw new Error("timed out waiting for confirmation");
     return `sig-open-${agentId}`;
   }
@@ -27,10 +33,11 @@ class FakeChain implements ChainPort {
     this.calls.push(`settle ${input.matchId.slice(0, 4)}`);
     if (this.failNext) throw new Error(this.failNext);
     if (this.settled.has(input.matchId)) throw new Error("settlement already in use");
+    if (this.throttled.has(input.fromAgent)) throw new Error("Error Code: OutflowLimit");
     const from = this.vaults.get(input.fromAgent);
     const to = this.vaults.get(input.toAgent);
-    if (from === undefined || to === undefined) throw new Error("AccountNotInitialized");
-    if (from < input.amount) throw new Error("InsufficientVault");
+    if (from === undefined || to === undefined) throw new Error("Error Code: AccountNotInitialized");
+    if (from < input.amount) throw new Error("Error Code: InsufficientVault");
     this.vaults.set(input.fromAgent, from - input.amount);
     this.vaults.set(input.toAgent, to + input.amount);
     this.settled.add(input.matchId);
@@ -50,12 +57,6 @@ class FakeChain implements ChainPort {
     return this.vaults.get(agentId) ?? null;
   }
   owners = new Map<string, string>();
-  async registerOwner(agentId: string, owner: string) {
-    this.calls.push(`owner ${agentId.slice(0, 4)}`);
-    if (this.owners.has(agentId)) throw new Error("owner already in use");
-    this.owners.set(agentId, owner);
-    return `sig-owner-${agentId}`;
-  }
   async ownerOf(agentId: string) {
     return this.owners.get(agentId) ?? null;
   }
@@ -155,6 +156,40 @@ describe("the worker", () => {
     chain.failNext = null;
     const resumed = await drainChainOps(d, chain);
     expect(resumed.confirmed).toBe(2);
+    await c();
+  });
+
+  it("sets aside an op the program refuses and carries on, rather than holding up every other vault", async () => {
+    const { db: d, close: c } = await fresh();
+    const throttled = await createAgent(d, { name: "Throttled", presetName: "Bully" });
+    const rival = await createAgent(d, { name: "Rival", presetName: "Anchor" });
+    const chain = new FakeChain();
+    expect((await drainChainOps(d, chain)).confirmed).toBe(2); // both vaults open
+
+    // A match this agent loses, and then matches between others.
+    let lost: string | null = null;
+    for (let seed = 1; seed <= 60 && !lost; seed++) {
+      const { match, settled } = await runMatch(d, throttled.id, rival.id, { seed });
+      if (settled.A < 0) lost = match.id;
+    }
+    expect(lost).not.toBeNull();
+    const others = [await createAgent(d, { name: "X", presetName: "Mirage" }), await createAgent(d, { name: "Y", presetName: "Hammer" })];
+
+    chain.throttled.add(throttled.id);
+    const pass = await drainChainOps(d, chain);
+    expect(pass.deferred).toBe(1);
+    expect(pass.error).toMatch(/OutflowLimit/);
+    expect(pass.stoppedAt).toBeNull(); // the pass went on
+    // The vaults queued behind the refused settlement opened all the same.
+    for (const o of others) expect(await chain.hasVault(o.id)).toBe(true);
+    const [refused] = await d.select().from(chainOps).where(eq(chainOps.id, (await d.select().from(chainOps).where(eq(chainOps.matchId, lost!)))[0]!.id));
+    expect(refused!.status).toBe("pending");
+    expect(refused!.lastError).toMatch(/OutflowLimit/);
+
+    // Its window comes round: the next pass lands it, and the chain agrees with the ledger again.
+    chain.throttled.clear();
+    expect((await drainChainOps(d, chain)).confirmed).toBeGreaterThan(0);
+    expect((await reconcile(d, chain)).mismatches).toEqual([]);
     await c();
   });
 

@@ -104,9 +104,13 @@ export default function AboutPage() {
             winner&apos;s, and each match gets exactly one on-chain settlement record.
           </p>
           <p>
-            The program checks its own limits. Only the settlement key can settle, a match settles at most once, and
-            one settlement can&apos;t move more than 60. The AI never signs anything. It writes a strategy table and
-            nothing else.
+            The program checks its own limits. Only the settlement key can settle, a match settles at most once, one
+            settlement can&apos;t move more than 60, and no vault can pay out more than 120 in any ten minutes, however
+            many matches the server sends. The AI never signs anything. It writes a strategy table and nothing else.
+          </p>
+          <p>
+            Your agent&apos;s id is derived from your wallet, so the program will record you as its owner and nobody
+            else &mdash; not even the server that made it.
           </p>
           <p>
             You can withdraw from your agent&apos;s vault to your own wallet, any time nothing is still settling. That

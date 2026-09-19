@@ -10,6 +10,7 @@ import { refreshTrueRatings } from "../src/db/rating.js";
 import { PRESET_NAMES } from "../src/index.js";
 import { agents, MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
+import { someWallet } from "./helpers.js";
 
 // Over real HTTP: the tests start a server and use fetch, so routing, headers,
 // status codes and JSON parsing are all exercised.
@@ -240,7 +241,7 @@ describe("GET /ladder", () => {
     expect((await api("/ladder?sort=vibes")).status).toBe(400);
   });
   it("rents the table the owner was shown when they rated the brief, without asking the model again", async () => {
-    const owner = "abababab-1212-4121-8121-abababababab";
+    const owner = someWallet();
     const brief = "raise the weak hands, fold the middle";
     elicitResult = { table: snapshotPreset("Hammer") };
     try {
@@ -279,7 +280,7 @@ describe("POST /preview", () => {
   });
 
   it("rate limits the model-backed path per owner, and says when to retry", async () => {
-    const owner = "dddddddd-4444-4444-8444-dddddddddddd";
+    const owner = someWallet();
     const attempt = () => api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: "aggressive" }) });
     // One free call for a new owner, then the allowance of three.
     for (let i = 0; i < 4; i++) expect((await attempt()).status).toBe(201);
@@ -313,7 +314,7 @@ describe("transport", () => {
 
 describe("play rate limit", () => {
   it("caps matches per owner and keeps the writes bounded", async () => {
-    const owner = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
+    const owner = someWallet();
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Busy", presetName: "Bully" }) }),
     );
@@ -363,7 +364,7 @@ describe("CORS", () => {
 });
 
 describe("staking over HTTP", () => {
-  const owner = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f";
+  const owner = someWallet();
 
   it("seeds a balance on renting and reports it with the ceiling", async () => {
     const created = await readBody(
@@ -430,7 +431,7 @@ describe("staking over HTTP", () => {
 
 describe("first elicitation", () => {
   it("is free for a new owner and charged after that", async () => {
-    const owner = "1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a";
+    const owner = someWallet();
     const first = await readBody(await api("/preview", { method: "POST", owner, body: JSON.stringify({ brief: "play tight" }) }));
     expect(first.elicitation.free).toBe(true);
 
@@ -449,7 +450,7 @@ describe("first elicitation", () => {
 
 describe("sharing and the roster", () => {
   it("GET /matches/:id carries a summary a share card can use", async () => {
-    const owner = "5b5b5b5b-5b5b-4b5b-8b5b-5b5b5b5b5b5b";
+    const owner = someWallet();
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Sharer", presetName: "Mirage" }) }),
     );
@@ -590,7 +591,7 @@ describe("client address for rate limits", () => {
 
 describe("match feed and agent pages", () => {
   it("lists recent matches newest first, signed out, with the headline beat and nothing private", async () => {
-    const owner = "6c6c6c6c-6c6c-4c6c-8c6c-6c6c6c6c6c6c";
+    const owner = someWallet();
     const secret = "the secret plan nobody else may read";
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Feeder", brief: secret }) }),
@@ -628,7 +629,7 @@ describe("match feed and agent pages", () => {
   });
 
   it("lists one agent's matches, and its public page never carries its brief", async () => {
-    const owner = "7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d";
+    const owner = someWallet();
     const secret = "fold everything except the nuts";
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Solo", brief: secret }) }),

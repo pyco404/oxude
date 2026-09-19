@@ -92,6 +92,164 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "openOwnedVault",
+      "docs": [
+        "Opens a player's agent's vault and records its owner, together. The",
+        "agent id must be the hash of that owner's key and the salt, so this is",
+        "the only owner the agent can ever have: whoever sends it, the settler",
+        "included, can't record another, and the record can't be created twice."
+      ],
+      "discriminator": [
+        3,
+        231,
+        93,
+        105,
+        192,
+        1,
+        220,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "mintBudget",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  98,
+                  117,
+                  100,
+                  103,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agentOwner",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "agentId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "salt",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "openVault",
       "docs": [
         "Opens an agent's vault and funds it with its starting balance. Called",
@@ -142,6 +300,30 @@ export type OxudeSettlement = {
           ]
         },
         {
+          "name": "mintBudget",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  98,
+                  117,
+                  100,
+                  103,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "vault",
           "writable": true,
           "pda": {
@@ -183,109 +365,7 @@ export type OxudeSettlement = {
           }
         },
         {
-          "name": "amount",
-          "type": "u64"
-        }
-      ]
-    },
-    {
-      "name": "registerOwner",
-      "docs": [
-        "Records who owns an agent. Settler-only, and only once per agent: the",
-        "record is a PDA that cannot be created twice, so an owner once set can",
-        "never be changed - not by the server, not by anyone."
-      ],
-      "discriminator": [
-        207,
-        189,
-        74,
-        108,
-        245,
-        244,
-        166,
-        237
-      ],
-      "accounts": [
-        {
-          "name": "settler",
-          "writable": true,
-          "signer": true,
-          "relations": [
-            "config"
-          ]
-        },
-        {
-          "name": "config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "vault",
-          "docs": [
-            "The agent must have a vault: an owner for nothing is meaningless."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "agentId"
-              }
-            ]
-          }
-        },
-        {
-          "name": "agentOwner",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  111,
-                  119,
-                  110,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "agentId"
-              }
-            ]
-          }
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "agentId",
+          "name": "salt",
           "type": {
             "array": [
               "u8",
@@ -294,8 +374,8 @@ export type OxudeSettlement = {
           }
         },
         {
-          "name": "owner",
-          "type": "pubkey"
+          "name": "amount",
+          "type": "u64"
         }
       ]
     },
@@ -383,6 +463,33 @@ export type OxudeSettlement = {
               {
                 "kind": "arg",
                 "path": "toAgent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "outflow",
+          "docs": [
+            "The paying vault's outflow window, made the first time it pays."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  117,
+                  116,
+                  102,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "fromAgent"
               }
             ]
           }
@@ -660,6 +767,32 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "mintBudget",
+      "discriminator": [
+        181,
+        222,
+        114,
+        222,
+        106,
+        138,
+        162,
+        11
+      ]
+    },
+    {
+      "name": "outflow",
+      "discriminator": [
+        243,
+        63,
+        238,
+        64,
+        255,
+        74,
+        205,
+        145
+      ]
+    },
+    {
       "name": "settlement",
       "discriminator": [
         55,
@@ -687,19 +820,6 @@ export type OxudeSettlement = {
     }
   ],
   "events": [
-    {
-      "name": "ownerRegistered",
-      "discriminator": [
-        146,
-        46,
-        22,
-        66,
-        85,
-        131,
-        89,
-        201
-      ]
-    },
     {
       "name": "settled",
       "discriminator": [
@@ -790,6 +910,21 @@ export type OxudeSettlement = {
       "code": 6009,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
+    },
+    {
+      "code": 6010,
+      "name": "agentIdMismatch",
+      "msg": "The agent id isn't the hash of this owner and salt"
+    },
+    {
+      "code": 6011,
+      "name": "outflowLimit",
+      "msg": "This vault has paid out all it can in this window"
+    },
+    {
+      "code": 6012,
+      "name": "mintLimit",
+      "msg": "New vaults have minted all they can in this window"
     }
   ],
   "types": [
@@ -860,22 +995,47 @@ export type OxudeSettlement = {
       }
     },
     {
-      "name": "ownerRegistered",
+      "name": "mintBudget",
+      "docs": [
+        "One for the program: how much new vaults have minted in the current window."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "agentId",
-            "type": {
-              "array": [
-                "u8",
-                16
-              ]
-            }
+            "name": "windowStart",
+            "type": "u64"
           },
           {
-            "name": "owner",
-            "type": "pubkey"
+            "name": "spent",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "outflow",
+      "docs": [
+        "One per agent that has paid out through a settlement: its current window."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "windowStart",
+            "type": "u64"
+          },
+          {
+            "name": "spent",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -981,6 +1141,15 @@ export type OxudeSettlement = {
                 "u8",
                 16
               ]
+            }
+          },
+          {
+            "name": "owner",
+            "docs": [
+              "None for a house agent."
+            ],
+            "type": {
+              "option": "pubkey"
             }
           },
           {

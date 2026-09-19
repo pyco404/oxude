@@ -1,5 +1,5 @@
 import { Transaction } from "@solana/web3.js";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { PreparedWithdrawal } from "../chain/settlement.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
@@ -61,11 +61,18 @@ export async function openWithdrawal(db: Db, agentId: string) {
   return row ?? null;
 }
 
+/** Its owner is on chain: recorded as its vault opened, or, for agents from before that, on its own. */
 async function ownerRegistered(db: Db, agentId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: chainOps.id })
     .from(chainOps)
-    .where(and(eq(chainOps.kind, "register_owner"), eq(chainOps.agentId, agentId), eq(chainOps.status, "confirmed")))
+    .where(
+      and(
+        eq(chainOps.agentId, agentId),
+        eq(chainOps.status, "confirmed"),
+        or(and(eq(chainOps.kind, "open_vault"), isNotNull(chainOps.owner)), eq(chainOps.kind, "register_owner")),
+      ),
+    )
     .limit(1);
   return Boolean(row);
 }
@@ -260,26 +267,3 @@ export async function expireWithdrawal(db: Db, withdrawalId: string, why: string
       .where(and(eq(chainOps.withdrawalId, w.id), eq(chainOps.kind, "withdraw")));
   });
 }
-
-/**
- * Queues an on-chain owner record for every owned agent that has a vault and
- * no record queued yet: the one-time backfill, and harmless to run again.
- */
-export async function queueOwnerRegistrations(db: Db): Promise<number> {
-  const owned = await db
-    .select({ id: agents.id, ownerId: agents.ownerId })
-    .from(agents)
-    .where(
-      and(
-        sql`${agents.ownerId} is not null`,
-        sql`exists (select 1 from ${chainOps} where ${chainOps.agentId} = ${agents.id} and ${chainOps.kind} = 'open_vault')`,
-        sql`not exists (select 1 from ${chainOps} where ${chainOps.agentId} = ${agents.id} and ${chainOps.kind} = 'register_owner')`,
-        isNull(agents.retiredAt),
-      ),
-    );
-  for (const a of owned) {
-    await db.insert(chainOps).values({ kind: "register_owner", agentId: a.id, owner: a.ownerId, amount: 0 });
-  }
-  return owned.length;
-}
-

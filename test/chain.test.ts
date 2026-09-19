@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { ChainClient, PROGRAM_ID, pdas, uuidBytes } from "../src/chain/settlement.js";
+import { agentIdFor, newAgentId } from "../src/agent-id.js";
 import { EventParser } from "@coral-xyz/anchor";
 import { connect, migrate } from "../src/db/client.js";
 import { balanceOf } from "../src/db/ledger.js";
@@ -25,6 +26,22 @@ let admin: Keypair;
 let settler: Keypair;
 let chain: ChainClient;
 const MAX = 60;
+/** Must match the program's constants. */
+const OUTFLOW_CAP = 120;
+
+/** A house vault: an id derived from no owner, and the salt that proves it. */
+async function houseVault(amount: number, via: ChainClient = chain): Promise<string> {
+  const { id, salt } = newAgentId(null);
+  await via.openVault({ agentId: id, owner: null, salt, amount });
+  return id;
+}
+
+/** A player's vault: the id derives from the owner's key, and the program records that owner as it opens. */
+async function playerVault(amount: number, owner: Keypair = Keypair.generate()) {
+  const { id, salt } = newAgentId(owner.publicKey.toBase58());
+  await chain.openVault({ agentId: id, owner: owner.publicKey.toBase58(), salt, amount });
+  return { agent: id, owner };
+}
 
 async function airdrop(to: Keypair, sol: number) {
   const sig = await connection.requestAirdrop(to.publicKey, sol * LAMPORTS_PER_SOL);
@@ -75,17 +92,70 @@ describe.skipIf(!RUN)("settlement program", () => {
   });
 
   it("opens a vault funded with the starting balance", async () => {
-    const agent = randomUUID();
-    await chain.openVault(agent, 180);
-    expect(await chain.vaultBalance(agent)).toBe(180);
+    const { id, salt } = newAgentId(null);
+    await chain.openVault({ agentId: id, owner: null, salt, amount: 180 });
+    expect(await chain.vaultBalance(id)).toBe(180);
     // A vault opens once.
-    await expect(chain.openVault(agent, 180)).rejects.toThrow();
+    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 180 })).rejects.toThrow();
+  });
+
+  it("opens a vault only under the id its owner and salt hash to", async () => {
+    const owner = Keypair.generate().publicKey.toBase58();
+    const { id, salt } = newAgentId(owner);
+    // Somebody else's id, with this owner's key: the hash doesn't match, so no vault.
+    await expect(chain.openVault({ agentId: randomUUID(), owner, salt, amount: 180 })).rejects.toThrow(
+      /AgentIdMismatch/,
+    );
+    // The right id, but claimed for a different owner: the same refusal. Not even
+    // the settler can record anyone but the owner this id belongs to.
+    const impostor = Keypair.generate().publicKey.toBase58();
+    await expect(chain.openVault({ agentId: id, owner: impostor, salt, amount: 180 })).rejects.toThrow(
+      /AgentIdMismatch/,
+    );
+    // A house id can't be passed off as owned either.
+    const house = newAgentId(null);
+    await expect(chain.openVault({ agentId: house.id, owner, salt: house.salt, amount: 180 })).rejects.toThrow(
+      /AgentIdMismatch/,
+    );
+
+    await chain.openVault({ agentId: id, owner, salt, amount: 180 });
+    expect(await chain.ownerOf(id)).toBe(owner);
+    expect(agentIdFor(owner, salt)).toBe(id);
+  });
+
+  it("mints no more than a starting balance into a new vault", async () => {
+    const { id, salt } = newAgentId(null);
+    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 181 })).rejects.toThrow(/OverLimit/);
+    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 0 })).rejects.toThrow(/ZeroAmount/);
+  });
+
+  it("caps what one vault can pay out through settlements in a window", async () => {
+    const payer = await houseVault(180);
+    const payee = await houseVault(10);
+    const bystander = await houseVault(180);
+    let paid = 0;
+    while (paid + MAX <= OUTFLOW_CAP) {
+      await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: MAX });
+      paid += MAX;
+    }
+    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_CAP);
+    // Its window is spent, though the vault still holds enough to pay.
+    await expect(chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 1 })).rejects.toThrow(
+      /OutflowLimit/,
+    );
+    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_CAP);
+    // The limit is per vault: everyone else carries on settling.
+    await chain.settle({ matchId: randomUUID(), fromAgent: bystander, toAgent: payee, amount: MAX });
+    expect(await chain.vaultBalance(bystander)).toBe(120);
+    // And it cannot be dodged by paying a different vault.
+    const elsewhere = await houseVault(10);
+    await expect(
+      chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: elsewhere, amount: 1 }),
+    ).rejects.toThrow(/OutflowLimit/);
   });
 
   it("settles a match between vaults and records it once", async () => {
-    const [a, b] = [randomUUID(), randomUUID()];
-    await chain.openVault(a, 180);
-    await chain.openVault(b, 180);
+    const [a, b] = [await houseVault(180), await houseVault(180)];
     const match = randomUUID();
 
     await chain.settle({ matchId: match, fromAgent: a, toAgent: b, amount: 42 });
@@ -102,9 +172,7 @@ describe.skipIf(!RUN)("settlement program", () => {
   });
 
   it("refuses more than the per-match limit, even from the settler", async () => {
-    const [a, b] = [randomUUID(), randomUUID()];
-    await chain.openVault(a, 180);
-    await chain.openVault(b, 180);
+    const [a, b] = [await houseVault(180), await houseVault(180)];
     await expect(chain.settle({ matchId: randomUUID(), fromAgent: a, toAgent: b, amount: MAX + 1 })).rejects.toThrow(
       /OverLimit|per-match limit/,
     );
@@ -112,9 +180,7 @@ describe.skipIf(!RUN)("settlement program", () => {
   });
 
   it("refuses a vault that cannot cover it, and a self-settlement", async () => {
-    const [poor, rich] = [randomUUID(), randomUUID()];
-    await chain.openVault(poor, 10);
-    await chain.openVault(rich, 180);
+    const [poor, rich] = [await houseVault(10), await houseVault(180)];
     await expect(chain.settle({ matchId: randomUUID(), fromAgent: poor, toAgent: rich, amount: 11 })).rejects.toThrow(
       /InsufficientVault|cannot cover/,
     );
@@ -125,11 +191,12 @@ describe.skipIf(!RUN)("settlement program", () => {
     const intruder = Keypair.generate();
     await airdrop(intruder, 2);
     const rogue = new ChainClient(connection, intruder);
-    const [a, b] = [randomUUID(), randomUUID()];
-    await chain.openVault(a, 180);
-    await chain.openVault(b, 180);
+    const [a, b] = [await houseVault(180), await houseVault(180)];
 
-    await expect(rogue.openVault(randomUUID(), 1_000_000)).rejects.toThrow(/NotSettler|settler/);
+    const mine = newAgentId(null);
+    await expect(
+      rogue.openVault({ agentId: mine.id, owner: null, salt: mine.salt, amount: 180 }),
+    ).rejects.toThrow(/NotSettler|settler/);
     await expect(rogue.settle({ matchId: randomUUID(), fromAgent: a, toAgent: b, amount: 10 })).rejects.toThrow(
       /NotSettler|settler/,
     );
@@ -140,9 +207,11 @@ describe.skipIf(!RUN)("settlement program", () => {
     const { db, close } = await connect();
     await migrate(db);
     const roster = [];
-    for (let i = 0; i < 4; i++) roster.push(await createAgent(db, { name: `Chain ${i}`, presetName: i % 2 ? "Bully" : "Mirage" }));
+    // Low ceilings, so no vault pays out more than one window allows while the test runs.
+    for (let i = 0; i < 4; i++)
+      roster.push(await createAgent(db, { name: `Chain ${i}`, presetName: i % 2 ? "Bully" : "Mirage", maxStake: 15 }));
     let played = 0;
-    for (let seed = 1; played < 12 && seed < 60; seed++) {
+    for (let seed = 1; played < 6 && seed < 60; seed++) {
       const [x, y] = [roster[seed % 4]!, roster[(seed + 1 + (seed % 3)) % 4]!];
       if (x.id === y.id) continue;
       try {
@@ -155,6 +224,7 @@ describe.skipIf(!RUN)("settlement program", () => {
 
     const drained = await drainChainOps(db, chain, { limit: 1000 });
     expect(drained.error).toBeNull();
+    expect(drained.deferred).toBe(0);
     expect(drained.confirmed).toBeGreaterThan(4);
 
     const check = await reconcile(db, chain);
@@ -169,14 +239,8 @@ describe.skipIf(!RUN)("settlement program", () => {
   }, 120_000);
 
   describe("withdrawals", () => {
-    /** Registers an owner for a fresh funded vault; returns the agent and owner. */
-    async function ownedVault(amount = 180) {
-      const agent = randomUUID();
-      const owner = Keypair.generate();
-      await chain.openVault(agent, amount);
-      await chain.registerOwner(agent, owner.publicKey.toBase58());
-      return { agent, owner };
-    }
+    /** A funded vault whose owner the program recorded as it opened. */
+    const ownedVault = (amount = 180) => playerVault(amount);
     /** Builds with the settler's co-signature, adds the owner's, sends. */
     async function withdraw(
       input: { agent: string; owner: Keypair; amount: number; remaining: number; id?: string },
@@ -195,19 +259,18 @@ describe.skipIf(!RUN)("settlement program", () => {
       return { raw, signature: await via.submitWithdrawal(raw, prepared.lastValidBlockHeight) };
     }
 
-    it("records an owner once, and only the settler can", async () => {
-      const agent = randomUUID();
-      await chain.openVault(agent, 50);
-      const intruder = Keypair.generate();
-      await airdrop(intruder, 1);
-      const asIntruder = new ChainClient(connection, intruder);
-      await expect(asIntruder.registerOwner(agent, intruder.publicKey.toBase58())).rejects.toThrow(/Error Code: NotSettler/);
-      const owner = Keypair.generate().publicKey.toBase58();
-      await chain.registerOwner(agent, owner);
-      expect(await chain.ownerOf(agent)).toBe(owner);
-      // Never changed afterwards, not even by the settler.
-      await expect(chain.registerOwner(agent, Keypair.generate().publicKey.toBase58())).rejects.toThrow();
-      expect(await chain.ownerOf(agent)).toBe(owner);
+    it("records the owner as the vault opens, and never another", async () => {
+      const { agent, owner } = await ownedVault(50);
+      expect(await chain.ownerOf(agent)).toBe(owner.publicKey.toBase58());
+      // The record comes with the vault, and a vault opens once: there is no second chance to name an owner.
+      const { id, salt } = newAgentId(owner.publicKey.toBase58());
+      expect(id).not.toBe(agent);
+      await expect(
+        chain.openVault({ agentId: agent, owner: owner.publicKey.toBase58(), salt, amount: 50 }),
+      ).rejects.toThrow();
+      expect(await chain.ownerOf(agent)).toBe(owner.publicKey.toBase58());
+      // A house vault has no owner, so nothing can ever be withdrawn from it.
+      expect(await chain.ownerOf(await houseVault(10))).toBeNull();
     });
 
     it("pays the owner, leaves the vault where the ledger says, and emits an event", async () => {

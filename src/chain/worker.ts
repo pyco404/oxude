@@ -1,17 +1,22 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
+import type { OpenVaultInput } from "./settlement.js";
 import { balancesOf } from "../db/ledger.js";
 import { agents, chainOps, withdrawals, type ChainOpRow } from "../db/schema.js";
 import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
 
 /**
- * Drains the outbox into the settlement program, strictly in order.
+ * Drains the outbox into the settlement program, in order.
  *
  * Order matters: an agent's vault must open before its first settlement, and
- * settlements must land in the order the ledger recorded them or a vault could
- * briefly be asked to pay money it has not received yet. So the worker stops at
- * the first op it cannot complete and tries again from there next time, rather
- * than skipping ahead.
+ * settlements should land in the order the ledger recorded them. The worker
+ * sends ops in that order. When the chain is unreachable it stops at the first
+ * op it cannot send and starts from there next time. When the program refuses
+ * an op - a vault that has paid out its limit for this window, or one that
+ * can't yet cover a payment still queued behind that - the op waits for the
+ * next pass and the rest carry on, so one throttled vault doesn't hold up
+ * everyone else. That is safe because the program checks every balance itself:
+ * an op that overtook one it depends on is refused too, and lands later.
  *
  * Every op is idempotent against the chain: if a previous attempt landed but
  * its confirmation was lost, the vault or the settlement record already exists,
@@ -19,12 +24,11 @@ import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
  */
 
 export type ChainPort = {
-  openVault(agentId: string, amount: number): Promise<string>;
+  openVault(input: OpenVaultInput): Promise<string>;
   settle(input: { matchId: string; fromAgent: string; toAgent: string; amount: number }): Promise<string>;
   hasVault(agentId: string): Promise<boolean>;
   isSettled(matchId: string): Promise<boolean>;
   vaultBalance(agentId: string): Promise<number | null>;
-  registerOwner(agentId: string, owner: string): Promise<string>;
   ownerOf(agentId: string): Promise<string | null>;
   submitWithdrawal(raw: Uint8Array, lastValidBlockHeight: number): Promise<string>;
   isWithdrawn(withdrawalId: string): Promise<boolean>;
@@ -34,7 +38,14 @@ export type ChainPort = {
   settlementSignature?(matchId: string): Promise<string | null>;
 };
 
-export type DrainResult = { confirmed: number; alreadyOnChain: number; stoppedAt: ChainOpRow | null; error: string | null };
+export type DrainResult = {
+  confirmed: number;
+  alreadyOnChain: number;
+  /** Refused by the program this pass (a rate limit, say); tried again next pass. */
+  deferred: number;
+  stoppedAt: ChainOpRow | null;
+  error: string | null;
+};
 
 async function alreadyDone(chain: ChainPort, op: ChainOpRow): Promise<boolean> {
   if (op.kind === "open_vault") return chain.hasVault(op.agentId!);
@@ -43,8 +54,12 @@ async function alreadyDone(chain: ChainPort, op: ChainOpRow): Promise<boolean> {
 }
 
 async function submit(chain: ChainPort, op: ChainOpRow): Promise<string> {
-  if (op.kind === "open_vault") return chain.openVault(op.agentId!, op.amount);
-  if (op.kind === "register_owner") return chain.registerOwner(op.agentId!, op.owner!);
+  if (op.kind === "open_vault") {
+    if (!op.salt) throw new Error("this vault op has no salt; the program opens only vaults whose id derives from one");
+    return chain.openVault({ agentId: op.agentId!, owner: op.owner, salt: op.salt, amount: op.amount });
+  }
+  // Owners are recorded as their vault opens now; an old record that never landed can't be made any more.
+  if (op.kind === "register_owner") throw new Error("register_owner is no longer an instruction");
   return chain.settle({ matchId: op.matchId!, fromAgent: op.fromAgent!, toAgent: op.toAgent!, amount: op.amount });
 }
 
@@ -94,7 +109,7 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
     .orderBy(asc(chainOps.seq))
     .limit(options.limit ?? 100);
 
-  const result: DrainResult = { confirmed: 0, alreadyOnChain: 0, stoppedAt: null, error: null };
+  const result: DrainResult = { confirmed: 0, alreadyOnChain: 0, deferred: 0, stoppedAt: null, error: null };
   for (const op of pending) {
     try {
       if (op.kind === "withdraw") {
@@ -125,8 +140,12 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
         .update(chainOps)
         .set({ attempts: op.attempts + 1, lastError: message.slice(0, 2000), updatedAt: new Date() })
         .where(eq(chainOps.id, op.id));
+      result.error ??= message;
+      if (refusedByProgram(message)) {
+        result.deferred++;
+        continue;
+      }
       result.stoppedAt = op;
-      result.error = message;
       break;
     }
   }
@@ -181,7 +200,7 @@ export function startChainWorker(
       const result = await drainChainOps(db, chain);
       options.onPass?.(result);
     } catch (error) {
-      options.onPass?.({ confirmed: 0, alreadyOnChain: 0, stoppedAt: null, error: String(error) });
+      options.onPass?.({ confirmed: 0, alreadyOnChain: 0, deferred: 0, stoppedAt: null, error: String(error) });
     }
     if (!stopped) timer = setTimeout(() => void pass(), options.intervalMs ?? 5_000);
   };

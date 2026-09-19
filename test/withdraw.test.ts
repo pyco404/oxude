@@ -10,7 +10,7 @@ import { createAgent, runMatch } from "../src/db/runner.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { agents, chainOps, ledger, MIN_STAKE, STARTING_BALANCE, withdrawals } from "../src/db/schema.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
-import type { PreparedWithdrawal } from "../src/chain/settlement.js";
+import type { OpenVaultInput, PreparedWithdrawal } from "../src/chain/settlement.js";
 
 // Withdrawals over real HTTP, against a fake chain that builds real Solana
 // transactions and applies the program's rules to them. The program's own
@@ -29,8 +29,9 @@ class FakeChain implements ChainPort {
   /** Simulates the RPC being unreachable. */
   down = false;
 
-  async openVault(agentId: string, amount: number) {
+  async openVault({ agentId, owner, amount }: OpenVaultInput) {
     this.vaults.set(agentId, amount);
+    if (owner) this.owners.set(agentId, owner);
     return `sig-open-${agentId}`;
   }
   async settle(i: { matchId: string; fromAgent: string; toAgent: string; amount: number }) {
@@ -48,11 +49,6 @@ class FakeChain implements ChainPort {
   }
   async vaultBalance(agentId: string) {
     return this.vaults.get(agentId) ?? null;
-  }
-  async registerOwner(agentId: string, owner: string) {
-    if (this.owners.has(agentId)) throw new Error("already in use");
-    this.owners.set(agentId, owner);
-    return `sig-owner-${agentId}`;
   }
   async ownerOf(agentId: string) {
     return this.owners.get(agentId) ?? null;

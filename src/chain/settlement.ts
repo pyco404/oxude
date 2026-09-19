@@ -40,7 +40,13 @@ export const pdas = {
     PublicKey.findProgramAddressSync([Buffer.from("owner"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
   withdrawal: (withdrawalId: string) =>
     PublicKey.findProgramAddressSync([Buffer.from("withdrawal"), Buffer.from(uuidBytes(withdrawalId))], PROGRAM_ID)[0],
+  outflow: (agentId: string) =>
+    PublicKey.findProgramAddressSync([Buffer.from("outflow"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
+  mintBudget: () => PublicKey.findProgramAddressSync([Buffer.from("mint_budget")], PROGRAM_ID)[0],
 };
+
+/** What opening a vault needs: the id, and the owner and salt it was derived from (src/agent-id.ts). */
+export type OpenVaultInput = { agentId: string; owner: string | null; salt: string; amount: number };
 
 /** A withdrawal built and co-signed by the settler, waiting for the owner's signature. */
 export type PreparedWithdrawal = {
@@ -78,17 +84,28 @@ export class ChainClient {
       .rpc();
   }
 
-  async openVault(agentId: string, amount: number): Promise<string> {
+  /**
+   * Opens an agent's vault with its starting balance. A player's agent has its
+   * owner recorded in the same instruction; the program checks the id is the
+   * hash of that owner and the salt.
+   */
+  async openVault(input: OpenVaultInput): Promise<string> {
+    const salt = Array.from(Buffer.from(input.salt, "hex"));
+    const accounts = {
+      settler: this.signer.publicKey,
+      config: pdas.config(),
+      mint: pdas.mint(),
+      mintBudget: pdas.mintBudget(),
+      vault: pdas.vault(input.agentId),
+      systemProgram: SystemProgram.programId,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    };
+    if (input.owner === null) {
+      return this.program.methods.openVault(uuidBytes(input.agentId), salt, new BN(input.amount)).accountsPartial(accounts).rpc();
+    }
     return this.program.methods
-      .openVault(uuidBytes(agentId), new BN(amount))
-      .accountsPartial({
-        settler: this.signer.publicKey,
-        config: pdas.config(),
-        mint: pdas.mint(),
-        vault: pdas.vault(agentId),
-        systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      .openOwnedVault(uuidBytes(input.agentId), salt, new PublicKey(input.owner), new BN(input.amount))
+      .accountsPartial({ ...accounts, agentOwner: pdas.owner(input.agentId) })
       .rpc();
   }
 
@@ -100,6 +117,7 @@ export class ChainClient {
         config: pdas.config(),
         fromVault: pdas.vault(input.fromAgent),
         toVault: pdas.vault(input.toAgent),
+        outflow: pdas.outflow(input.fromAgent),
         settlement: pdas.settlement(input.matchId),
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -132,20 +150,6 @@ export class ChainClient {
 
   async config() {
     return this.program.account.config.fetch(pdas.config());
-  }
-
-  /** Records an agent's owner on chain. Once per agent; the program refuses a second time. */
-  async registerOwner(agentId: string, owner: string): Promise<string> {
-    return this.program.methods
-      .registerOwner(uuidBytes(agentId), new PublicKey(owner))
-      .accountsPartial({
-        settler: this.signer.publicKey,
-        config: pdas.config(),
-        vault: pdas.vault(agentId),
-        agentOwner: pdas.owner(agentId),
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc();
   }
 
   /** The owner recorded on chain for an agent, or null if none has been. */

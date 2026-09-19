@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { firstFreeMark } from "../marks.js";
+import { newAgentId } from "../agent-id.js";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
 import { OXUDE_RULES, type Stakes } from "../round.js";
@@ -93,10 +94,13 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
   const seed = input.startingBalance ?? STARTING_BALANCE;
   // The agent, its seeded balance and the chain op that funds its vault land
   // together, so a vault can never be owed without an agent or vice versa.
+  // Its id is bound to its owner (src/agent-id.ts): the chain records that owner and no other.
+  const { id, salt } = newAgentId(input.ownerId ?? null);
   return db.transaction(async (tx) => {
   const [row] = await tx
     .insert(agents)
     .values({
+      id,
       name: input.name,
       presetName: input.presetName ?? null,
       brief: input.brief ?? null,
@@ -109,9 +113,8 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
   await tx.insert(ratings).values({ agentId: row!.id });
   // Renting seeds the balance: the first movement in this agent's ledger.
   await record(tx, [{ agentId: row!.id, amount: seed, reason: "rental-seed" }]);
-  await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, amount: seed });
-  // A player's agent gets its owner recorded on chain too, after the vault: that's who can withdraw.
-  if (row!.ownerId) await tx.insert(chainOps).values({ kind: "register_owner", agentId: row!.id, owner: row!.ownerId, amount: 0 });
+  // Opening the vault records a player's agent's owner too: that's who can withdraw.
+  await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, owner: row!.ownerId, salt, amount: seed });
   // Its emoji, unique across all agents, chosen with the agent.
   return { ...row!, mark: await assignMark(tx as unknown as Db, row!.id) };
   });

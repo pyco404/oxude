@@ -29,6 +29,7 @@ import {
   seatAveragedNet,
   type View,
 } from "../src/index.js";
+import { someWallet } from "./helpers.js";
 
 let db: Db;
 let close: () => Promise<void>;
@@ -159,7 +160,7 @@ describe("ratings", () => {
 
 describe("matchmaking", () => {
   it("never pairs an owner with themselves, and prefers the closest rating", async () => {
-    const owner = "11111111-1111-1111-1111-111111111111";
+    const owner = someWallet();
     const other = "22222222-2222-2222-2222-222222222222";
     const me = await addAgent({ name: "Mine", ownerId: owner });
     const sibling = await addAgent({ name: "Also mine", ownerId: owner });
@@ -362,7 +363,7 @@ describe("true rating", () => {
   });
 
   it("is private: absent from the public view of an agent, and owner-gated", async () => {
-    const owner = "33333333-3333-3333-3333-333333333333";
+    const owner = someWallet();
     const mine = await createAgent(db, { name: "Private", ownerId: owner, brief: "secret sauce", presetName: "Hammer" });
     await refreshTrueRatings(db, { force: true });
 

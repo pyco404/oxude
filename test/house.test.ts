@@ -7,6 +7,7 @@ import { createAgent, runExhibition, runMatch } from "../src/db/runner.js";
 import { agentRecord, matchActivity, recentMatches } from "../src/db/feed.js";
 import { pickHousePair, startHouseExhibitions } from "../src/db/house.js";
 import { StakeError } from "../src/db/ledger.js";
+import { someWallet } from "./helpers.js";
 
 const fresh = async () => {
   const c = await connect();
@@ -57,7 +58,7 @@ describe("house exhibitions", () => {
   it("refuses player agents: an exhibition only ever involves the house", async () => {
     const { db, close } = await fresh();
     const house = await createAgent(db, { name: "House", presetName: "Anchor" });
-    const mine = await createAgent(db, { name: "Mine", presetName: "Hammer", ownerId: "wallet-1" });
+    const mine = await createAgent(db, { name: "Mine", presetName: "Hammer", ownerId: someWallet() });
     await expect(runExhibition(db, house.id, mine.id)).rejects.toThrow(StakeError);
     await expect(runExhibition(db, house.id, house.id)).rejects.toThrow(StakeError);
     expect((await db.select({ n: count() }).from(matches))[0]!.n).toBe(0);
@@ -67,7 +68,7 @@ describe("house exhibitions", () => {
   it("spreads pairings across the roster instead of repeating one matchup", async () => {
     const { db, close } = await fresh();
     for (let i = 0; i < 6; i++) await createAgent(db, { name: `H${i}`, presetName: (["Anchor", "Bully", "Mirage"] as const)[i % 3]! });
-    await createAgent(db, { name: "Player", presetName: "Hammer", ownerId: "wallet-2" });
+    await createAgent(db, { name: "Player", presetName: "Hammer", ownerId: someWallet() });
     let state = 7;
     const random = (n: number) => (state = (state * 1103515245 + 12345) % 2 ** 31) % n;
 

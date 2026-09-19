@@ -66,10 +66,6 @@ if (rpc) {
     ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[]))
     : loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
   chain = new ChainClient(new Connection(rpc, "confirmed"), settler);
-  // Every owned agent needs its owner on chain before it can withdraw: queue any that don't have one yet.
-  const { queueOwnerRegistrations } = await import("../src/db/withdrawals.js");
-  const queued = await queueOwnerRegistrations(db);
-  if (queued) console.log(`chain: queued owner records for ${queued} existing agents`);
 }
 
 // A host sets PORT and needs every interface; locally, loopback only.
@@ -94,7 +90,8 @@ if (chain && rpc) {
     intervalMs: Number(process.env["CHAIN_INTERVAL_MS"] ?? 5000),
     onPass: (r) => {
       if (r.confirmed || r.alreadyOnChain || r.error) {
-        console.log(`chain: ${r.confirmed} confirmed, ${r.alreadyOnChain} already on chain${r.error ? `, stopped: ${r.error.slice(0, 160)}` : ""}`);
+        const held = r.stoppedAt ? `, stopped: ${r.error!.slice(0, 160)}` : r.deferred ? `, ${r.deferred} refused for now: ${r.error!.slice(0, 160)}` : "";
+        console.log(`chain: ${r.confirmed} confirmed, ${r.alreadyOnChain} already on chain${held}`);
       }
     },
   });

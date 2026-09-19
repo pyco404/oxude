@@ -200,14 +200,17 @@ export const chainOps = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     /** Submission order: a vault must open before its first settlement. */
     seq: bigserial("seq", { mode: "number" }).notNull(),
+    /** register_owner: only in history; owners are now recorded as their vault opens. */
     kind: text("kind").$type<"open_vault" | "settle" | "register_owner" | "withdraw">().notNull(),
     agentId: uuid("agent_id").references(() => agents.id),
     matchId: uuid("match_id").references(() => matches.id),
     fromAgent: uuid("from_agent").references(() => agents.id),
     toAgent: uuid("to_agent").references(() => agents.id),
     amount: integer("amount").notNull(),
-    /** register_owner: the owner's wallet. */
+    /** open_vault (and, historically, register_owner): the owner's wallet; null for a house agent. */
     owner: text("owner"),
+    /** open_vault: the salt that, hashed with the owner, gives the agent's id (src/agent-id.ts). */
+    salt: text("salt"),
     /** withdraw: which withdrawal, whose signed transaction the op sends. */
     withdrawalId: uuid("withdrawal_id"),
     status: text("status").$type<"pending" | "confirmed" | "failed">().notNull().default("pending"),
