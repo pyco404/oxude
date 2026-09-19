@@ -215,6 +215,35 @@ describe("the worker", () => {
     await c();
   });
 
+  it("gives up on settlements for a vault that can never open, instead of refusing them for ever", async () => {
+    const { db: d, close: c } = await fresh();
+    const stranded = await createAgent(d, { name: "Stranded", presetName: "Anchor" });
+    const rival = await createAgent(d, { name: "Rival", presetName: "Bully" });
+    // As an old rental was: no salt, so its vault can never be opened.
+    await d.update(chainOps).set({ salt: null }).where(eq(chainOps.agentId, stranded.id));
+    let settled: string | null = null;
+    for (let seed = 1; seed <= 60 && !settled; seed++) {
+      const { match, settled: nets } = await runMatch(d, stranded.id, rival.id, { seed });
+      if (nets.A !== 0) settled = match.id;
+    }
+    expect(settled).not.toBeNull();
+
+    const chain = new FakeChain();
+    const pass = await drainChainOps(d, chain);
+    expect(pass.stoppedAt).toBeNull();
+    const ops = await d.select().from(chainOps).orderBy(asc(chainOps.seq));
+    const dead = ops.filter((o) => o.agentId === stranded.id || o.fromAgent === stranded.id || o.toAgent === stranded.id);
+    expect(dead.every((o) => o.status === "failed")).toBe(true);
+    expect(dead.find((o) => o.kind === "settle")!.lastError).toMatch(/can never open/);
+    // The other agent's vault is untouched by any of it.
+    expect(await chain.hasVault(rival.id)).toBe(true);
+    // Nothing is retried on the next pass, and the ledger still says what it said.
+    const again = await drainChainOps(d, chain);
+    expect(again.deferred + again.confirmed).toBe(0);
+    expect(await balanceOf(d, stranded.id)).toBeGreaterThan(0);
+    await c();
+  });
+
   it("does not submit twice when an earlier attempt landed but was never confirmed", async () => {
     const { db: d, close: c } = await fresh();
     const a = await createAgent(d, { name: "A", presetName: "Anchor" });

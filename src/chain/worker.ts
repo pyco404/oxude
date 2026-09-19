@@ -59,17 +59,37 @@ async function submit(chain: ChainPort, op: ChainOpRow): Promise<string> {
 }
 
 /**
- * Why this op can never be sent, if so. Both cases are ops queued by an older
- * version of the server: the program now opens vaults only under an id derived
- * from an owner and salt, and records the owner as it does, so there is no
- * instruction left to send these to. They are marked failed rather than
- * retried forever, so they don't hold up the queue; the ledger is unaffected,
- * and `reconcile` reports the agent as a disagreement to look at.
+ * Why this op can never be sent, if so.
+ *
+ * The first two are ops queued by an older version of the server: the program
+ * now opens vaults only under an id derived from an owner and salt, and records
+ * the owner as it does, so there is no instruction left to send them to. The
+ * third follows from the first: a settlement needs both vaults, and a vault
+ * whose op has failed can never be opened, because its agent's id does not
+ * derive from anything the program would accept.
+ *
+ * They are marked failed rather than retried for ever, so they neither hold up
+ * the queue nor churn against the chain on every pass. The ledger is
+ * unaffected - it is authoritative - and `reconcile` reports the agents whose
+ * vaults now disagree with it.
  */
-function unsendable(op: ChainOpRow): string | null {
+function unsendable(op: ChainOpRow, vaultless: ReadonlySet<string>): string | null {
   if (op.kind === "open_vault" && !op.salt) return "queued before ids were derived from owners: it has no salt, so no vault can be opened under it";
   if (op.kind === "register_owner") return "owners are recorded as their vault opens; register_owner is no longer an instruction";
+  if (op.kind === "settle") {
+    const missing = [op.fromAgent, op.toAgent].filter((id) => id && vaultless.has(id));
+    if (missing.length > 0) return `its vault${missing.length > 1 ? "s" : ""} can never open, so this can never settle on chain`;
+  }
   return null;
+}
+
+/** Agents whose vault op failed for good: nothing involving them can reach the chain. */
+async function vaultlessAgents(db: Db): Promise<Set<string>> {
+  const rows = await db
+    .select({ agentId: chainOps.agentId })
+    .from(chainOps)
+    .where(and(eq(chainOps.kind, "open_vault"), eq(chainOps.status, "failed")));
+  return new Set(rows.map((r) => r.agentId!).filter(Boolean));
 }
 
 /** A refusal the program will give again on any retry: retrying is pointless. */
@@ -118,6 +138,7 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
     .orderBy(asc(chainOps.seq))
     .limit(options.limit ?? 100);
 
+  const vaultless = await vaultlessAgents(db);
   const result: DrainResult = { confirmed: 0, alreadyOnChain: 0, deferred: 0, stoppedAt: null, error: null };
   for (const op of pending) {
     try {
@@ -126,9 +147,11 @@ export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?:
         if (outcome === "done") result.confirmed++;
         continue;
       }
-      const dead = unsendable(op);
+      const dead = unsendable(op, vaultless);
       if (dead && !(await alreadyDone(chain, op))) {
         await db.update(chainOps).set({ status: "failed", lastError: dead, updatedAt: new Date() }).where(eq(chainOps.id, op.id));
+        // A vault that never opened makes every later settlement for that agent dead too.
+        if (op.kind === "open_vault") vaultless.add(op.agentId!);
         result.error ??= dead;
         result.deferred++;
         continue;
