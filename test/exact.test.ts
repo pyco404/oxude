@@ -4,6 +4,7 @@ import {
   CLASSIC_STAKES,
   expectedNet,
   makeStrategy,
+  netDistribution,
   mulberry32,
   nextUint32,
   playMatch,
@@ -11,6 +12,7 @@ import {
   PRESETS,
   seatAveragedNet,
   type Agent,
+  type PresetName,
   type Stakes,
 } from "../src/index.js";
 import { constantAgent } from "./helpers.js";
@@ -121,5 +123,30 @@ describe("stakes in the simulator", () => {
     const log = playMatch(call, call, { ...CLASSIC, seed: 1, stakes: mine });
     mine.ante = 99;
     expect(log.stakes.ante).toBe(4);
+  });
+});
+
+describe("the exact net distribution", () => {
+  const pairs: [string, string][] = [
+    ["Anchor", "Mirage"],
+    ["Hammer", "Bully"],
+    ["Mirage", "Mirage"],
+  ];
+
+  it("is a probability distribution whose mean is the expected net", () => {
+    for (const [a, b] of pairs) {
+      const dist = netDistribution(PRESETS[a as PresetName], PRESETS[b as PresetName]);
+      const total = [...dist.values()].reduce((s, p) => s + p, 0);
+      expect(total).toBeCloseTo(1, 10);
+      const mean = [...dist].reduce((s, [net, p]) => s + net * p, 0);
+      expect(mean).toBeCloseTo(expectedNet(PRESETS[a as PresetName], PRESETS[b as PresetName]), 10);
+      // A match can never move more than one match's maximum exposure.
+      for (const net of dist.keys()) expect(Math.abs(net)).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it("is symmetric for an agent against itself: a tie on average, and mirrored", () => {
+    const dist = netDistribution(PRESETS.Anchor, PRESETS.Anchor);
+    for (const [net, p] of dist) expect(p).toBeCloseTo(dist.get(-net) ?? 0, 12);
   });
 });

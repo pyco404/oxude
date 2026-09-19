@@ -96,3 +96,54 @@ function stateKey(s: MatchState): string {
 export function seatAveragedNet(agent: Agent, opponent: Agent, options: ExactOptions = {}): number {
   return (expectedNet(agent, opponent, options) - expectedNet(opponent, agent, options)) / 2;
 }
+
+/**
+ * The exact distribution of a match's net for seat A: every edge draw and flip
+ * outcome enumerated, as `net -> probability`. Same recursion as
+ * `expectedNet`, carrying the whole distribution instead of its mean, which is
+ * what survival questions need - an agent busts on the tail, not the average.
+ */
+export function netDistribution(agentA: Agent, agentB: Agent, options: ExactOptions = {}): Map<number, number> {
+  const stakes = freezeStakes(options.stakes ?? OXUDE_RULES.stakes);
+  const deal = options.deal ?? OXUDE_RULES.deal;
+  const outcomes = dealOutcomes(deal);
+  const memo = new Map<string, Map<number, number>>();
+
+  const add = (into: Map<number, number>, from: Map<number, number>, shift: number, weight: number) => {
+    for (const [net, p] of from) into.set(net + shift, (into.get(net + shift) ?? 0) + p * weight);
+  };
+
+  const value = (state: MatchState): Map<number, number> => {
+    if (isMatchOver(state)) return new Map([[0, 1]]);
+    const key = stateKey(state);
+    const cached = memo.get(key);
+    if (cached) return cached;
+    const total = new Map<number, number>();
+    for (const outcome of outcomes) {
+      const edges = { A: outcome.A, B: outcome.B };
+      const { actions } = decideRound(agentA, agentB, state, edges, stakes);
+      const resolution = resolveActions(actions, stakes);
+      if (resolution.outcome === "both-folded") {
+        add(total, value(advanceState(state, actions, null, 0)), 0, outcome.p);
+      } else if (resolution.outcome === "one-folded") {
+        const { winner, bet } = resolution;
+        add(total, value(advanceState(state, actions, winner, bet)), winner === "A" ? bet : -bet, outcome.p);
+      } else {
+        const { bet } = resolution;
+        const pWin = winProbabilityA(edges, deal);
+        add(total, value(advanceState(state, actions, "A", bet)), bet, outcome.p * pWin);
+        add(total, value(advanceState(state, actions, "B", bet)), -bet, outcome.p * (1 - pWin));
+      }
+    }
+    memo.set(key, total);
+    return total;
+  };
+
+  if ((options.turnOrder ?? OXUDE_RULES.turnOrder) === "simultaneous") return value(initialState(null));
+  if (options.firstLeader) return value(initialState(options.firstLeader));
+  // Alternating: the simulator tosses a fair coin for who leads round one.
+  const both = new Map<number, number>();
+  add(both, value(initialState("A")), 0, 0.5);
+  add(both, value(initialState("B")), 0, 0.5);
+  return both;
+}
