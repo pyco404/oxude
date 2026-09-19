@@ -8,6 +8,9 @@ import {
   signInWith,
   signInWithSigner,
   signOut,
+  signTransactionWith,
+  fromBase64,
+  toBase64,
   type Session,
   type WalletName,
 } from "@/lib/wallet";
@@ -74,6 +77,8 @@ type WalletState = {
   /** Why Privy isn't available, when it failed. */
   privyReason: string | null;
   connectPrivy: () => Promise<void>;
+  /** Signs a prepared withdrawal (base64) with whichever wallet signed in; returns it signed, base64. */
+  signWithdrawal: (prepared: string) => Promise<string>;
 };
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -143,6 +148,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [privy]);
 
+  const signWithdrawal = useCallback(
+    async (prepared: string) => {
+      if (!session) throw new Error("sign in first");
+      if (session.wallet !== "Privy") return signTransactionWith(session, prepared);
+      if (!privy) throw new Error("email or X sign-in isn't available in this browser right now");
+      return toBase64(await privy.signTransaction(fromBase64(prepared)));
+    },
+    [session, privy],
+  );
+
   const disconnect = useCallback(async () => {
     setBusy("disconnect");
     setError(null);
@@ -170,6 +185,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         privyStatus,
         privyReason,
         connectPrivy,
+        signWithdrawal,
       }}
     >
       {children}

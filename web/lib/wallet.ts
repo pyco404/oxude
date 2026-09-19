@@ -17,6 +17,8 @@ type InjectedProvider = {
   connect(): Promise<{ publicKey?: PublicKeyLike } | boolean | void>;
   disconnect?(): Promise<void>;
   signMessage(message: Uint8Array, display?: "utf8" | "hex"): Promise<SignResult>;
+  /** Signs a web3.js Transaction and returns it signed. Used only for withdrawals. */
+  signTransaction?<T>(transaction: T): Promise<T>;
 };
 
 type WalletWindow = Window & {
@@ -140,5 +142,33 @@ export async function signOut(session: Session | null): Promise<void> {
   }
   saveSession(null);
 }
+
+/**
+ * Signs a withdrawal the server prepared (base64, already co-signed by the
+ * settler) with an extension wallet, and returns it base64. Unlike sign-in this
+ * is a real transaction: it moves tokens from the vault to this wallet. The
+ * fee is paid by the server. web3.js loads only here, when someone withdraws.
+ */
+export async function signTransactionWith(session: Session, prepared: string): Promise<string> {
+  if (session.wallet === "Privy") throw new Error("an email or X wallet signs through Privy");
+  const provider = providerFor(session.wallet);
+  if (!provider?.signTransaction) throw new Error(`${session.wallet} can't sign transactions here`);
+  if (!provider.publicKey) await provider.connect();
+  const connected = provider.publicKey?.toBase58?.() ?? provider.publicKey?.toString();
+  if (connected !== session.ownerId) {
+    throw new Error(`${session.wallet} is on a different account: switch it to ${shortKey(session.ownerId)} and try again`);
+  }
+  const { Transaction } = await import("@solana/web3.js");
+  const signed = await provider.signTransaction(Transaction.from(fromBase64(prepared)));
+  return toBase64(signed.serialize({ requireAllSignatures: false, verifySignatures: false }));
+}
+
+// Browsers have no Buffer global; base64 by hand.
+export const fromBase64 = (b64: string): Uint8Array => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+export const toBase64 = (bytes: Uint8Array): string => {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
 
 export const shortKey = (key: string) => `${key.slice(0, 4)}…${key.slice(-4)}`;

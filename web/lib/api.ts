@@ -83,6 +83,16 @@ export type FeedItem = {
 export type Feed = { matches: FeedItem[]; bluff: FeedItem | null };
 export type AgentRecord = { wins: number; losses: number; level: number };
 
+/** What an owner can take from an agent's vault now, and what's locked while matches settle. */
+export type Withdrawable = {
+  balance: number;
+  withdrawable: number;
+  locked: number;
+  maxPartial: number;
+  minStake: number;
+  reason: string | null;
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -138,6 +148,22 @@ export const api = {
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
   roster: (band?: string) =>
     request<{ agents: RosterAgent[]; counts?: Record<string, number> }>(band ? `/roster?band=${band}` : "/roster"),
+  withdrawable: (token: string | null, id: string) => request<{ withdrawable: Withdrawable }>(`/agents/${id}/withdrawable`, { token }),
+  prepareWithdrawal: (token: string | null, id: string, amount: number | "all") =>
+    request<{ withdrawal: { withdrawalId: string; amount: number; remaining: number; retire: boolean; transaction: string } }>(
+      `/agents/${id}/withdrawals`,
+      { method: "POST", token, body: JSON.stringify({ amount }) },
+    ),
+  submitWithdrawal: (token: string | null, withdrawalId: string, transaction: string) =>
+    request<{ withdrawal: { status: "submitted" | "confirmed" | "expired"; signature: string | null } }>(
+      `/withdrawals/${withdrawalId}/submit`,
+      { method: "POST", token, body: JSON.stringify({ transaction }) },
+    ),
+  withdrawal: (token: string | null, withdrawalId: string) =>
+    request<{ withdrawal: { status: "prepared" | "submitted" | "confirmed" | "expired"; signature: string | null; error: string | null } }>(
+      `/withdrawals/${withdrawalId}`,
+      { token },
+    ),
   feed: (limit = 12, before?: number) =>
     request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
   ladder: (sort: "winnings" | "per-match", limit = 25) =>

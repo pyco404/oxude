@@ -8,6 +8,7 @@ import { LadderPanel } from "@/app/ladder-panel";
 import { Segmented } from "@/app/ui";
 import { PrivyOption } from "@/app/privy-option";
 import { useWallet } from "@/app/wallet-context";
+import { WithdrawPanel } from "@/app/withdraw-panel";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
 import {
@@ -217,6 +218,11 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       onRelease={release}
       busy={busy === "play"}
       lastPlay={lastPlay}
+      onWithdrawn={() => {
+        const id = agent.id ?? agent.agentId;
+        if (id) void refreshAgent(id, token);
+        setLadderKey((k) => k + 1);
+      }}
       onCeiling={(value) =>
         run("ceiling", async () => {
           const id = agent.id ?? agent.agentId;
@@ -642,6 +648,7 @@ function AgentCard({
   busy,
   lastPlay,
   onCeiling,
+  onWithdrawn,
 }: {
   agent: AgentView;
   onPlay: () => void;
@@ -649,6 +656,8 @@ function AgentCard({
   busy: boolean;
   lastPlay: PlayResult | null;
   onCeiling: (value: number) => void;
+  /** After a withdrawal: the balance and maybe retirement changed. */
+  onWithdrawn: () => void;
 }) {
   const retired = agent.retired === true;
   return (
@@ -680,8 +689,8 @@ function AgentCard({
 
         {retired ? (
           <p className="mt-3 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
-            Out of money and retired: {agent.balance ?? 0} left, too little to cover a stake. Its record is frozen
-            at {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
+            Retired with {agent.balance ?? 0} left: it can&apos;t play again. Its record is frozen at{" "}
+            {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
           </p>
         ) : (
           <div className="mt-3 flex items-center gap-2">
@@ -727,6 +736,16 @@ function AgentCard({
             · paired by {lastPlay.matchmaking.path.replace("-", " ")}
           </p>
         ) : null}
+
+        {/* Stays mounted when the agent retires, so the withdrawal that retired it can say so. */}
+        {!(agent.id ?? agent.agentId) ? null : (
+          <WithdrawPanel
+            agentId={(agent.id ?? agent.agentId)!}
+            agentName={agent.name}
+            refreshKey={`${agent.balance ?? ""}-${agent.matchesPlayed ?? ""}`}
+            onChanged={onWithdrawn}
+          />
+        )}
       </div>
     </section>
   );
