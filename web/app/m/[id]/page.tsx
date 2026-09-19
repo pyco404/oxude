@@ -1,3 +1,4 @@
+import { AgentMark } from "@/app/agent-name";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Page, PageNote } from "@/app/site-header";
@@ -67,10 +68,12 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       <section className="border border-line bg-panel lg:sticky lg:top-8">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
           <Link href={`/a/${match.agentA.id}`} className="hover:text-red">
+            <AgentMark preset={match.agentA.presetName} />
             {summary.names.A}
           </Link>{" "}
           <span className="text-muted">vs</span>{" "}
           <Link href={`/a/${match.agentB.id}`} className="hover:text-red">
+            <AgentMark preset={match.agentB.presetName} />
             {summary.names.B}
           </Link>
         </h1>

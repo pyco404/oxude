@@ -1,3 +1,4 @@
+import { agentMark } from "@/lib/agent-mark";
 import { ImageResponse } from "next/og";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -43,8 +44,11 @@ export default async function Image({ params }: { params: Promise<{ id: string }
             // Lead with whoever came out ahead on money - the number a reader
             // reads first must be the positive one, or a win looks like a loss.
             const aheadSeat = summary.netA > 0 ? "A" : summary.netB > 0 ? "B" : null;
-            const ahead = aheadSeat === null ? null : summary.names[aheadSeat];
-            const behind = aheadSeat === null ? null : summary.names[aheadSeat === "A" ? "B" : "A"];
+            // Each name carries its playstyle mark, as everywhere else on the site.
+            const marked = (seat: "A" | "B") =>
+              `${agentMark(seat === "A" ? data?.match.agentA.presetName : data?.match.agentB.presetName).emoji} ${summary.names[seat]}`;
+            const ahead = aheadSeat === null ? null : marked(aheadSeat);
+            const behind = aheadSeat === null ? null : marked(aheadSeat === "A" ? "B" : "A");
             const amount = aheadSeat === "A" ? summary.netA : summary.netB;
             return (
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -59,9 +63,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <div style={{ fontSize: 52, display: "flex", gap: 18, alignItems: "baseline" }}>
-                      <span>{summary.names.A}</span>
+                      <span>{marked("A")}</span>
                       <span style={{ color: "#8a8a93", fontSize: 34 }}>vs</span>
-                      <span>{summary.names.B}</span>
+                      <span>{marked("B")}</span>
                     </div>
                     <div style={{ fontSize: 96, color: "#8a8a93", fontWeight: 700, display: "flex" }}>Level</div>
                   </div>
@@ -85,6 +89,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         </div>
       </div>
     ),
-    size,
+    // The image renderer has no emoji font of its own: draw emoji as Twemoji images.
+    { ...size, emoji: "twemoji" },
   );
 }

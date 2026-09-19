@@ -4,8 +4,8 @@ import { API } from "@/lib/api";
 export type MatchPayload = {
   match: {
     id: string;
-    agentA: { id: string; name: string };
-    agentB: { id: string; name: string };
+    agentA: { id: string; name: string; presetName: string | null };
+    agentB: { id: string; name: string; presetName: string | null };
     winner: "A" | "B" | null;
     netA: number;
     netB: number;
@@ -16,6 +16,7 @@ export type MatchPayload = {
   };
   summary: {
     names: { A: string; B: string };
+    presets?: { A: string | null; B: string | null };
     netA: number;
     netB: number;
     winnerName: string | null;

@@ -1,5 +1,6 @@
 "use client";
 
+import { AgentMark } from "@/app/agent-name";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
@@ -534,7 +535,10 @@ function PresetCard({
         }`}
       >
         <span className="flex items-baseline justify-between gap-3">
-          <span className="text-[15px] font-medium">{preset.name}</span>
+          <span className="text-[15px] font-medium">
+            <AgentMark preset={preset.name} />
+            {preset.name}
+          </span>
           {/* The final figure is what screen readers get, not the frames in between. */}
           <span className="font-mono text-[12px] text-muted" aria-label={rating === undefined ? undefined : `${money(rating, 3)} per match`}>
             {shown === undefined ? "…" : `${money(shown, 3)} / match`}
@@ -611,7 +615,10 @@ function RosterPanel({
           <ul>
             {agents.slice(0, 8).map((a) => (
               <li key={a.agentId} className="flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0">
-                <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  <AgentMark preset={a.presetName} />
+                  {a.name}
+                </span>
                 <span className="w-14 shrink-0 font-mono text-[10px] text-muted">{a.presetName ?? "brief"}</span>
                 <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
                 <span className="w-12 shrink-0 text-right font-mono text-[11px]">{a.balance}</span>
@@ -654,7 +661,10 @@ function AgentCard({
       </h2>
       <div className="p-3">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="text-lg font-medium">{agent.name}</p>
+          <p className="text-lg font-medium">
+            <AgentMark preset={agent.presetName} />
+            {agent.name}
+          </p>
           <span className="font-mono text-[11px] text-muted">{agent.presetName ?? "your brief"}</span>
         </div>
 

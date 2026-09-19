@@ -1,3 +1,4 @@
+import { AgentMark } from "@/app/agent-name";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Page, PageNote } from "@/app/site-header";
@@ -47,6 +48,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
         <span className="min-w-0 flex-1 truncate">
           <span className="text-muted">vs </span>
           <Link href={`/a/${opponent.id}`} className="hover:text-red">
+            <AgentMark preset={opponent.presetName} />
             {opponent.name}
           </Link>
         </span>
@@ -102,7 +104,10 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
       <section className="border border-line bg-panel lg:sticky lg:top-8">
         <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-          <h1 className="min-w-0 truncate text-[15px]">{agent.name}</h1>
+          <h1 className="min-w-0 truncate text-[15px]">
+            <AgentMark preset={agent.presetName} />
+            {agent.name}
+          </h1>
           {agent.retired ? (
             <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
               retired

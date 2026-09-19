@@ -67,8 +67,8 @@ export type FeedItem = {
   id: string;
   seq: number;
   createdAt: string;
-  a: { id: string; name: string };
-  b: { id: string; name: string };
+  a: { id: string; name: string; presetName: string | null };
+  b: { id: string; name: string; presetName: string | null };
   winner: "A" | "B" | null;
   netA: number;
   netB: number;

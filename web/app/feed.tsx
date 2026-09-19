@@ -1,5 +1,6 @@
 "use client";
 
+import { AgentMark } from "@/app/agent-name";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Feed, type FeedItem } from "@/lib/api";
@@ -64,6 +65,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         <p className="mt-2 text-[13px] leading-5 text-muted">
           The weaker hand raised and the stronger one folded.{" "}
           <Link href={`/a/${who.id}`} className="text-text hover:text-red">
+            <AgentMark preset={who.presetName} />
             {who.name}
           </Link>{" "}
           finished the match <span className="font-mono text-text">{signed(net)}</span>
@@ -120,21 +122,25 @@ export function LiveFeed({
                 {o ? (
                   <span className="min-w-0 flex-1 truncate">
                     <Link href={`/a/${o.ahead.id}`} className="hover:text-red">
+                      <AgentMark preset={o.ahead.presetName} />
                       {o.ahead.name}
                     </Link>{" "}
                     <span className="font-mono text-red">{signed(o.amount)}</span>
                     <span className="text-muted"> from </span>
                     <Link href={`/a/${o.behind.id}`} className="text-muted hover:text-red">
+                      <AgentMark preset={o.behind.presetName} />
                       {o.behind.name}
                     </Link>
                   </span>
                 ) : (
                   <span className="min-w-0 flex-1 truncate">
                     <Link href={`/a/${m.a.id}`} className="hover:text-red">
+                      <AgentMark preset={m.a.presetName} />
                       {m.a.name}
                     </Link>
                     <span className="text-muted"> level with </span>
                     <Link href={`/a/${m.b.id}`} className="hover:text-red">
+                      <AgentMark preset={m.b.presetName} />
                       {m.b.name}
                     </Link>
                   </span>

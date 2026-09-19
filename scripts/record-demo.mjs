@@ -227,7 +227,8 @@ try {
 
   // 3. Rent Mirage.
   log("rent Mirage");
-  const mirage = page.locator("li button", { hasText: /^Mirage/ }).first();
+  // The card may lead with the preset's emoji.
+  const mirage = page.locator("li button", { hasText: /^(?:\p{Extended_Pictographic}\s*)?Mirage/u }).first();
   await mirage.waitFor({ timeout: 30000 });
   mark("rent");
   await click(mirage);
