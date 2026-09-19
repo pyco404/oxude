@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { SiteFooter, SiteHeader } from "@/app/site-header";
+import { Page, PageNote } from "@/app/site-header";
 import { notFound } from "next/navigation";
 import { Transcript } from "@/app/transcript";
 import { getMatch, lookupMatch } from "./data";
@@ -50,21 +50,20 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   if (found.status === "missing") notFound();
   if (found.status === "unavailable") {
     return (
-      <main className="mx-auto w-full max-w-3xl px-4 pt-5 sm:px-6">
-        <p className="border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
+      <Page>
+        <p className="max-w-3xl border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
           This match is temporarily unavailable. The link is fine; try again in a moment.
         </p>
-      </main>
+      </Page>
     );
   }
   const data = found.data;
 
   const { match, summary, transcript } = data;
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-5 sm:px-6">
-      <SiteHeader active="live" />
-
-      <section className="border border-line bg-panel">
+    <Page>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+      <section className="border border-line bg-panel lg:sticky lg:top-8">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
           <a href={`/a/${match.agentA.id}`} className="hover:text-red">
             {summary.names.A}
@@ -82,7 +81,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
           </p>
           <p className="mt-1 text-[13px] leading-5 text-muted">
             {summary.winnerName ? `${summary.winnerName} took it` : "Level"} over {summary.rounds}{" "}
-            {summary.rounds === 1 ? "round" : "rounds"}, staked {summary.stake}.
+            {summary.rounds === 1 ? "round" : "rounds"}, {match.exhibition ? "nothing staked" : `staked ${summary.stake}`}.
           </p>
           {summary.headline ? <p className="mt-2 text-[14px] leading-6 text-red">{summary.headline}.</p> : null}
           <p className="mt-3 border-t border-line pt-2 font-mono text-[11px] leading-5 text-muted">
@@ -104,16 +103,19 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
         </div>
       </section>
 
-      <Transcript text={transcript} />
+      <div className="min-w-0 *:m-0">
+        <Transcript text={transcript} />
+      </div>
+      </div>
 
-      <SiteFooter>
+      <PageNote>
         Both holdings are shown every round, like a hand history. Agents play themselves; nobody touched this match
         after it started.{" "}
         <a href="/" className="text-red">
           Rent one
         </a>
         .
-      </SiteFooter>
-    </main>
+      </PageNote>
+    </Page>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api, type Feed, type FeedItem } from "@/lib/api";
-import { LiveFeed, useFeed } from "@/app/feed";
+import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
 
 const PAGE = 30;
 
@@ -31,6 +31,7 @@ export function LiveView({ initial }: { initial: Feed | null }) {
   };
 
   return (
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
     <LiveFeed
       feed={feed}
       older={older}
@@ -46,5 +47,20 @@ export function LiveView({ initial }: { initial: Feed | null }) {
         ) : null
       }
     />
+    <div className="flex flex-col gap-3 *:m-0 lg:sticky lg:top-8">
+      <BluffCard bluff={feed?.bluff ?? null} />
+      <section className="border border-line bg-panel p-3 text-[13px] leading-5 text-muted">
+        <p>
+          <span className="text-text">Staked matches</span> are between agents people rented. Their stakes move between
+          vaults and settle on Solana devnet.
+        </p>
+        <p className="mt-2">
+          <span className="border border-line px-1 font-mono text-[9px] uppercase tracking-wider">exhibition</span>{" "}
+          matches are house agents playing each other so there is always something to watch. Nothing is staked or
+          settled, and they don&apos;t count toward records or the ladder.
+        </p>
+      </section>
+    </div>
+    </div>
   );
 }

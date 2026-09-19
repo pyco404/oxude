@@ -5,7 +5,7 @@ import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
 import { LadderPanel } from "@/app/ladder-panel";
 import { Segmented } from "@/app/ui";
-import { SiteFooter, SiteHeader } from "@/app/site-header";
+import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
 import {
   installedWallets,
@@ -221,8 +221,53 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     setLastPlay(null);
   };
 
+  const agentOrRent = agent ? (
+    <AgentCard
+      agent={agent}
+      onPlay={play}
+      onRelease={release}
+      busy={busy === "play"}
+      lastPlay={lastPlay}
+      onCeiling={(value) =>
+        run("ceiling", async () => {
+          const id = agent.id ?? agent.agentId;
+          if (!id) return;
+          await api.setCeiling(token, id, value);
+          await refreshAgent(id, token);
+        })
+      }
+    />
+  ) : (
+    <RentPanel
+      tab={tab}
+      setTab={setTab}
+      presets={presets}
+      chosen={chosen}
+      setChosen={setChosen}
+      brief={brief}
+      setBrief={setBrief}
+      name={name}
+      setName={setName}
+      onRent={rent}
+      busy={busy === "rent"}
+      autoPreview={autoPreview}
+      setAutoPreview={setAutoPreview}
+      onRateBrief={ratePaidBrief}
+      previewing={previewing}
+      paidCalls={paidCalls}
+      firstFree={!firstFreeUsed}
+      ceiling={ceiling}
+      setCeiling={(n) => {
+        ceilingTouched.current = true;
+        setCeiling(n);
+      }}
+      presetRatings={presetRatings}
+      signedIn={Boolean(session)}
+    />
+  );
+
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-6">
+    <main className="w-full px-4 pb-10 pt-5 lg:px-10 lg:pt-8">
       <Header session={session} onDisconnect={disconnect} busy={busy === "disconnect"} />
 
       {error ? (
@@ -231,97 +276,58 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         </p>
       ) : null}
 
-      {/* Signed out, the game comes first: a bluff and the live feed, then the ask. */}
-      {session ? null : (
-        <>
-          <BluffCard bluff={feed?.bluff ?? null} />
-          <LiveFeed feed={feed} className="mb-3" />
-          <ConnectPanel wallets={wallets} onConnect={connect} busy={busy === "connect"} />
-        </>
-      )}
+      {/* Two columns from lg: the game on the left, renting on the right. Below lg they stack in this order. */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
+        <div className="flex min-w-0 flex-col gap-3 *:m-0">
+          {/* Signed out, the game comes first: a bluff and the live feed, then the ask. */}
+          {session ? null : (
+            <>
+              <BluffCard bluff={feed?.bluff ?? null} />
+              <LiveFeed feed={feed} />
+            </>
+          )}
+          {session ? agentOrRent : null}
+          {session ? <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} /> : null}
+          {session ? <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} /> : null}
+        </div>
 
-      {agent ? (
-        <AgentCard
-          agent={agent}
-          onPlay={play}
-          onRelease={release}
-          busy={busy === "play"}
-          lastPlay={lastPlay}
-          onCeiling={(value) =>
-            run("ceiling", async () => {
-              const id = agent.id ?? agent.agentId;
-              if (!id) return;
-              await api.setCeiling(token, id, value);
-              await refreshAgent(id, token);
-            })
-          }
-        />
-      ) : (
-        <RentPanel
-          tab={tab}
-          setTab={setTab}
-          presets={presets}
-          chosen={chosen}
-          setChosen={setChosen}
-          brief={brief}
-          setBrief={setBrief}
-          name={name}
-          setName={setName}
-          onRent={rent}
-          busy={busy === "rent"}
-          autoPreview={autoPreview}
-          setAutoPreview={setAutoPreview}
-          onRateBrief={ratePaidBrief}
-          previewing={previewing}
-          paidCalls={paidCalls}
-          firstFree={!firstFreeUsed}
-          ceiling={ceiling}
-          setCeiling={(n) => {
-            ceilingTouched.current = true;
-            setCeiling(n);
-          }}
-          presetRatings={presetRatings}
-          signedIn={Boolean(session)}
-        />
-      )}
-
-      <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />
-      <RosterPanel
-        band={band}
-        agents={roster ? roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId)) : roster}
-        fromAgent={Boolean(agent)}
-      />
-      <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} />
-      {session ? <LiveFeed feed={feed} className="mt-3" /> : null}
-      <LadderPanel refreshKey={ladderKey} mine={agent?.id ?? agent?.agentId} />
-      <SiteFooter>
+        <div className="flex min-w-0 flex-col gap-3 *:m-0">
+          {session ? null : <ConnectPanel wallets={wallets} onConnect={connect} busy={busy === "connect"} />}
+          {session ? null : agentOrRent}
+          {session ? null : <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />}
+          <RosterPanel
+            band={band}
+            agents={roster ? roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId)) : roster}
+            fromAgent={Boolean(agent)}
+          />
+          {session ? <LiveFeed feed={feed} /> : null}
+          <LadderPanel refreshKey={ladderKey} mine={agent?.id ?? agent?.agentId} />
+        </div>
+      </div>
+      <PageNote>
         Ratings shown to you are exact against the roster as it stands today. The ladder ranks what agents actually won.
-      </SiteFooter>
+      </PageNote>
     </main>
   );
 }
 
 function Header({ session, onDisconnect, busy }: { session: Session | null; onDisconnect: () => void; busy: boolean }) {
   return (
-    <>
-      <SiteHeader
-        right={
-          session ? (
-            <button
-              onClick={onDisconnect}
-              disabled={busy}
-              className="border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red"
-              title="Sign out"
-            >
-              {shortKey(session.ownerId)}
-            </button>
-          ) : null
-        }
-      />
-      <p className="-mt-1 mb-4 text-[13px] leading-5 text-muted">
+    <div className="mb-4 flex items-start justify-between gap-3">
+      <p className="max-w-2xl text-[13px] leading-5 text-muted lg:text-[15px] lg:leading-6">
         AI agents play bluff-and-fold against each other, staked and settled on Solana. Every hand is shown.
       </p>
-    </>
+      {session ? (
+        <button
+          onClick={onDisconnect}
+          disabled={busy}
+          className="shrink-0 border border-line px-2 py-1 font-mono text-[11px] text-muted hover:text-red"
+          title="Sign out"
+        >
+          {shortKey(session.ownerId)}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

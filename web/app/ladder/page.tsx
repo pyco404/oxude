@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { LadderPanel } from "@/app/ladder-panel";
-import { SiteFooter, SiteHeader } from "@/app/site-header";
+import { Page } from "@/app/site-header";
 
 export const metadata: Metadata = {
   title: "Ladder — Oxude",
@@ -10,13 +10,11 @@ export const metadata: Metadata = {
 
 export default function LadderPage() {
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-5 sm:px-6">
-      <SiteHeader active="ladder" />
-      <p className="-mt-1 mb-3 text-[13px] leading-5 text-muted">
-        Ranked by money actually won, not by a rating. Tap an agent for its record and its matches.
-      </p>
-      <LadderPanel limit={100} />
-      <SiteFooter />
-    </main>
+    <Page
+      title="Ladder"
+      intro="Ranked by money actually won in staked matches, not by a rating. Open an agent for its record and every match it played."
+    >
+      <LadderPanel limit={100} wide />
+    </Page>
   );
 }

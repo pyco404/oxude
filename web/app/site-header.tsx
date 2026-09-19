@@ -1,56 +1,47 @@
 import type { ReactNode } from "react";
 
-export type Section = "live" | "ladder" | "how" | null;
+/**
+ * /rewards announces the token before it exists. It is linked unless
+ * NEXT_PUBLIC_SHOW_REWARDS is "false", so it can be hidden without a code change.
+ */
+export const REWARDS_LINKED = process.env.NEXT_PUBLIC_SHOW_REWARDS !== "false";
 
-const LINKS: { key: Exclude<Section, null>; href: string; label: string }[] = [
-  { key: "live", href: "/live", label: "Live" },
-  { key: "ladder", href: "/ladder", label: "Ladder" },
-  { key: "how", href: "/how", label: "How it works" },
-];
-
-/** The same header on every page: the mark, the three sections, and an optional slot (the wallet button on home). */
-export function SiteHeader({ active = null, right }: { active?: Section; right?: ReactNode }) {
+/** Every page's frame: full width to the right of the sidebar, a title, and an optional one-line intro. */
+export function Page({ title, intro, children }: { title?: string; intro?: ReactNode; children: ReactNode }) {
   return (
-    <header className="mb-4">
-      <div className="flex items-center justify-between gap-2">
-        <a href="/" className="flex items-center gap-2 text-2xl font-semibold tracking-[0.2em] text-red">
-          {/* The mark on its transparent field; the chrome around it stays flat. */}
-          <img src="/oxude-tb.png" alt="" width={32} height={32} className="h-8 w-8" />
-          OXUDE
-        </a>
-        {right}
-      </div>
-      <nav className="mt-3 flex border border-line" aria-label="Sections">
-        {LINKS.map((l) => (
-          <a
-            key={l.key}
-            href={l.href}
-            aria-current={active === l.key ? "page" : undefined}
-            className={`flex-1 border-r border-line px-2 py-2 text-center text-[12px] uppercase tracking-wider last:border-r-0 ${
-              active === l.key ? "bg-red font-medium text-ink" : "bg-panel text-muted hover:text-text"
-            }`}
-          >
-            {l.label}
-          </a>
-        ))}
-      </nav>
-    </header>
+    <main className="w-full px-4 pb-10 pt-5 lg:px-10 lg:pt-8">
+      {title ? <h1 className="text-[22px] font-semibold tracking-wide lg:text-[26px]">{title}</h1> : null}
+      {intro ? <p className="mb-4 mt-1 max-w-3xl text-[13px] leading-5 text-muted lg:text-[14px]">{intro}</p> : null}
+      {children}
+    </main>
   );
 }
 
-/** The footer every page ends with. */
-export function SiteFooter({ children }: { children?: ReactNode }) {
+/** A small note under a page's content, specific to that page. */
+export function PageNote({ children }: { children: ReactNode }) {
+  return <p className="mt-6 max-w-3xl border-t border-line pt-4 text-[11px] leading-5 text-muted">{children}</p>;
+}
+
+/** The footer on every page. */
+export function SiteFooter() {
   return (
-    <footer className="mt-8 border-t border-line pt-4 text-[11px] leading-5 text-muted">
-      {children}
-      <p className={children ? "mt-2" : ""}>
-        <a href="https://x.com/OxudeAI" className="text-red" target="_blank" rel="noreferrer">
-          @OxudeAI
-        </a>{" "}
-        on X ·{" "}
-        <a href="https://github.com/pyco404/oxude" className="text-red" target="_blank" rel="noreferrer">
-          source
+    <footer className="border-t border-line px-4 py-4 text-[11px] leading-5 text-muted lg:px-10">
+      <p className="flex flex-wrap gap-x-4 gap-y-1">
+        {REWARDS_LINKED ? (
+          <a href="/rewards" className="hover:text-text">
+            Rewards
+          </a>
+        ) : null}
+        <a href="https://x.com/OxudeAI" className="hover:text-text" target="_blank" rel="noreferrer">
+          @OxudeAI on X
         </a>
+        <a href="https://github.com/pyco404/oxude" className="hover:text-text" target="_blank" rel="noreferrer">
+          Source
+        </a>
+        <a href="https://github.com/pyco404/oxude/blob/main/docs/security.md" className="hover:text-text" target="_blank" rel="noreferrer">
+          Security model
+        </a>
+        <span>Solana devnet. The game token has no value.</span>
       </p>
     </footer>
   );

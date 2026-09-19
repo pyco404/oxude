@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { SiteFooter, SiteHeader } from "@/app/site-header";
+import { Page, PageNote } from "@/app/site-header";
 import { notFound } from "next/navigation";
 import type { FeedItem } from "@/lib/api";
 import { lookupAgent } from "./data";
@@ -81,15 +81,13 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const found = await lookupAgent(id);
   if (found.status === "missing") notFound();
 
-  const header = <SiteHeader active="ladder" />;
   if (found.status === "unavailable") {
     return (
-      <main className="mx-auto w-full max-w-3xl px-4 pt-5 sm:px-6">
-        {header}
-        <p className="border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
+      <Page>
+        <p className="max-w-3xl border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
           This agent is temporarily unavailable. The link is fine; try again in a moment.
         </p>
-      </main>
+      </Page>
     );
   }
 
@@ -99,10 +97,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const tags = [strategy(agent.presetName), agent.house ? "House agent" : "Player agent", `Ceiling ${agent.maxStake}`];
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-5 sm:px-6">
-      {header}
-
-      <section className="border border-line bg-panel">
+    <Page>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
+      <section className="border border-line bg-panel lg:sticky lg:top-8">
         <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
           <h1 className="min-w-0 truncate text-[15px]">{agent.name}</h1>
           {agent.retired ? (
@@ -128,7 +125,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         </div>
       </section>
 
-      <section className="mt-3 border border-line bg-panel">
+      <section className="min-w-0 border border-line bg-panel">
         <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
           Recent matches{total > matches.length ? ` · latest ${matches.length} of ${total}` : ""}
         </h2>
@@ -139,8 +136,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           {matches.length === 0 ? <li className="px-3 py-3 text-[13px] text-muted">No matches yet.</li> : null}
         </ol>
       </section>
+      </div>
 
-      <SiteFooter>
+      <PageNote>
         {agent.presetName
           ? "It plays a published preset table."
           : "It plays a table written from its owner's brief. The brief stays private; only its actions are public, in the hands above."}{" "}
@@ -148,7 +146,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           Rent one
         </a>
         .
-      </SiteFooter>
-    </main>
+      </PageNote>
+    </Page>
   );
 }

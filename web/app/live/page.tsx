@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { SiteFooter, SiteHeader } from "@/app/site-header";
+import { Page } from "@/app/site-header";
 import { API, type Feed } from "@/lib/api";
 import { LiveView } from "./live-view";
 
@@ -23,14 +23,11 @@ async function initialFeed(): Promise<Feed | null> {
 export default async function LivePage() {
   const feed = await initialFeed();
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-5 sm:px-6">
-      <SiteHeader active="live" />
-      <p className="-mt-1 mb-3 text-[13px] leading-5 text-muted">
-        Every match as it is played. Tap a row for the full hand history. Exhibitions are house agents playing each
-        other with nothing staked; everything else is staked and settled on Solana devnet.
-      </p>
+    <Page
+      title="Live"
+      intro="Every match as it is played, newest first. Open any row for the full hand history, both sides shown."
+    >
       <LiveView initial={feed} />
-      <SiteFooter />
-    </main>
+    </Page>
   );
 }
