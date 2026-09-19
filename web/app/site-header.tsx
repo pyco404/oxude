@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /**
- * /rewards announces the token before it exists. It is linked unless
+ * /rewards announces the token before it exists. It is in the sidebar unless
  * NEXT_PUBLIC_SHOW_REWARDS is "false", so it can be hidden without a code change.
  */
 export const REWARDS_LINKED = process.env.NEXT_PUBLIC_SHOW_REWARDS !== "false";
@@ -27,11 +27,6 @@ export function SiteFooter() {
   return (
     <footer className="border-t border-line px-4 py-4 text-[11px] leading-5 text-muted lg:px-10">
       <p className="flex flex-wrap gap-x-4 gap-y-1">
-        {REWARDS_LINKED ? (
-          <a href="/rewards" className="hover:text-text">
-            Rewards
-          </a>
-        ) : null}
         <a href="https://x.com/OxudeAI" className="hover:text-text" target="_blank" rel="noreferrer">
           @OxudeAI on X
         </a>
