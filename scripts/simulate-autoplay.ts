@@ -26,6 +26,7 @@ const arg = (name: string, fallback: number) => {
 
 const AGENTS = arg("--agents", 20_000);
 const HOURS = arg("--hours", 168);
+const START = arg("--start", STARTING_BALANCE);
 /** Minutes between matches. */
 const PACES = [3, 5, 10, 15, 30];
 const CEILINGS = CEILING_BANDS.map((b) => b.max);
@@ -104,7 +105,7 @@ function playToBust(
   rng: () => number,
   options: { start?: number; fraction?: number } = {},
 ): number | null {
-  let balance = options.start ?? STARTING_BALANCE;
+  let balance = options.start ?? START;
   for (let played = 1; played <= matches; played++) {
     // A fraction, when asked for: stake with the balance rather than a fixed ceiling.
     const wanted = options.fraction ? Math.max(MIN_STAKE, Math.round(balance * options.fraction)) : ceiling;
@@ -119,7 +120,7 @@ function playToBust(
 const matchesAt = (paceMinutes: number) => Math.floor((HOURS * 60) / paceMinutes);
 const longest = matchesAt(Math.min(...PACES));
 
-console.log(`Autoplay over ${HOURS}h, ${AGENTS.toLocaleString()} agents per case, starting balance ${STARTING_BALANCE}, bust below ${MIN_STAKE}.`);
+console.log(`Autoplay over ${HOURS}h, ${AGENTS.toLocaleString()} agents per case, starting balance ${START}, bust below ${MIN_STAKE}.`);
 console.log(`Match outcomes are exact (every draw and flip enumerated); opponents are an even mix of the four presets.\n`);
 
 console.log("Per match, exactly, against the roster:");
@@ -165,15 +166,19 @@ for (const ceiling of CEILINGS) {
     );
   }
 
-  // Where the presets differ, at the pace that plays the most matches.
-  const matches = longest;
-  console.log(`  by preset, at ${Math.min(...PACES)} min (${matches} matches):`);
-  for (const preset of PRESET_NAMES) {
-    const busts = bustsByPreset.get(preset)!;
-    const bustedWithin = busts.filter((b): b is number => b !== null && b <= matches);
-    const survived = busts.length - bustedWithin.length;
+  // Where the presets differ. A ceiling that clamps pulls them apart, so this
+  // is the spread a player sees between picking one preset and another.
+  console.log(`  survival by preset:`);
+  console.log(`    pace    ${PRESET_NAMES.map((p) => p.padStart(8)).join("")}     spread`);
+  for (const pace of PACES) {
+    const matches = matchesAt(pace);
+    const rates = PRESET_NAMES.map((preset) => {
+      const busts = bustsByPreset.get(preset)!;
+      return busts.filter((b) => b === null || b > matches).length / busts.length;
+    });
+    const spread = Math.max(...rates) - Math.min(...rates);
     console.log(
-      `    ${preset.padEnd(7)} survive ${((survived / busts.length) * 100).toFixed(1).padStart(5)}%   median matches to bust ${String(median(bustedWithin) ?? "—").padStart(6)}`,
+      `    ${String(pace).padStart(2)} min ${rates.map((r) => `${(r * 100).toFixed(1)}%`.padStart(8)).join("")}   ${`${(spread * 100).toFixed(1)}`.padStart(8)} pts`,
     );
   }
 }
@@ -213,10 +218,14 @@ for (const pace of PACES) {
 }
 console.log("  (band 10-20; a stake is never below the minimum of 10, which is what still busts them)");
 
-console.log(`\n\nStarting balance, flat ceiling 20 (survival over ${HOURS}h, averaged over the presets)`);
-console.log("  pace     matches       180      360      720     1440");
-for (const pace of PACES) {
-  const matches = matchesAt(pace);
-  const cells = [180, 360, 720, 1440].map((start) => `${(across(20, matches, { start }) * 100).toFixed(1)}%`.padStart(8));
-  console.log(`  ${String(pace).padStart(2)} min  ${String(matches).padStart(7)} ${cells.join(" ")}`);
+const STARTS = [180, 360, 720, 900, 1080, 1440];
+for (const ceiling of [20, 40]) {
+  const clamps = ceiling < 40 ? "clamped, so the presets drift apart" : "no clamping: the game as the preset search balanced it";
+  console.log(`\n\nStarting balance at ceiling ${ceiling} (${clamps}) — survival over ${HOURS}h, averaged over the presets`);
+  console.log(`  pace     matches ${STARTS.map((b) => String(b).padStart(8)).join("")}`);
+  for (const pace of PACES) {
+    const matches = matchesAt(pace);
+    const cells = STARTS.map((start) => `${(across(ceiling, matches, { start }) * 100).toFixed(1)}%`.padStart(8));
+    console.log(`  ${String(pace).padStart(2)} min  ${String(matches).padStart(7)} ${cells.join("")}`);
+  }
 }
