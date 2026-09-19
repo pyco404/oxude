@@ -47,7 +47,7 @@ function Mark({ onClick }: { onClick?: () => void }) {
 
 /**
  * The wallet control, in the mobile top bar and at the foot of the desktop
- * sidebar: "Connect wallet" signed out, the short address signed in. Either opens a small menu rather than acting on one tap,
+ * sidebar: "Sign in" signed out, the short address signed in. Either opens a small menu rather than acting on one tap,
  * so a stray tap can't sign anyone out.
  */
 function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
@@ -77,13 +77,13 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={session ? `Wallet ${session.ownerId}` : "Connect wallet"}
+        aria-label={session ? `Wallet ${session.ownerId}` : "Sign in"}
         className={`h-9 max-w-full truncate border px-3 text-[12px] ${placement === "up" ? "w-full" : ""} ${
           // One look everywhere: dark, red text, a 1px red border.
           session ? "border-line font-mono text-text" : "border-red bg-ink text-red"
         }`}
       >
-        {busy === "connect" ? "Waiting…" : session ? shortKey(session.ownerId) : "Connect wallet"}
+        {busy === "connect" ? "Waiting…" : session ? shortKey(session.ownerId) : "Sign in"}
       </button>
       {open ? (
         <div

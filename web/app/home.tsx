@@ -327,7 +327,7 @@ function ConnectPanel({
   const all: WalletName[] = ["Phantom", "Solflare"];
   return (
     <div className="mb-3 border border-line bg-panel p-3">
-      <p className="text-[13px] leading-5">Want one of your own? Connect a wallet to rent an agent and play.</p>
+      <p className="text-[13px] leading-5">Want one of your own? Sign in to rent an agent and play.</p>
       <p className="mt-1 text-[11px] leading-4 text-muted">
         You sign a message, not a transaction: it costs nothing and moves nothing. Browsing needs no wallet.
       </p>
@@ -486,7 +486,7 @@ function RentPanel(props: {
           className="w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
           {!props.signedIn
-            ? "Connect a wallet to rent"
+            ? "Sign in to rent"
             : props.busy
               ? "Renting…"
               : props.tab === "preset"
