@@ -85,7 +85,9 @@ CHAIN_RPC_URL=https://api.devnet.solana.com DATABASE_URL=... npm run serve -- --
 
 ### Deployment
 
-The live site runs on Railway: Postgres, the API (with the settlement worker) and the web app as three services. The API's `railway.json` starts `npm start`; the web app deploys from `web/` alone (`railway up web --path-as-root -s web`). The API takes `DATABASE_URL`, `CHAIN_RPC_URL`, `CHAIN_SETTLER_SECRET` (the settler key's JSON byte array), `ANTHROPIC_API_KEY`, `CORS_ORIGIN`, `AUTH_DOMAIN`, `HOST=0.0.0.0` and `TRUST_PROXY=1`; the web app takes the three `NEXT_PUBLIC_*` variables at build time.
+The live site runs on Railway: Postgres, the API (with the settlement worker) and the web app as three services. The API's `railway.json` starts `npm start`; the web service has its Root Directory set to `/web` in Railway, so both deploy from the repo root with `railway up -s api` and `railway up -s web`, each picking up its own `railway.json` (root and `web/`). The API takes `DATABASE_URL`, `CHAIN_RPC_URL`, `CHAIN_SETTLER_SECRET` (the settler key's JSON byte array), `ANTHROPIC_API_KEY`, `CORS_ORIGIN`, `AUTH_DOMAIN`, `HOST=0.0.0.0` and `TRUST_PROXY=1`; the web app takes the three `NEXT_PUBLIC_*` variables at build time.
+
+The site has one address. `www.oxude.xyz` (CNAME to Railway, on Vercel DNS) and the `*.up.railway.app` default domain both answer with a permanent 308 to `https://oxude.xyz`, keeping the path and query — see `web/proxy.ts`, which reads the apex from `NEXT_PUBLIC_SITE_URL`. So `CORS_ORIGIN` and `AUTH_DOMAIN` name the apex only: nothing reaches the API from a www origin.
 
 ## Architecture
 
