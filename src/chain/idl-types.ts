@@ -438,6 +438,67 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "setSettler",
+      "docs": [
+        "Points the config at a new settler key. The admin recorded at initialize",
+        "is the only key that can call it.",
+        "",
+        "Without this a compromised settler could only be answered by upgrading",
+        "the program, which is slow at exactly the moment speed matters. It",
+        "refuses the key already in place, so a call that would change nothing",
+        "fails loudly rather than looking like a rotation that happened. It also",
+        "refuses the admin's own key: one key holding both roles would undo the",
+        "separation every other check here depends on."
+      ],
+      "discriminator": [
+        18,
+        138,
+        23,
+        84,
+        226,
+        204,
+        94,
+        86
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "settler",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "settle",
       "docs": [
         "Moves a match's settled net from the loser's vault to the winner's, and",
@@ -905,6 +966,19 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "settlerChanged",
+      "discriminator": [
+        33,
+        54,
+        1,
+        21,
+        216,
+        157,
+        170,
+        61
+      ]
+    },
+    {
       "name": "vaultOpened",
       "discriminator": [
         198,
@@ -944,61 +1018,66 @@ export type OxudeSettlement = {
     },
     {
       "code": 6002,
+      "name": "invalidSettler",
+      "msg": "The new settler must differ from the current settler and the admin, and cannot be the default key"
+    },
+    {
+      "code": 6003,
       "name": "zeroAmount",
       "msg": "Amount must be greater than zero"
     },
     {
-      "code": 6003,
+      "code": 6004,
       "name": "overLimit",
       "msg": "Settlement exceeds the per-match limit"
     },
     {
-      "code": 6004,
+      "code": 6005,
       "name": "sameAgent",
       "msg": "A match cannot settle an agent against itself"
     },
     {
-      "code": 6005,
+      "code": 6006,
       "name": "insufficientVault",
       "msg": "The paying vault cannot cover this settlement"
     },
     {
-      "code": 6006,
+      "code": 6007,
       "name": "invalidLimit",
       "msg": "Limit must be greater than zero"
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "notOwner",
       "msg": "Only the agent's recorded owner can withdraw"
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "notOwnersAccount",
       "msg": "Withdrawals go only to the owner's own token account"
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "ledgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "agentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "outflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "mintLimit",
       "msg": "New vaults have minted all they can in this window"
     }
@@ -1217,6 +1296,22 @@ export type OxudeSettlement = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "settlerChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "pubkey"
+          },
+          {
+            "name": "settler",
+            "type": "pubkey"
           }
         ]
       }

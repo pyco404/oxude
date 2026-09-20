@@ -124,6 +124,42 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect((await chain.config()).maxSettlement.toNumber()).toBe(MAX);
   });
 
+  it("lets only the admin rotate the settler, and refuses a rotation that changes nothing", async () => {
+    const asAdmin = new ChainClient(connection, admin);
+    const fresh = Keypair.generate();
+
+    // The settler cannot hand its own role on, nor can a stranger take it.
+    await expect(chain.setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
+    const stranger = Keypair.generate();
+    await airdrop(stranger, 1);
+    await expect(new ChainClient(connection, stranger).setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
+    expect((await chain.config()).settler.toBase58()).toBe(settler.publicKey.toBase58());
+
+    // A no-op rotation is refused, so it can never look like one happened.
+    await expect(asAdmin.setSettler(settler.publicKey)).rejects.toThrow(/InvalidSettler/);
+    // And the admin cannot take the settler's role itself.
+    await expect(asAdmin.setSettler(admin.publicKey)).rejects.toThrow(/InvalidSettler/);
+
+    // The admin rotates it, and the old key immediately loses its powers.
+    await asAdmin.setSettler(fresh.publicKey);
+    expect((await chain.config()).settler.toBase58()).toBe(fresh.publicKey.toBase58());
+    const orphan = newAgentId(null);
+    await expect(
+      chain.openVault({ agentId: orphan.id, owner: null, salt: orphan.salt, amount: 100 }),
+    ).rejects.toThrow(/NotSettler/);
+
+    // The new key has them. It pays its own rent, so give it some SOL.
+    await airdrop(fresh, 2);
+    const asFresh = new ChainClient(connection, fresh);
+    const taken = newAgentId(null);
+    await asFresh.openVault({ agentId: taken.id, owner: null, salt: taken.salt, amount: 100 });
+    expect(await chain.vaultBalance(taken.id)).toBe(100);
+
+    // Put it back, so every later test still signs with the original settler.
+    await asAdmin.setSettler(settler.publicKey);
+    expect((await chain.config()).settler.toBase58()).toBe(settler.publicKey.toBase58());
+  });
+
   it("opens a vault funded with the starting balance", async () => {
     const { id, salt } = newAgentId(null);
     await chain.openVault({ agentId: id, owner: null, salt, amount: 180 });

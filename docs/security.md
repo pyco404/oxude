@@ -14,7 +14,7 @@ Game tokens in per-agent vaults on Solana devnet, and the accuracy of the off-ch
 | The model | Fill in a decision table once, when an agent is rented from a brief | Anything during a match; see any key; sign anything |
 | The API server | Run matches, write the ledger, queue chain operations, prepare withdrawals | Move vault funds except through the program's `settle`, within its limits, or an owner-signed `withdraw` |
 | The settler key (server) | Open vaults, up to 900 each and 18,000 per window between them; settle matches, up to `max_settlement` each (60), each match once, and up to a quarter of any one vault's balance per window (never less than 120); co-sign withdrawals | Exceed those limits; settle a match twice; withdraw without the owner's signature; record anyone but the owner an agent's id derives from; change `max_settlement` |
-| The admin key | Initialise the program; **upgrade it** | Nothing else at run time |
+| The admin key | Initialise the program; **upgrade it**; change `max_settlement` within `MAX_SEED`; **rotate the settler** with `set_settler` | Open vaults, settle, or withdraw; take the settler's role itself |
 
 ## Identity: wallet sign-in
 
@@ -46,7 +46,7 @@ Game tokens in per-agent vaults on Solana devnet, and the accuracy of the off-ch
 - **An agent id belongs to its owner.** A new agent's id is the first 16 bytes of `sha256("oxude-agent-v1" || owner's key || random salt)`, as a UUID. Opening its vault recomputes that hash and records the owner in a PDA seeded by the id, in the same instruction. So the only owner that can ever be recorded for an agent is the one its id derives from: a stolen settler key cannot name itself, and there is no window before a record lands in which it could (limitation 11). A house agent's id hashes 32 zero bytes in the owner's place, so it has no owner and nothing can be withdrawn from it. Agents rented before this had random ids and owner records written by the settler; those records stand, created once and unchangeable.
 - **Two signatures.** A withdrawal needs the owner's signature, checked by the program against that record, so a non-owner can never withdraw. It also needs the settler's co-signature, which is the server saying nothing is in flight. Tokens can only go to the owner's own token account. The server pays the fee.
 - **Nothing in flight.** The server refuses while any of the agent's settlements is still pending on chain. On top of that, the transaction states the balance the vault must be left with, taken from the ledger. If the vault disagrees because a settlement hasn't landed, the program refuses.
-- **Empty or playable.** A withdrawal must leave either nothing, which retires the agent and freezes its record, or at least the minimum stake of 10.
+- **Empty or playable.** A withdrawal must leave either nothing, which retires the agent and freezes its record, or enough to keep playing. The server holds that floor at 20, the cheapest band's worst match, because below it no band is affordable and the agent would be left holding money it could never play. The program enforces a looser floor of its own, `MIN_STAKE` 10, so a vault is never left with dust.
 - **Once.** Each withdrawal has an id, and its on-chain record is a PDA seeded by it, so it pays once. The server also accepts each prepared withdrawal's signed transaction once, and checks that it is byte for byte the transaction it prepared.
 - **Ledger first.** The ledger row, the outbox row and any retirement are written in one database transaction, then the transaction is sent. While it is on its way, the agent can't play. If it can never land (its blockhash expired, or the program refused it), the ledger row is reversed, the retirement undone, and the queue carries on.
 
@@ -76,6 +76,35 @@ These are real, and would each need fixing before anything of value were at stak
 10. **Privy is third-party script in the page.** With the flag on, Privy's SDK runs alongside the session token in `localStorage` (limitation 5), and it contacts Privy's servers and WalletConnect's wallet directory. A compromise of that SDK could read the session token, which grants the app's actions but no wallet authority. Embedded wallets are also custodial in Privy's sense: recovery depends on the user's email or X account.
 11. **The settlement path runs through a third party.** The deployed worker settles through a Helius devnet RPC endpoint rather than Solana's public one, whose rate limits on shared cloud IPs made settlements slow. That endpoint sees every settlement before it reaches the chain and could delay or drop one; it cannot forge one, because the settler's signature is made locally. The ledger stays authoritative and the reconciler still reports a disagreement.
 12. **Renting doesn't prove consent.** An agent's id binds it to its owner, so nobody can record a different one, but the server still creates the agent without the owner signing anything. It could create an agent "owned" by a wallet that never asked for one, which gives that wallet tokens and takes nothing. A transaction signed by the owner at rent time would prove consent; it would cost a signing step and make the agent wait to play.
+
+## Before mainnet
+
+Nothing here is optional. This is a devnet demo today; each item is a thing that
+must be true before any of it holds real money.
+
+**Rotate every production credential.** All four were exposed in a terminal
+session on 2026-09-20 and must be replaced, not merely re-scoped:
+
+- [ ] `ANTHROPIC_API_KEY` — revoke and reissue in the Anthropic console.
+- [ ] `CHAIN_RPC_URL` — roll the Helius API key.
+- [ ] `DATABASE_URL` — change the Postgres password in Railway.
+- [ ] `CHAIN_SETTLER_SECRET` — generate a fresh settler keypair, point the
+      config at it with `set_settler` (admin-signed), then update the Railway
+      variable. The old key keeps no powers once the config moves.
+
+Read variables with `railway variables -s <service> --json` and take the key
+names; printing the table puts the values on screen.
+
+**Then the rest:**
+
+- [ ] Hand the admin key to a multisig, or make the program immutable. It can
+      upgrade the program, rotate the settler and raise the per-match limit.
+- [ ] Close the known limitations below, particularly 1 (a stolen settler key
+      can still drain slowly) and 4 (the settler is a hot key on the server).
+- [ ] Get an audit. The program, the auth flow and the ledger have tests, not an
+      audit.
+- [ ] Recompute every survival figure from the player's deposit rather than the
+      fixed seed — see [economy.md](economy.md), open question 3.
 
 ## Reporting
 

@@ -97,6 +97,18 @@ export class ChainClient {
   }
 
   /**
+   * Points the config at a new settler key. The signer must be the admin
+   * recorded on the config. The program refuses the current settler and the
+   * admin's own key, so a rotation is always a real change of hands.
+   */
+  async setSettler(settler: PublicKey): Promise<string> {
+    return this.program.methods
+      .setSettler(settler)
+      .accountsPartial({ admin: this.signer.publicKey, config: pdas.config() })
+      .rpc();
+  }
+
+  /**
    * Opens an agent's vault with its starting balance. A player's agent has its
    * owner recorded in the same instruction; the program checks the id is the
    * hash of that owner and the salt.

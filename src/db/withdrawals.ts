@@ -3,7 +3,16 @@ import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { PreparedWithdrawal } from "../chain/settlement.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
-import { agents, chainOps, MIN_STAKE, withdrawals, type WithdrawalStatus } from "./schema.js";
+import { agents, chainOps, STAKE_BANDS, withdrawals, type WithdrawalStatus } from "./schema.js";
+
+/**
+ * The least a vault can be left with and still be worth keeping: the cheapest
+ * band's worst match. Below this no band is affordable, which is exactly the
+ * point at which an agent retires, so leaving less would strand it holding
+ * money it can never play. Comfortably above the program's own MIN_STAKE of 10,
+ * which only asks that a vault be left empty or non-trivial.
+ */
+const MIN_TO_KEEP_PLAYING = Math.min(...STAKE_BANDS.map((b) => b.worstMatch));
 
 /**
  * Withdrawals from an agent's vault to its owner.
@@ -109,8 +118,8 @@ export async function withdrawable(db: Db, agentId: string): Promise<Withdrawabl
     balance,
     withdrawable: available,
     locked,
-    maxPartial: available >= MIN_STAKE ? available - MIN_STAKE : 0,
-    minStake: MIN_STAKE,
+    maxPartial: available >= MIN_TO_KEEP_PLAYING ? available - MIN_TO_KEEP_PLAYING : 0,
+    minStake: MIN_TO_KEEP_PLAYING,
     reason,
   };
 }
@@ -134,10 +143,10 @@ export async function prepareWithdrawal(
   if (!Number.isSafeInteger(amount) || amount <= 0) throw new WithdrawalError(400, "amount must be a whole number above zero");
   if (amount > state.balance) throw new WithdrawalError(400, `only ${state.balance} to withdraw`);
   const remaining = state.balance - amount;
-  if (remaining !== 0 && remaining < MIN_STAKE) {
+  if (remaining !== 0 && remaining < MIN_TO_KEEP_PLAYING) {
     throw new WithdrawalError(
       400,
-      `that would leave ${remaining}, too little to play: take it all and retire, or leave at least ${MIN_STAKE}`,
+      `that would leave ${remaining}, too little to play a match in any band: take it all and retire, or leave at least ${MIN_TO_KEEP_PLAYING}`,
     );
   }
 

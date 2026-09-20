@@ -5,7 +5,8 @@
 //! those decisions on chain and holds the currency, and it independently limits
 //! what the server's key can do:
 //!
-//! - only the configured settler key can open vaults or settle;
+//! - only the configured settler key can open vaults or settle, and only the
+//!   admin can point the config at a different one;
 //! - a single settlement can never move more than `max_settlement`, which only
 //!   the admin key can change and never above `MAX_SEED`; and no
 //!   vault can pay out more than `outflow_cap` of its own balance through
@@ -94,6 +95,26 @@ pub mod oxude_settlement {
         let previous = config.max_settlement;
         config.max_settlement = max_settlement;
         emit!(MaxSettlementChanged { previous, max_settlement });
+        Ok(())
+    }
+
+    /// Points the config at a new settler key. The admin recorded at initialize
+    /// is the only key that can call it.
+    ///
+    /// Without this a compromised settler could only be answered by upgrading
+    /// the program, which is slow at exactly the moment speed matters. It
+    /// refuses the key already in place, so a call that would change nothing
+    /// fails loudly rather than looking like a rotation that happened. It also
+    /// refuses the admin's own key: one key holding both roles would undo the
+    /// separation every other check here depends on.
+    pub fn set_settler(ctx: Context<SetSettler>, settler: Pubkey) -> Result<()> {
+        require!(settler != Pubkey::default(), OxudeError::InvalidSettler);
+        let config = &mut ctx.accounts.config;
+        require!(settler != config.settler, OxudeError::InvalidSettler);
+        require!(settler != config.admin, OxudeError::InvalidSettler);
+        let previous = config.settler;
+        config.settler = settler;
+        emit!(SettlerChanged { previous, settler });
         Ok(())
     }
 
@@ -351,6 +372,14 @@ pub struct MintBudget {
 }
 
 #[derive(Accounts)]
+pub struct SetSettler<'info> {
+    /// The admin recorded on the config, and nobody else.
+    pub admin: Signer<'info>,
+    #[account(mut, seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
+    pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
 pub struct SetMaxSettlement<'info> {
     /// The admin recorded on the config, and nobody else.
     pub admin: Signer<'info>,
@@ -521,6 +550,12 @@ pub struct VaultOpened {
 }
 
 #[event]
+pub struct SettlerChanged {
+    pub previous: Pubkey,
+    pub settler: Pubkey,
+}
+
+#[event]
 pub struct MaxSettlementChanged {
     pub previous: u64,
     pub max_settlement: u64,
@@ -540,6 +575,8 @@ pub enum OxudeError {
     NotSettler,
     #[msg("Only the configured admin can do this")]
     NotAdmin,
+    #[msg("The new settler must differ from the current settler and the admin, and cannot be the default key")]
+    InvalidSettler,
     #[msg("Amount must be greater than zero")]
     ZeroAmount,
     #[msg("Settlement exceeds the per-match limit")]

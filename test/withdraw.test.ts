@@ -8,7 +8,7 @@ import { connect, migrate, type Db } from "../src/db/client.js";
 import { listen } from "../src/http/server.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
 import { balanceOf } from "../src/db/ledger.js";
-import { agents, chainOps, ledger, MIN_STAKE, STARTING_BALANCE, withdrawals } from "../src/db/schema.js";
+import { affordableBands, agents, chainOps, ledger, MIN_STAKE, STAKE_BANDS, STARTING_BALANCE, withdrawals } from "../src/db/schema.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
 import type { OpenVaultInput, PreparedWithdrawal } from "../src/chain/settlement.js";
 
@@ -253,14 +253,23 @@ describe("withdrawals", () => {
     expect((await api(`/agents/${agent.id}/withdrawable`, { as: "dave" })).body.withdrawable.reason).toBeNull();
   });
 
-  it("refuses to leave the vault too low to play", async () => {
+  it("refuses to leave the vault too low to play a match in any band", async () => {
+    // The floor is the cheapest band's worst match, not the program's MIN_STAKE:
+    // below it no band is affordable, which is the point an agent retires at.
+    const floor = Math.min(...STAKE_BANDS.map((b) => b.worstMatch));
+    expect(floor).toBe(20);
     const agent = await ownedAgent("erin", "Erin's");
-    const { prepared } = await withdraw(agent.id, "erin", STARTING_BALANCE - (MIN_STAKE - 1));
+    const { prepared } = await withdraw(agent.id, "erin", STARTING_BALANCE - (floor - 1));
     expect(prepared.status).toBe(400);
-    expect(prepared.body.error).toMatch(/too little to play/);
-    const ok = await withdraw(agent.id, "erin", STARTING_BALANCE - MIN_STAKE);
+    expect(prepared.body.error).toMatch(/too little to play a match in any band/);
+    // Leaving exactly the floor is allowed, and the agent can still play band A.
+    const ok = await withdraw(agent.id, "erin", STARTING_BALANCE - floor);
     expect(ok.submitted!.body.withdrawal.status).toBe("confirmed");
-    expect(await balanceOf(db, agent.id)).toBe(MIN_STAKE);
+    expect(await balanceOf(db, agent.id)).toBe(floor);
+    expect(affordableBands(floor)).toEqual(["A"]);
+    const state = await api(`/agents/${agent.id}/withdrawable`, { as: "erin" });
+    expect(state.body.withdrawable.minStake).toBe(floor);
+    expect(state.body.withdrawable.maxPartial).toBe(0);
   });
 
   it("taking the lot retires the agent and freezes its record", async () => {

@@ -122,7 +122,7 @@ export function WithdrawPanel({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               disabled={busy || info.maxPartial < 1}
-              placeholder={info.maxPartial >= 1 ? `1–${info.maxPartial}` : "—"}
+              placeholder={info.maxPartial >= 1 ? `1\u2013${info.maxPartial}` : "\u2014"}
               aria-label="Amount to withdraw"
               className="w-28 border border-line bg-panel-2 px-3 py-2 font-mono text-[13px]"
             />
@@ -135,7 +135,8 @@ export function WithdrawPanel({
             </button>
           </div>
           <p className="mt-1 text-[11px] leading-4 text-muted">
-            Leave at least {info.minStake} to keep playing, or take it all.
+            Leave at least {info.minStake} to keep playing — that covers a match in the cheapest band. Take it all to
+            retire instead.
           </p>
 
           {confirmAll ? (
