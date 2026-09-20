@@ -92,7 +92,22 @@ CHAIN_RPC_URL=https://api.devnet.solana.com DATABASE_URL=... npm run serve -- --
 
 ### Deployment
 
-The live site runs on Railway: Postgres, the API (with the settlement worker) and the web app as three services. The API's `railway.json` starts `npm start`; the web service has its Root Directory set to `/web` in Railway, so both deploy from the repo root with `railway up -s api` and `railway up -s web`, each picking up its own `railway.json` (root and `web/`). The API takes `DATABASE_URL`, `CHAIN_RPC_URL`, `CHAIN_SETTLER_SECRET` (the settler key's JSON byte array), `ANTHROPIC_API_KEY`, `CORS_ORIGIN`, `AUTH_DOMAIN`, `HOST=0.0.0.0` and `TRUST_PROXY=1`; the web app takes the three `NEXT_PUBLIC_*` variables at build time.
+The live site runs on Railway: Postgres, the API (with the settlement worker) and the web app as three services.
+
+**`railway up` uploads the git repository root, not the working directory.** The API deploys correctly from the repo root with `railway up -s api`, because the root `railway.json` is its config. The web app does not: its config is `web/railway.json`, but a CLI upload puts the repo root at the top of the build context, so Railway reads the root `railway.json`, starts `npm start` → `tsx scripts/serve.ts --migrate`, finds no `DATABASE_URL` and crash-loops. Setting the service's **Root Directory to `/web` does not fix this** — that setting applies to git-triggered builds, not to a context the CLI uploads. `cd web && railway up -s web` does not fix it either, because the CLI still walks up to the git root.
+
+Until the web service is connected to GitHub (see below), deploy it from a copy of `web/` placed outside the repository:
+
+```
+rm -rf /tmp/webdeploy && mkdir -p /tmp/webdeploy
+tar -cf - --exclude=node_modules --exclude=.next -C web . | (cd /tmp/webdeploy && tar -xf -)
+cd /tmp/webdeploy && railway up -s web --ci \
+  --project af965879-57de-4ff2-89a0-efc0c9863fcd --environment production
+```
+
+**Check the deploy logs every time.** A correct web deploy logs `oxude-web@1.0.0 start` → `next start`. If it logs `oxude@0.0.1 start` → `tsx scripts/serve.ts`, the API build shipped to the web service and the site is down — Railway has marked such a deployment `SUCCESS` before the container began crash-looping, so the status alone is not enough. This has taken oxude.xyz down twice.
+
+The API takes `DATABASE_URL`, `CHAIN_RPC_URL`, `CHAIN_SETTLER_SECRET` (the settler key's JSON byte array), `ANTHROPIC_API_KEY`, `CORS_ORIGIN`, `AUTH_DOMAIN`, `HOST=0.0.0.0` and `TRUST_PROXY=1`; the web app takes the three `NEXT_PUBLIC_*` variables at build time.
 
 The site has one address. `www.oxude.xyz` (CNAME to Railway, on Vercel DNS) and the `*.up.railway.app` default domain both answer with a permanent 308 to `https://oxude.xyz`, keeping the path and query — see `web/proxy.ts`, which reads the apex from `NEXT_PUBLIC_SITE_URL`. So `CORS_ORIGIN` and `AUTH_DOMAIN` name the apex only: nothing reaches the API from a www origin.
 
@@ -136,7 +151,7 @@ The same habit of measuring shaped the rest:
 
 Stated plainly; details in [docs/security.md](docs/security.md).
 
-- **Devnet and fake currency only.** No mainnet deployment, no real value.
+- **The game is devnet and fake currency only.** No mainnet deployment of the game, and in-game balances have no value. $OXUDE is a real token on mainnet (`6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump`), but it is not the game's currency: the two connect at mainnet launch, which has not happened. See [docs/economy.md](docs/economy.md) for what is still open.
 - **Partly custodial.** Owners can withdraw from their agents' vaults, but a withdrawal needs the server's co-signature as well as the owner's, so the server can refuse or delay one. There is no way to deposit back.
 - **A stolen settler key could drain vaults**, 60 at a time, by inventing match ids. Each settlement is capped, and so is the total: a vault pays out at most a quarter of its balance — never less than 120 — in each ten-minute window. Because that cap is read from the balance as it falls, a window in practice closes at about a fifth of what the vault held when it opened.
 - **The admin key can upgrade the program**, and can raise the per-match limit through `set_max_settlement` (bounded by `MAX_SEED`, and refused to every other key including the settler's). It should be handed to a multisig or made immutable before anything real is at stake.
