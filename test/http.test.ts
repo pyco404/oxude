@@ -8,7 +8,7 @@ import { clientAddress, listen, type Elicit } from "../src/http/server.js";
 import { createAgent, snapshotPreset } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { PRESET_NAMES } from "../src/index.js";
-import { agents, MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
+import { agents, bandByName, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { someWallet } from "./helpers.js";
 
@@ -366,18 +366,18 @@ describe("CORS", () => {
 });
 
 describe("staking over HTTP", () => {
-  it("seeds a balance on renting and reports it with the ceiling", async () => {
+  it("seeds a balance on renting and reports it with the band", async () => {
     const owner = someWallet();
     const created = await readBody(
-      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Banked", presetName: "Anchor", maxStake: 25 }) }),
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Banked", presetName: "Anchor", band: "A" }) }),
     );
     expect(created.agent.balance).toBe(STARTING_BALANCE);
-    expect(created.agent.maxStake).toBe(25);
+    expect(created.agent.band).toBe("A");
     expect(created.agent.retired).toBe(false);
 
     const seen = await readBody(await api(`/agents/${created.agent.id}`, { owner: OTHER }));
     expect(seen.agent.balance).toBe(STARTING_BALANCE);
-    expect(seen.agent.maxStake).toBe(25);
+    expect(seen.agent.band).toBe("A");
   });
 
   it("stakes a match, settles it against balances, and reports both", async () => {
@@ -387,7 +387,7 @@ describe("staking over HTTP", () => {
     );
     const played = await readBody(await api(`/agents/${created.agent.id}/play`, { method: "POST", owner }));
     expect(played.stake).toBeGreaterThanOrEqual(MIN_STAKE);
-    expect(played.stake).toBeLessThanOrEqual(MAX_EXPOSURE);
+    expect(played.stake).toBeLessThanOrEqual(bandByName("C").worstMatch);
     expect(Math.abs(played.result.net)).toBeLessThanOrEqual(played.stake);
     expect(played.balance).toBe(STARTING_BALANCE + played.result.net);
     expect(played.balance).toBe(await balanceOf(db, created.agent.id));
@@ -397,25 +397,32 @@ describe("staking over HTTP", () => {
     expect(ledgerView.balance).toBe(played.balance);
   });
 
-  it("lets the owner change the ceiling, and refuses anyone else", async () => {
+  it("lets the owner change the band, and refuses anyone else", async () => {
     const owner = someWallet();
     const created = await readBody(
-      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Ceilinged", presetName: "Hammer" }) }),
+      await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Banded", presetName: "Hammer" }) }),
     );
+    // A fresh rental holds 900, so every band is open to it.
     const set = await readBody(
-      await api(`/agents/${created.agent.id}/ceiling`, { method: "POST", owner, body: JSON.stringify({ maxStake: 1000 }) }),
+      await api(`/agents/${created.agent.id}/band`, { method: "POST", owner, body: JSON.stringify({ band: "C" }) }),
     );
-    expect(set.maxStake).toBe(MAX_EXPOSURE); // clamped
+    expect(set.band).toBe("C");
 
-    const theirs = await api(`/agents/${created.agent.id}/ceiling`, {
+    const theirs = await api(`/agents/${created.agent.id}/band`, {
       method: "POST",
       owner: OTHER,
-      body: JSON.stringify({ maxStake: 10 }),
+      body: JSON.stringify({ band: "A" }),
     });
     expect(theirs.status).toBe(403);
 
-    const bad = await api(`/agents/${created.agent.id}/ceiling`, { method: "POST", owner, body: JSON.stringify({}) });
+    const bad = await api(`/agents/${created.agent.id}/band`, { method: "POST", owner, body: JSON.stringify({}) });
     expect(bad.status).toBe(400);
+    const nonsense = await api(`/agents/${created.agent.id}/band`, {
+      method: "POST",
+      owner,
+      body: JSON.stringify({ band: "Z" }),
+    });
+    expect(nonsense.status).toBe(400);
   });
 
   it("refuses to play an agent that cannot cover a stake", async () => {
@@ -429,7 +436,7 @@ describe("staking over HTTP", () => {
     );
     const res = await api(`/agents/${created.agent.id}/play`, { method: "POST", owner });
     expect(res.status).toBe(409);
-    expect((await readBody(res)).error).toMatch(/cannot cover a stake/);
+    expect((await readBody(res)).error).toMatch(/cannot cover a band/);
   });
 });
 
@@ -475,16 +482,18 @@ describe("sharing and the roster", () => {
 
   it("GET /roster lists who is available, by band", async () => {
     const all = await readBody(await api("/roster", { owner: null }));
-    expect(all.bands.map((b: { name: string }) => b.name)).toEqual(["10-20", "20-40", "40-60"]);
+    expect(all.bands.map((b: { name: string }) => b.name)).toEqual(["A", "B", "C"]);
     expect(all.agents.length).toBeGreaterThan(0);
     const counts = all.counts as Record<string, number>;
-    expect(Object.keys(counts)).toEqual(["10-20", "20-40", "40-60"]);
-    expect(counts["10-20"]! + counts["20-40"]! + counts["40-60"]!).toBeGreaterThanOrEqual(all.agents.length);
+    expect(Object.keys(counts)).toEqual(["A", "B", "C"]);
+    expect(counts["A"]! + counts["B"]! + counts["C"]!).toBeGreaterThanOrEqual(all.agents.length);
 
-    const high = await readBody(await api("/roster?band=40-60", { owner: null }));
-    expect(high.agents.every((a: { maxStake: number }) => a.maxStake > 40)).toBe(true);
-    const low = await readBody(await api("/roster?band=10-20", { owner: null }));
-    expect(low.agents.every((a: { maxStake: number }) => a.maxStake <= 20)).toBe(true);
+    const high = await readBody(await api("/roster?band=C", { owner: null }));
+    expect(high.agents.every((a: { band: string }) => a.band === "C")).toBe(true);
+    const low = await readBody(await api("/roster?band=A", { owner: null }));
+    expect(low.agents.every((a: { band: string }) => a.band === "A")).toBe(true);
+    const nonsense = await api("/roster?band=40-60", { owner: null });
+    expect(nonsense.status).toBe(400);
     for (const a of all.agents) expect(a.trueRating).toBeUndefined();
 
     expect((await api("/roster?band=5-500", { owner: null })).status).toBe(400);

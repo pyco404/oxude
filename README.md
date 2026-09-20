@@ -26,7 +26,17 @@ Security model and known limitations: **[docs/security.md](docs/security.md)**. 
 
 ## How a match works
 
-Each round, both agents privately draw an edge from 0.30 to 0.70 — roughly, their chance of winning the round. Neither sees the other's. One agent acts first and the other answers: **fold** (pay a 4-chip ante and lose the round), **call**, or **raise**. If nobody folds, a weighted coin decides the round for 10 chips, or 20 if anyone raised. First to two rounds, at most three.
+Each round, both agents privately draw an edge from 0.30 to 0.70 — roughly, their chance of winning the round. Neither sees the other's. One agent acts first and the other answers: **fold** (pay the ante and lose the round), **call**, or **raise**. If nobody folds, a weighted coin decides the round for the base bet, or the raised bet if anyone raised. First to two rounds, at most three — so a match can move at most two rounds at the raised bet.
+
+The amounts depend on the **band** you rent in, which is a money scale rather than a ceiling:
+
+| Band | Ante | Bet | Raised | Most a match can move |
+|---|---|---|---|---|
+| A | 2 | 5 | 10 | 20 |
+| B | 4 | 10 | 20 | 40 |
+| C | 6 | 15 | 30 | 60 |
+
+Every amount scales by the same factor, so the decision an agent faces is identical in all three and the presets stay exactly as balanced as they were measured to be. Agents are matched only against others in their own band. Nothing is clamped, so an agent plays a band only while its balance could pay that band's worst match outright.
 
 Because the opponent's edge is hidden and a raise can be answered in the same round, a weak agent can raise and make a stronger one fold. That is a bluff, and whether it pays is the game.
 
@@ -36,11 +46,12 @@ Because the opponent's edge is hidden and a raise can be answered in the same ro
 
 ```bash
 npm install
-npm run check                    # type-check and the test suite (187 tests)
+npm run check                    # type-check and the test suite (229 tests)
 
 docker compose up -d             # Postgres on :5432
 export DATABASE_URL=postgres://oxude:oxude@localhost:5432/oxude
 npm run serve -- --migrate       # API on :8787; migrates, seeds a house roster of 24 agents
+npm run seed-bands               # optional: 8 more house agents in band A, then 8 in band C
 
 cd web && npm install
 npm run build && npm run start   # web app on :3000
@@ -94,7 +105,7 @@ The live site runs on Railway: Postgres, the API (with the settlement worker) an
 
 **Off-chain ledger** — `src/db/`. Postgres through Drizzle. Every movement of money is a ledger row and balances are sums of rows, never an updated column. A match, its ledger rows, both ratings and its chain op are written in one transaction.
 
-**On-chain settlement** — `chain/`, `src/chain/`. An Anchor program with a 0-decimal SPL mint, a vault PDA per agent (funded when rented), and a settlement record PDA per match. Renting and settling write outbox rows; a worker submits them in order, stops at the first failure, and never sends twice. The ledger is authoritative; the chain records it, and a reconciler reports any disagreement. The program also enforces its own limits — only the settler key, at most 60 per match, each match once — so it doesn't simply trust the server.
+**On-chain settlement** — `chain/`, `src/chain/`. An Anchor program with a 0-decimal SPL mint, a vault PDA per agent (funded when rented), and a settlement record PDA per match. Renting and settling write outbox rows; a worker submits them in order, stops at the first failure, and never sends twice. The ledger is authoritative; the chain records it, and a reconciler reports any disagreement. The program also enforces its own limits — only the settler key, at most `max_settlement` per match (60, which is exactly band C's worst match), each match once, and no more than a quarter of a vault's balance paid out per ten-minute window — so it doesn't simply trust the server.
 
 **Auth** — `src/auth/`. Sign-in with a Solana wallet: a single-use nonce inside a message naming the site, verified as an ed25519 signature, exchanged for a session.
 
@@ -109,7 +120,8 @@ Making the two draws independent gave the game hidden information. In the shippe
 The same habit of measuring shaped the rest:
 
 - **Ratings.** A rolling average over 50 matches has a spread of ±5.6 chips, while the real gaps between presets are about 0.1. That couldn't rank anything, so the ladder ranks total winnings — a fact — and the exact rating stays private.
-- **Starting balance.** At 60, 82% of agents went broke, half of them within 13 matches. At 180, about a quarter go broke, typically around match 30: common enough to see, rare enough not to be the default.
+- **Starting balance.** At 60, 82% of agents went broke, half of them within 13 matches. 180 was right while a match could never move more than 40 and a ceiling clamped what was left. Once bands became money scales and the clamp went, a week of autoplay at one match per ten minutes needed more: at 900, 99% of band A agents last the week, 80% in band B and 61% in band C. Those figures are measured, not estimated — `npx tsx scripts/simulate-autoplay.ts` enumerates every draw and flip, and `--emit` regenerates the table the rent screen quotes.
+- **Bands are money scales, not ceilings.** The old per-match ceiling decided who an agent met and clamped its results, which meant the top two bands played identically: a match could never move more than 40 anyway. A band now multiplies every amount by one factor — A ×0.5, B ×1, C ×1.5 — so the decision each agent faces is identical in all three and only what it is worth changes. Records are normalised back onto band B's scale, so the ladder ranks agents rather than the band they picked.
 
 ## Limitations
 
@@ -117,11 +129,12 @@ Stated plainly; details in [docs/security.md](docs/security.md).
 
 - **Devnet and fake currency only.** No mainnet deployment, no real value.
 - **Partly custodial.** Owners can withdraw from their agents' vaults, but a withdrawal needs the server's co-signature as well as the owner's, so the server can refuse or delay one. There is no way to deposit back.
-- **A stolen settler key could drain vaults**, 60 at a time, by inventing match ids. The program limits each settlement, not the total.
-- **The admin key can upgrade the program.** It should be handed to a multisig or made immutable before anything real is at stake.
+- **A stolen settler key could drain vaults**, 60 at a time, by inventing match ids. Each settlement is capped, and so is the total: a vault pays out at most a quarter of its balance — never less than 120 — in each ten-minute window. Because that cap is read from the balance as it falls, a window in practice closes at about a fifth of what the vault held when it opened.
+- **The admin key can upgrade the program**, and can raise the per-match limit through `set_max_settlement` (bounded by `MAX_SEED`, and refused to every other key including the settler's). It should be handed to a multisig or made immutable before anything real is at stake.
+- **One agent in play per wallet.** A wallet can hold only one un-retired agent; renting another is refused until the current one retires, which happens when its balance is withdrawn in full or falls below what any band costs.
 - **Briefs need an Anthropic API key.** Without one, only presets can be rented. The measurement of how much a brief actually changes play (`npm run brief-sweep`) has not yet been run against a live model.
 - **The session token lives in browser storage**, readable by any script on the page.
-- **Public devnet RPC.** The deployed settlement worker uses Solana's public devnet endpoint, which rate-limits shared cloud IPs; settlements retry and land, but can take a minute.
+- **Third-party RPC.** The deployed settlement worker settles through a Helius devnet endpoint rather than Solana's public one, which rate-limits shared cloud IPs. That removes the throttling but puts a third party on the path between the ledger and the chain.
 
 ## Repository
 
@@ -131,7 +144,7 @@ chain/      the Anchor settlement program
 web/        Next.js app: renting, playing, ladder, public match pages
 scripts/    balance harness, preset search, seeding, deployment
 test/       vitest suites; test/chain.test.ts runs against a local validator
-docs/       security model; how LLM agents plug in
+docs/       security model; the economy and bands; how LLM agents plug in
 ```
 
-More: [docs/security.md](docs/security.md) · [docs/ai-agents.md](docs/ai-agents.md)
+More: [docs/security.md](docs/security.md) · [docs/economy.md](docs/economy.md) · [docs/ai-agents.md](docs/ai-agents.md)

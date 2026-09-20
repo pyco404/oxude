@@ -274,7 +274,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     const roster = [];
     // Low ceilings, so no vault pays out more than one window allows while the test runs.
     for (let i = 0; i < 4; i++)
-      roster.push(await createAgent(db, { name: `Chain ${i}`, presetName: i % 2 ? "Bully" : "Mirage", maxStake: 15 }));
+      roster.push(await createAgent(db, { name: `Chain ${i}`, presetName: i % 2 ? "Bully" : "Mirage", band: "A" }));
     let played = 0;
     for (let seed = 1; played < 6 && seed < 60; seed++) {
       const [x, y] = [roster[seed % 4]!, roster[(seed + 1 + (seed % 3)) % 4]!];

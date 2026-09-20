@@ -44,12 +44,19 @@ export const agents = pgTable(
      * would misrepresent the agent. The runner refuses rather than mispricing.
      */
     policyStakes: jsonb("policy_stakes").$type<Stakes>(),
-    /**
-     * The owner's per-match ceiling. It decides which band the agent plays in,
-     * and so who it meets; it does not cap what a match settles.
-     */
     /** The agent's emoji: its identity at a glance, unique across all agents. See src/marks.ts. */
     mark: text("mark").unique(),
+    /**
+     * The money scale the agent plays at: every amount in its matches is the
+     * band's. It decides who the agent meets and what a match is worth. Every
+     * agent that existed before bands is a "B", which is the scale they were
+     * all already playing at.
+     */
+    band: text("band").$type<BandName>().notNull().default("B"),
+    /**
+     * Superseded by `band`, kept so old matches and their transcripts still
+     * explain themselves. Nothing reads it to decide a match any more.
+     */
     maxStake: integer("max_stake").notNull().default(60),
     /**
      * Exact expected net against the roster, from the calculator. Private: shown
@@ -85,8 +92,15 @@ export const matches = pgTable(
     winner: text("winner").$type<Seat>(),
     netA: integer("net_a").notNull(),
     netB: integer("net_b").notNull(),
-    /** What each side risked. Neither can lose more than this in one match. */
+    /** What each side risked: the band's worst match, which neither can exceed. */
     stake: integer("stake").notNull().default(0),
+    /**
+     * The money scale this match was played at. Recorded per match, not looked
+     * up from the agent, because an owner may change band later and a result
+     * must stay readable as the match it was. Matches from before bands are
+     * "B", the scale they were played at.
+     */
+    band: text("band").$type<BandName>().notNull().default("B"),
     /** The full match log. This is the public transcript. */
     log: jsonb("log").$type<MatchLog>().notNull(),
     /**
@@ -278,38 +292,90 @@ export const ratings = pgTable("ratings", {
 export const RATING_WINDOW = 50;
 
 /**
- * Balance an agent starts with when rented. Measured over 5,000 seeded matches:
- * at 60 four agents in five busted, half of them inside 13 matches, which made
- * ruin the default experience; at 180 about a quarter bust, typically around
- * match 30, so busting is something players see without it being the norm.
+ * Balance an agent starts with when rented. Sized so a rental survives a week
+ * of autoplay rather than a single bad hour: at 180 - the old seed, chosen when
+ * a match could never move more than 60 - a week of play busted most agents,
+ * because a band C match can move 90. At 900 about four agents in five last the
+ * week in band B, better than 96% in band A, and around 65% in band C, which is
+ * the shorter, wilder run that band is meant to be.
  */
-export const STARTING_BALANCE = 180;
-/** Below this, an agent cannot cover a match and is not matched. */
+export const STARTING_BALANCE = 900;
+/**
+ * The least a vault may hold and still be worth keeping open. The chain
+ * enforces the same floor on withdrawals, so this must not drop below the
+ * program's MIN_STAKE. Whether an agent can play is a question about its band,
+ * not this: see `canAffordBand`.
+ */
 export const MIN_STAKE = 10;
-/** The most a match can move: three rounds at the raised bet. */
-export const MAX_EXPOSURE = 60;
 /** Each owner's first elicitation costs them nothing. */
 export const FREE_ELICITATIONS = 1;
 
 /**
- * Ceiling bands. A ceiling says what kind of match an agent wants, and agents
- * are matched inside one band; it does not cap settlement. Capping settlement
- * made the lowest ceiling dominant, because it dragged a stronger opponent
- * down to it.
+ * Stake bands: money scales, not ceilings. Every amount in a match is multiplied
+ * by the band's factor, so the decision each agent faces is identical in all
+ * three - a fold costs the same fraction of the pot everywhere - and the
+ * presets stay exactly as balanced as they were measured to be. What differs is
+ * what a match is worth, which is the whole point: the old ceilings could not
+ * differ, because a match could never move more than 60, so 40-60 played
+ * identically to 20-40.
+ *
+ * `worstMatch` is the most a single match can move: two rounds at the raised
+ * bet, not three. A match is first to two rounds, so the winner can take at
+ * most two, and a 2-1 match nets only one round. Enumerating every draw and
+ * flip for all four presets confirms it - band B's widest net is exactly 40,
+ * and no decision table can beat that, because a round is never worth more
+ * than the raised bet. There is no settlement clamp any more, so an agent must
+ * be able to pay this outright to play in the band at all.
  */
-export const CEILING_BANDS = [
-  { name: "10-20", min: 10, max: 20 },
-  { name: "20-40", min: 20, max: 40 },
-  { name: "40-60", min: 40, max: 60 },
+export const STAKE_BANDS = [
+  { name: "A", factor: 0.5, ante: 2, baseBet: 5, raisedBet: 10, worstMatch: 20 },
+  { name: "B", factor: 1, ante: 4, baseBet: 10, raisedBet: 20, worstMatch: 40 },
+  { name: "C", factor: 1.5, ante: 6, baseBet: 15, raisedBet: 30, worstMatch: 60 },
 ] as const;
 
-export type CeilingBand = (typeof CEILING_BANDS)[number]["name"];
+export type BandName = (typeof STAKE_BANDS)[number]["name"];
+export type StakeBand = (typeof STAKE_BANDS)[number];
 
-/** Which band a ceiling sits in. Upper bound wins at a boundary. */
-export function bandOf(ceiling: number): CeilingBand {
-  if (ceiling <= 20) return "10-20";
-  if (ceiling <= 40) return "20-40";
-  return "40-60";
+/** The band a rental starts in when its owner says nothing. */
+export const DEFAULT_BAND: BandName = "B";
+
+export function bandByName(name: BandName): StakeBand {
+  const band = STAKE_BANDS.find((b) => b.name === name);
+  if (!band) throw new Error(`no stake band ${name}`);
+  return band;
+}
+
+/** The stakes a match in this band is played at. */
+export function bandStakes(name: BandName): Stakes {
+  const b = bandByName(name);
+  return { ante: b.ante, baseBet: b.baseBet, raisedBet: b.raisedBet };
+}
+
+/**
+ * Whether a balance can cover this band's worst match. With no clamp, a match
+ * that cannot be paid cannot be played, so this is what decides both
+ * matchmaking and retirement.
+ */
+export function canAffordBand(balance: number, name: BandName): boolean {
+  return balance >= bandByName(name).worstMatch;
+}
+
+/**
+ * The bands a balance could play, richest first. Used to tell an owner what is
+ * still open to them once they are down, never to move an agent on its own.
+ */
+export function affordableBands(balance: number): BandName[] {
+  return STAKE_BANDS.filter((b) => balance >= b.worstMatch).map((b) => b.name);
+}
+
+/**
+ * A net expressed on band B's scale, so results from different bands can be
+ * compared. A band C win of 30 is the same achievement as a band B win of 20.
+ * The ladder and every net-per-match figure are normalised this way; the money
+ * an agent actually holds never is.
+ */
+export function normaliseNet(net: number, name: BandName): number {
+  return net / bandByName(name).factor;
 }
 
 export type AgentRow = typeof agents.$inferSelect;

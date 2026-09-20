@@ -15,7 +15,25 @@ import {
   installUrl,
   type WalletName,
 } from "@/lib/wallet";
-import { api, ApiError, BANDS, bandOf, type Feed, type RosterAgent, type AgentView, type PlayResult, type Preset, type Preview } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  BANDS,
+  DEFAULT_BAND,
+  SEED_BALANCE,
+  affordableBands,
+  bandByName,
+  survivalFor,
+  survivalText,
+  type BandName,
+  type BandSurvivalRow,
+  type Feed,
+  type RosterAgent,
+  type AgentView,
+  type PlayResult,
+  type Preset,
+  type Preview,
+} from "@/lib/api";
 
 const AGENT_KEY = "oxude.agent";
 
@@ -45,12 +63,12 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const [autoPreview, setAutoPreview] = useState(true);
   const [paidCalls, setPaidCalls] = useState(0);
   const [firstFreeUsed, setFirstFreeUsed] = useState(false);
-  const [ceiling, setCeiling] = useState(60);
+  const [band, setBand] = useState<BandName>(DEFAULT_BAND);
   const [presetRatings, setPresetRatings] = useState<Record<string, number>>({});
   // undefined while loading, null if the request failed: neither may read as "nobody here".
   const [roster, setRoster] = useState<RosterAgent[] | null | undefined>(undefined);
   // Set once the player moves the slider, so the busiest-band default never overrides a choice.
-  const ceilingTouched = useRef(false);
+  const bandTouched = useRef(false);
   const [transcript, setTranscript] = useState<string>("");
   const [lastPlay, setLastPlay] = useState<PlayResult | null>(null);
   // Bumped after renting or playing, so the ladder refetches.
@@ -141,24 +159,29 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       .catch(() => setPresetRatings({}));
   }, [presets]);
 
-  // Who you would meet: your agent's band once you have one, otherwise the band
-  // the ceiling you are about to rent at would put you in.
-  const band = bandOf(agent?.maxStake ?? ceiling);
+  // Who you would meet: your agent's band once you have one, otherwise the one
+  // you are about to rent at. Matches only ever happen inside a band.
+  const shownBand: BandName = agent?.band ?? band;
   useEffect(() => {
     void api
-      .roster(band)
+      .roster(shownBand)
       .then((r) => setRoster(r.agents))
       .catch(() => setRoster(null));
-  }, [band, agent?.matchesPlayed]);
+  }, [shownBand, agent?.matchesPlayed]);
 
-  // Start the ceiling in the band with the most agents, so a newcomer has someone to meet.
+  // Start in the band with the most agents, so a newcomer has someone to meet,
+  // and keep the measured survival table the rent screen quotes.
+  const [bandRows, setBandRows] = useState<
+    { name: BandName; worstMatch: number; survival: BandSurvivalRow }[] | null
+  >(null);
   useEffect(() => {
     void api
       .roster()
-      .then(({ counts }) => {
-        if (ceilingTouched.current || !counts) return;
+      .then(({ counts, bands }) => {
+        if (bands) setBandRows(bands);
+        if (bandTouched.current || !counts) return;
         const busiest = BANDS.reduce((best, b) => ((counts[b.name] ?? 0) > (counts[best.name] ?? 0) ? b : best));
-        setCeiling(busiest.max);
+        setBand(busiest.name);
       })
       .catch(() => {});
   }, []);
@@ -210,7 +233,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       const label = name.trim() || (tab === "preset" ? `${chosen} rental` : "My agent");
       const { agent: created, elicitation } = await api.rent(token, {
         name: label,
-        maxStake: ceiling,
+        band,
         ...(tab === "preset" ? { presetName: chosen } : { brief: brief.trim() }),
       });
       if (elicitation?.free) setFirstFreeUsed(true);
@@ -255,11 +278,11 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         if (token) void loadMine(token);
         setLadderKey((k) => k + 1);
       }}
-      onCeiling={(value) =>
-        run("ceiling", async () => {
+      onBand={(value) =>
+        run("band", async () => {
           const id = agent.id ?? agent.agentId;
           if (!id) return;
-          await api.setCeiling(token, id, value);
+          await api.setBand(token, id, value);
           await refreshAgent(id, token);
         })
       }
@@ -285,11 +308,13 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       previewing={previewing}
       paidCalls={paidCalls}
       firstFree={!firstFreeUsed}
-      ceiling={ceiling}
-      setCeiling={(n) => {
-        ceilingTouched.current = true;
-        setCeiling(n);
+      band={band}
+      setBand={(b) => {
+        bandTouched.current = true;
+        setBand(b);
       }}
+      presetName={tab === "preset" ? chosen : null}
+      bandRows={bandRows}
       presetRatings={presetRatings}
       signedIn={Boolean(session)}
     />
@@ -431,8 +456,12 @@ function RentPanel(props: {
   previewing: boolean;
   paidCalls: number;
   firstFree: boolean;
-  ceiling: number;
-  setCeiling: (n: number) => void;
+  band: BandName;
+  setBand: (b: BandName) => void;
+  /** The chosen preset, or null for a brief: survival is quoted per preset. */
+  presetName: string | null;
+  /** The measured survival table, as served by /roster. */
+  bandRows: { name: BandName; worstMatch: number; survival: BandSurvivalRow }[] | null;
   presetRatings: Record<string, number>;
   signedIn: boolean;
 }) {
@@ -513,25 +542,29 @@ function RentPanel(props: {
         />
 
         <div className="border border-line px-3 py-2">
-          <div className="flex items-baseline justify-between">
-            <label htmlFor="ceiling" className="text-[11px] uppercase tracking-wider text-muted">
-              Per-match ceiling
-            </label>
-            <span className="font-mono text-[13px] text-red">{props.ceiling}</span>
+          <div className="text-[11px] uppercase tracking-wider text-muted">Stakes</div>
+          <div className="mt-2 grid grid-cols-3 gap-1">
+            {BANDS.map((b) => {
+              const chosen = props.band === b.name;
+              return (
+                <button
+                  key={b.name}
+                  onClick={() => props.setBand(b.name)}
+                  aria-pressed={chosen}
+                  className={`border px-2 py-2 text-left ${chosen ? "border-red bg-panel-2" : "border-line"}`}
+                >
+                  <div className="font-mono text-[13px] text-red">{b.label}</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-muted">
+                    {b.ante}/{b.baseBet}/{b.raisedBet}
+                  </div>
+                  <div className="mt-1 text-[11px] leading-4 text-muted">up to {b.worstMatch} a match</div>
+                </button>
+              );
+            })}
           </div>
-          <input
-            id="ceiling"
-            type="range"
-            min={10}
-            max={60}
-            step={5}
-            value={props.ceiling}
-            onChange={(e) => props.setCeiling(Number(e.target.value))}
-            className="mt-2 w-full accent-[#ff2d2d]"
-          />
-          <p className="mt-1 text-[11px] leading-4 text-muted">
-            The most it can stake in one match. It also decides who it meets: agents are matched inside a band (10-20,
-            20-40, 40-60), and a match stakes no more than the lower of the two ceilings. It starts with 180 to play with.
+          <p className="mt-2 text-[11px] leading-4 text-muted">
+            {bandBlurb(props.bandRows, props.band, props.presetName)} It starts with {SEED_BALANCE} to play with, and is
+            only matched against agents on the same scale.
           </p>
         </div>
         <button
@@ -654,8 +687,8 @@ function RosterPanel({
       <div className="p-3">
         <p className="mb-2 text-[12px] leading-5 text-muted">
           {fromAgent
-            ? "Your ceiling puts you in this band. You are only matched inside it."
-            : "The ceiling you rent at decides the band. You are only matched inside it."}
+            ? "Your agent plays on this money scale. It is only matched against others on the same one."
+            : "The band you rent at sets the money scale. You are only matched against agents on the same one."}
         </p>
         {agents === undefined ? (
           <p className="text-[13px] text-muted">Loading…</p>
@@ -741,14 +774,14 @@ function AgentCard({
   onPlay,
   busy,
   lastPlay,
-  onCeiling,
+  onBand,
   onWithdrawn,
 }: {
   agent: AgentView;
   onPlay: () => void;
   busy: boolean;
   lastPlay: PlayResult | null;
-  onCeiling: (value: number) => void;
+  onBand: (value: BandName) => void;
   /** After a withdrawal: the balance and maybe retirement changed. */
   onWithdrawn: () => void;
 }) {
@@ -773,7 +806,7 @@ function AgentCard({
         </dl>
         <dl className="mt-2 grid grid-cols-2 gap-2 border border-line">
           <Stat label="recent form" value={money(agent.recentForm ?? 0)} />
-          <Stat label="ceiling" value={String(agent.maxStake ?? 0)} />
+          <Stat label="band" value={`${agent.band ?? "B"} · up to ${agent.worstMatch ?? bandByName(agent.band ?? "B").worstMatch}`} />
         </dl>
 
         {retired ? (
@@ -782,22 +815,47 @@ function AgentCard({
             {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
           </p>
         ) : (
-          <div className="mt-3 flex items-center gap-2">
-            <label htmlFor="ceiling-live" className="text-[11px] uppercase tracking-wider text-muted">
-              Ceiling
-            </label>
-            <input
-              id="ceiling-live"
-              type="range"
-              min={10}
-              max={60}
-              step={5}
-              defaultValue={agent.maxStake ?? 60}
-              onMouseUp={(e) => onCeiling(Number((e.target as HTMLInputElement).value))}
-              onTouchEnd={(e) => onCeiling(Number((e.target as HTMLInputElement).value))}
-              className="flex-1 accent-[#ff2d2d]"
-            />
-            <span className="w-6 text-right font-mono text-[12px]">{agent.maxStake ?? 60}</span>
+          <div className="mt-3">
+            {/* The cover rule: a band can only be played by a balance that could
+                pay its worst match outright, because nothing is clamped. */}
+            {agent.canPlay === false ? (
+              <p className="mb-2 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
+                {agent.balance ?? 0} left, and a band {agent.band} match can move {agent.worstMatch}. It can&apos;t play
+                here until it covers that.{" "}
+                {agent.fallback
+                  ? `Band ${agent.fallback} is still open to it — up to ${bandByName(agent.fallback).worstMatch} a match.`
+                  : "No band is open to it now; all that is left is to withdraw."}
+              </p>
+            ) : null}
+            <div className="text-[11px] uppercase tracking-wider text-muted">Band</div>
+            <div className="mt-1 grid grid-cols-3 gap-1">
+              {(agent.bands ?? []).map((b) => {
+                const current = b.name === agent.band;
+                return (
+                  <button
+                    key={b.name}
+                    onClick={() => onBand(b.name)}
+                    disabled={!b.affordable || current}
+                    aria-pressed={current}
+                    title={
+                      b.affordable
+                        ? `${b.stakes.ante}/${b.stakes.baseBet}/${b.stakes.raisedBet}, up to ${b.worstMatch} a match`
+                        : `Needs ${b.worstMatch} to cover a match`
+                    }
+                    className={`border px-2 py-1.5 text-left ${
+                      current ? "border-red bg-panel-2" : b.affordable ? "border-line" : "border-line/40 opacity-40"
+                    }`}
+                  >
+                    <div className="font-mono text-[12px]">{b.name}</div>
+                    <div className="font-mono text-[10px] text-muted">≤{b.worstMatch}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] leading-4 text-muted">
+              A band is a money scale: the same game, every amount multiplied. It can move to any band its balance
+              covers — nothing is clamped, so a match is only played when both sides can pay the worst of it.
+            </p>
           </div>
         )}
 
@@ -906,3 +964,25 @@ function PreviewPanel({
   );
 }
 
+
+/**
+ * What a band costs and how long it tends to last, in one sentence.
+ *
+ * The figures are measured (scripts/simulate-autoplay.ts) and served by
+ * /roster, never invented here. A chosen preset gets its own number; a brief
+ * has no preset yet, so it gets the range across the four.
+ */
+function bandBlurb(
+  rows: { name: BandName; worstMatch: number; survival: BandSurvivalRow }[] | null,
+  band: BandName,
+  presetName: string | null,
+): string {
+  const spec = bandByName(band);
+  const stakes = `Ante ${spec.ante}, bet ${spec.baseBet}, ${spec.raisedBet} raised — up to ${spec.worstMatch} a match.`;
+  const row = rows?.find((r) => r.name === band)?.survival;
+  const odds = survivalFor(row, presetName);
+  if (!odds || !row) return stakes;
+  const who = presetName ? `${presetName} here` : "Agents here";
+  const lasts = row.medianHours === null ? "" : ` Those that don't are typically gone inside ${Math.round(row.medianHours)} hours.`;
+  return `${stakes} ${who}: ${survivalText(odds)} last a week of play.${lasts}`;
+}

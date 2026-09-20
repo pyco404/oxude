@@ -1,6 +1,6 @@
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { ChainClient, loadKeypair, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
-import { MAX_EXPOSURE } from "../src/db/schema.js";
+import { bandByName } from "../src/db/schema.js";
 
 // Initialises the settlement program on a cluster, idempotently, and tops up
 // the settler so it can pay rent for vaults and settlement records.
@@ -43,7 +43,7 @@ if (await connection.getAccountInfo(pdas.config(), "confirmed")) {
   }
   console.log(`config   ${pdas.config().toBase58()}  already initialised, limit ${config.maxSettlement.toString()}`);
 } else {
-  const signature = await new ChainClient(connection, admin).initialize(settler.publicKey, MAX_EXPOSURE);
+  const signature = await new ChainClient(connection, admin).initialize(settler.publicKey, bandByName("C").worstMatch);
   console.log(`config   ${pdas.config().toBase58()}  initialised (${signature})`);
 }
 console.log(`mint     ${pdas.mint().toBase58()}`);

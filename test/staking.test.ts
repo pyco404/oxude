@@ -1,7 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { agents, bandOf, ledger, matches, MAX_EXPOSURE, MIN_STAKE, STARTING_BALANCE } from "../src/db/schema.js";
+import {
+  agents,
+  bandByName,
+  canAffordBand,
+  affordableBands,
+  ledger,
+  matches,
+  normaliseNet,
+  ratings,
+  STARTING_BALANCE,
+} from "../src/db/schema.js";
 import {
   balanceOf,
   record,
@@ -13,7 +23,7 @@ import {
   recordElicitation,
   elicitationCount,
 } from "../src/db/ledger.js";
-import { clampCeiling, createAgent, leaderboard, pickOpponent, runMatch, setCeiling } from "../src/db/runner.js";
+import { createAgent, leaderboard, pickOpponent, runMatch, setBand } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { someWallet } from "./helpers.js";
 
@@ -51,43 +61,58 @@ describe("balances", () => {
 });
 
 describe("stakes", () => {
-  it("take what both sides can cover, and never more than a match can move", () => {
-    const rich = { name: "rich", balance: 500 };
-    expect(stakeBetween(rich, rich)).toBe(MAX_EXPOSURE);
-    expect(stakeBetween({ ...rich, balance: 20 }, rich)).toBe(20);
-    expect(stakeBetween(rich, { ...rich, balance: 35 })).toBe(35);
-    // The lower of the two ceilings caps it: an owner never risks more than they chose.
-    expect(stakeBetween({ ...rich, ceiling: 30 }, rich)).toBe(30);
-    expect(stakeBetween({ ...rich, ceiling: 40 }, { ...rich, ceiling: 25 })).toBe(25);
-    expect(stakeBetween({ ...rich, balance: 18, ceiling: 30 }, rich)).toBe(18);
+  it("are the band's worst match, whatever either side holds beyond it", () => {
+    const rich = { name: "rich", balance: 5_000 };
+    // No clamp any more: a band is a money scale, and both sides pay it in full.
+    expect(stakeBetween(rich, rich, "A")).toBe(20);
+    expect(stakeBetween(rich, rich, "B")).toBe(40);
+    expect(stakeBetween(rich, rich, "C")).toBe(60);
+    // A bigger balance buys nothing; the band alone decides.
+    expect(stakeBetween({ name: "just enough", balance: 60 }, rich, "C")).toBe(60);
   });
 
-  it("refuse a side that cannot cover the minimum", () => {
-    const ok = { name: "ok", balance: 200 };
-    expect(() => stakeBetween({ name: "skint", balance: MIN_STAKE - 1 }, ok)).toThrow(StakeError);
-    expect(() => stakeBetween(ok, { name: "skint", balance: 0 })).toThrow(/cannot cover a stake/);
+  it("refuse a side that cannot cover the band's worst match", () => {
+    const ok = { name: "ok", balance: 900 };
+    expect(() => stakeBetween({ name: "skint", balance: 59 }, ok, "C")).toThrow(StakeError);
+    expect(() => stakeBetween(ok, { name: "skint", balance: 39 }, "B")).toThrow(/cannot cover a band B match/);
+    // The same balance is fine one band down.
+    expect(stakeBetween({ name: "skint", balance: 39 }, ok, "A")).toBe(20);
   });
 
-  it("sort ceilings into bands, with the upper bound winning at a boundary", () => {
-    expect(bandOf(10)).toBe("10-20");
-    expect(bandOf(20)).toBe("10-20");
-    expect(bandOf(21)).toBe("20-40");
-    expect(bandOf(40)).toBe("20-40");
-    expect(bandOf(41)).toBe("40-60");
-    expect(bandOf(60)).toBe("40-60");
+  it("know which bands a balance can still afford", () => {
+    expect(affordableBands(900)).toEqual(["A", "B", "C"]);
+    expect(affordableBands(59)).toEqual(["A", "B"]);
+    expect(affordableBands(39)).toEqual(["A"]);
+    expect(affordableBands(19)).toEqual([]);
+    expect(canAffordBand(20, "A")).toBe(true);
+    expect(canAffordBand(19, "A")).toBe(false);
   });
 
-  it("cap what a match can move, in both directions", () => {
-    expect(settle(45, 20)).toBe(20);
-    expect(settle(-45, 20)).toBe(-20);
-    expect(settle(8, 20)).toBe(8);
-    expect(settle(0, 20)).toBe(0);
+  it("normalise a net onto band B's scale so bands compare", () => {
+    // A band C win of 30 is the same achievement as a band B win of 20.
+    expect(normaliseNet(30, "C")).toBe(20);
+    expect(normaliseNet(10, "A")).toBe(20);
+    expect(normaliseNet(60, "C")).toBe(40);
+    expect(normaliseNet(20, "B")).toBe(20);
+    expect(bandByName("C").worstMatch).toBe(60);
   });
 
-  it("clamp an owner's ceiling to something a match can honour", () => {
-    expect(clampCeiling(5)).toBe(MIN_STAKE);
-    expect(clampCeiling(1000)).toBe(MAX_EXPOSURE);
-    expect(clampCeiling(25.7)).toBe(25);
+  it("scale every amount by one factor, so each band is the same game", () => {
+    for (const band of ["A", "B", "C"] as const) {
+      const b = bandByName(band);
+      // The shape is fixed: ante : bet : raised stays 2 : 5 : 10 everywhere.
+      expect(b.baseBet / b.ante).toBe(2.5);
+      expect(b.raisedBet / b.baseBet).toBe(2);
+      // The worst a match can move is two rounds at the raised bet: a match is
+      // first to two, so the winner can never take a third.
+      expect(b.worstMatch).toBe(b.raisedBet * 2);
+    }
+  });
+
+  it("record a net as it stands: nothing is clamped any more", () => {
+    expect(settle(45)).toBe(45);
+    expect(settle(-45)).toBe(-45);
+    expect(settle(0)).toBe(0);
   });
 });
 
@@ -98,8 +123,9 @@ describe("settlement", () => {
     const b = await createAgent(d, { name: "B", presetName: "Mirage" });
 
     const { match, log, stake, settled } = await runMatch(d, a.id, b.id, { seed: 5 });
-    expect(stake).toBe(MAX_EXPOSURE);
-    expect(settled.A).toBe(settle(log.nets.A, stake));
+    // Both agents default to band B, whose worst match is 60.
+    expect(stake).toBe(bandByName("B").worstMatch);
+    expect(settled.A).toBe(settle(log.nets.A));
     expect(settled.A + settled.B).toBe(0);
     expect(await balanceOf(d, a.id)).toBe(STARTING_BALANCE + settled.A);
     expect(await balanceOf(d, b.id)).toBe(STARTING_BALANCE + settled.B);
@@ -111,58 +137,89 @@ describe("settlement", () => {
     await c();
   });
 
-  it("is capped by the lower ceiling: neither owner risks more than they chose", async () => {
+  it("moves a full band C net, which no clamp would have allowed", async () => {
     const { db: d, close: c } = await fresh();
-    const careful = await createAgent(d, { name: "Careful", presetName: "Bully", maxStake: 30 });
-    const bold = await createAgent(d, { name: "Bold", presetName: "Mirage", maxStake: 60 });
+    const big = await createAgent(d, { name: "Big", presetName: "Bully", band: "C" });
+    const bold = await createAgent(d, { name: "Bold", presetName: "Mirage", band: "C" });
 
-    let sawTheCap = false;
-    for (let seed = 1; seed <= 200 && !sawTheCap; seed++) {
-      const before = { a: await balanceOf(d, careful.id), b: await balanceOf(d, bold.id) };
-      if (Math.min(before.a, before.b) < MIN_STAKE) break;
-      const { stake, match } = await runMatch(d, careful.id, bold.id, { seed });
-      // The stake is what both can cover, within the lower ceiling.
-      expect(stake).toBe(Math.min(before.a, before.b, 30, MAX_EXPOSURE));
+    let sawBeyondBandB = false;
+    for (let seed = 1; seed <= 200 && !sawBeyondBandB; seed++) {
+      const before = { a: await balanceOf(d, big.id), b: await balanceOf(d, bold.id) };
+      if (Math.min(before.a, before.b) < bandByName("C").worstMatch) break;
+      const { stake, match } = await runMatch(d, big.id, bold.id, { seed });
+      // The band alone sets the stake; balances beyond it buy nothing.
+      expect(stake).toBe(60);
       const [row] = await d.select().from(matches).where(eq(matches.id, match.id));
-      // Nobody moves more than the careful owner's ceiling.
-      expect(Math.abs(row!.netA)).toBeLessThanOrEqual(30);
-      if (Math.abs(row!.log.nets.A) > 30) sawTheCap = true;
+      // Nothing is clamped: the recorded net is the net the engine produced.
+      expect(row!.netA).toBe(row!.log.nets.A);
+      expect(Math.abs(row!.netA)).toBeLessThanOrEqual(60);
+      // Band B's widest possible net is 40; band C reaches past it.
+      if (Math.abs(row!.netA) > 40) sawBeyondBandB = true;
     }
-    // At least one match was worth more than 30 in play, and the ceiling held it.
-    expect(sawTheCap).toBe(true);
+    // Band C really does move more than band B ever could.
+    expect(sawBeyondBandB).toBe(true);
     await c();
   });
 
-  it("the ceiling decides the band an agent is matched in", async () => {
+  it("the band decides who an agent is matched against", async () => {
     const { db: d, close: c } = await fresh();
     const owner = someWallet();
-    const cautious = await createAgent(d, { name: "Cautious", presetName: "Anchor", ownerId: owner, maxStake: 15 });
-    // Four in the cautious band, four well above it.
+    const cautious = await createAgent(d, { name: "Cautious", presetName: "Anchor", ownerId: owner, band: "A" });
+    // Four on the cheap scale, four on the dear one.
     const low = [];
-    for (let i = 0; i < 4; i++) low.push(await createAgent(d, { name: `Low ${i}`, presetName: "Bully", maxStake: 20 }));
-    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Hammer", maxStake: 60 });
+    for (let i = 0; i < 4; i++) low.push(await createAgent(d, { name: `Low ${i}`, presetName: "Bully", band: "A" }));
+    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Hammer", band: "C" });
     await refreshTrueRatings(d);
 
     for (let i = 0; i < 20; i++) {
       const pick = await pickOpponent(d, cautious.id);
-      expect(pick.band).toBe("10-20");
+      expect(pick.band).toBe("A");
       expect(low.map((a) => a.id)).toContain(pick.opponentId);
     }
 
-    // Raising the ceiling moves the agent to another band, and another set of opponents.
-    expect(await setCeiling(d, cautious.id, owner, 60)).toBe(60);
+    // Changing band moves the agent to another scale, and another set of opponents.
+    expect(await setBand(d, cautious.id, owner, "C")).toBe("C");
     const pick = await pickOpponent(d, cautious.id);
-    expect(pick.band).toBe("40-60");
+    expect(pick.band).toBe("C");
     expect(low.map((a) => a.id)).not.toContain(pick.opponentId);
-    await expect(setCeiling(d, cautious.id, "88888888-8888-4888-8888-888888888888", 60)).rejects.toThrow(/another owner/);
+    await expect(setBand(d, cautious.id, "88888888-8888-4888-8888-888888888888", "C")).rejects.toThrow(/another owner/);
     await c();
   });
 
   it("says so when nobody in the band can play", async () => {
     const { db: d, close: c } = await fresh();
-    const lonely = await createAgent(d, { name: "Lonely", presetName: "Anchor", maxStake: 15 });
-    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Bully", maxStake: 60 });
-    await expect(pickOpponent(d, lonely.id)).rejects.toThrow(/no opponent in the 10-20 band/);
+    const lonely = await createAgent(d, { name: "Lonely", presetName: "Anchor", band: "A" });
+    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Bully", band: "C" });
+    await expect(pickOpponent(d, lonely.id)).rejects.toThrow(/no opponent in the A band/);
+    await c();
+  });
+});
+
+describe("rating across bands", () => {
+  it("normalises a record onto band B's scale, so bands rank against each other", async () => {
+    const { db: d, close: c } = await fresh();
+    // The same preset, the same seed, the same opponent preset - one pair in
+    // band A, one in band C. The money differs by the scale; the record must not.
+    const results: Record<string, { cumulative: number; form: number; raw: number }> = {};
+    for (const band of ["A", "C"] as const) {
+      const a = await createAgent(d, { name: `A-${band}`, presetName: "Bully", band });
+      const b = await createAgent(d, { name: `B-${band}`, presetName: "Mirage", band });
+      const { match } = await runMatch(d, a.id, b.id, { seed: 7 });
+      const [row] = await d.select().from(matches).where(eq(matches.id, match.id));
+      const [rating] = await d.select().from(ratings).where(eq(ratings.agentId, a.id));
+      results[band] = {
+        cumulative: rating!.cumulativeNet,
+        form: rating!.rollingNet50,
+        raw: row!.netA,
+      };
+    }
+    // Band C moved three times band A's money on the same match.
+    expect(results["C"]!.raw).toBe(results["A"]!.raw * 3);
+    // But the normalised record is identical: that is what the ladder ranks.
+    expect(results["C"]!.cumulative).toBe(results["A"]!.cumulative);
+    expect(results["C"]!.form).toBe(results["A"]!.form);
+    // And it is band B's scale: a band A net of n reads as 2n.
+    expect(results["A"]!.cumulative).toBe(results["A"]!.raw * 2);
     await c();
   });
 });
@@ -170,9 +227,9 @@ describe("settlement", () => {
 describe("running out", () => {
   it("retires an agent at zero, freezes its record, and marks it on the ladder", async () => {
     const { db: d, close: c } = await fresh();
-    // Enough to cover one stake and no more.
-    const doomed = await createAgent(d, { name: "Doomed", presetName: "Mirage", startingBalance: MIN_STAKE, maxStake: MIN_STAKE });
-    const rival = await createAgent(d, { name: "Rival", presetName: "Bully" });
+    // Enough to cover one band A match and very little more.
+    const doomed = await createAgent(d, { name: "Doomed", presetName: "Mirage", band: "A", startingBalance: 24 });
+    const rival = await createAgent(d, { name: "Rival", presetName: "Bully", band: "A", startingBalance: 900 });
 
     let retiredAfter = 0;
     for (let seed = 1; seed <= 60; seed++) {
@@ -183,8 +240,9 @@ describe("running out", () => {
       }
     }
     expect(retiredAfter).toBeGreaterThan(0);
-    // Retired when it can no longer cover a stake, which may leave small change.
-    expect(await balanceOf(d, doomed.id)).toBeLessThan(MIN_STAKE);
+    // Retired only when no band at all is open to it, which may leave small change.
+    expect(await balanceOf(d, doomed.id)).toBeLessThan(bandByName("A").worstMatch);
+    expect(affordableBands(await balanceOf(d, doomed.id))).toEqual([]);
 
     const [row] = await d.select().from(agents).where(eq(agents.id, doomed.id));
     expect(row!.retiredAt).not.toBeNull();
@@ -196,14 +254,14 @@ describe("running out", () => {
     const board = await leaderboard(d);
     const listed = board.find((r) => r.agentId === doomed.id);
     expect(listed?.retired).toBe(true);
-    expect(listed?.balance).toBeLessThan(MIN_STAKE);
+    expect(listed?.balance).toBeLessThan(bandByName("A").worstMatch);
     await c();
   });
 
   it("is never offered as an opponent once it cannot cover a stake", async () => {
     const { db: d, close: c } = await fresh();
     const seeker = await createAgent(d, { name: "Seeker", presetName: "Anchor" });
-    const broke = await createAgent(d, { name: "Broke", presetName: "Bully", startingBalance: MIN_STAKE - 1 });
+    const broke = await createAgent(d, { name: "Broke", presetName: "Bully", startingBalance: bandByName("B").worstMatch - 1 });
     const solvent = [];
     for (let i = 0; i < 5; i++) solvent.push(await createAgent(d, { name: `Solvent ${i}`, presetName: "Hammer" }));
     await refreshTrueRatings(d);

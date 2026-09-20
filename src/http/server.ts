@@ -10,9 +10,8 @@ import { isFirstElicitationFree, recordElicitation, StakeError, statement } from
 import {
   activeAgentsOf,
   agentsOf,
-  clampCeiling,
   createAgent,
-  setCeiling,
+  setBand,
   snapshotPreset,
   leaderboard,
   ownerAgent,
@@ -32,7 +31,9 @@ import {
   WithdrawalError,
   type WithdrawalChain,
 } from "../db/withdrawals.js";
-import { CEILING_BANDS, type CeilingBand } from "../db/schema.js";
+import { STAKE_BANDS, affordableBands, bandByName, canAffordBand, type BandName } from "../db/schema.js";
+import { SURVIVAL, SURVIVAL_HOURS, SURVIVAL_PACE_MINUTES, SURVIVAL_SEED_BALANCE, survivalFor } from "../survival.js";
+
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { settlementStatus } from "../chain/worker.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
@@ -123,7 +124,7 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents$/, postAgent],
     ["GET", /^\/agents\/([^/]+)$/, getAgent],
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
-    ["POST", /^\/agents\/([^/]+)\/ceiling$/, postCeiling],
+    ["POST", /^\/agents\/([^/]+)\/band$/, postBand],
     ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
     ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
@@ -224,7 +225,10 @@ export function createApp(options: AppOptions): Server {
       table = validatePolicy(result.table);
     }
 
-    const ceiling = ctx.body["maxStake"];
+    const wantedBand = ctx.body["band"];
+    if (wantedBand !== undefined && !STAKE_BANDS.some((b) => b.name === wantedBand)) {
+      throw new HttpError(400, `band must be one of ${STAKE_BANDS.map((b) => b.name).join(", ")}`);
+    }
     // One agent in play per wallet. The check and the rental share a transaction
     // and a lock on this wallet, so renting from two devices at once still
     // leaves one agent, not two.
@@ -243,7 +247,7 @@ export function createApp(options: AppOptions): Server {
         ...(presetName ? { presetName } : {}),
         ...(brief ? { brief } : {}),
         ...(table ? { policyTable: table } : {}),
-        ...(typeof ceiling === "number" ? { maxStake: clampCeiling(ceiling) } : {}),
+        ...(wantedBand !== undefined ? { band: wantedBand as BandName } : {}),
       });
     });
     await refreshTrueRatings(db);
@@ -258,8 +262,40 @@ export function createApp(options: AppOptions): Server {
         createdAt: fresh!.createdAt,
         trueRating: fresh!.trueRating,
         trueRatingBasis: "against the roster as it stands today",
+        ...bandStatus(view!),
       },
       elicitation: presetName ? null : { free: freeCall, reusedRatedTable: reused },
+    };
+  }
+
+  /**
+   * What the agent panel needs to explain the cover rule: the bands this
+   * balance can still play, what each would risk, and - when the agent can no
+   * longer cover its own band - which cheaper band is still open to it.
+   */
+  function bandStatus(row: { band: BandName; balance: number; presetName: string | null }) {
+    const open = affordableBands(row.balance);
+    return {
+      band: row.band,
+      worstMatch: bandByName(row.band).worstMatch,
+      canPlay: canAffordBand(row.balance, row.band),
+      /** Bands this balance covers, cheapest upward. Empty means nothing is left but withdrawing. */
+      affordable: open,
+      /** The best band still open, when the current one is not. Null when none is. */
+      fallback: canAffordBand(row.balance, row.band) ? null : (open.at(-1) ?? null),
+      bands: STAKE_BANDS.map((b) => ({
+        name: b.name,
+        stakes: { ante: b.ante, baseBet: b.baseBet, raisedBet: b.raisedBet },
+        worstMatch: b.worstMatch,
+        affordable: row.balance >= b.worstMatch,
+        survival: survivalFor(b.name, (row.presetName as PresetName | null) ?? null),
+        medianHours: SURVIVAL[b.name].medianHours,
+      })),
+      survivalBasis: {
+        hours: SURVIVAL_HOURS,
+        paceMinutes: SURVIVAL_PACE_MINUTES,
+        seedBalance: SURVIVAL_SEED_BALANCE,
+      },
     };
   }
 
@@ -277,11 +313,12 @@ export function createApp(options: AppOptions): Server {
           policyTable: own!.policyTable,
           trueRating: own!.trueRating,
           trueRatingBasis: "against the roster as it stands today",
+          ...bandStatus(row),
         },
         view: "owner",
       };
     }
-    return { agent: row, view: "public" };
+    return { agent: { ...row, ...bandStatus(row) }, view: "public" };
   }
 
   async function postPlay(ctx: Ctx) {
@@ -330,15 +367,19 @@ export function createApp(options: AppOptions): Server {
     };
   }
 
-  async function postCeiling(ctx: Ctx) {
+  async function postBand(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
     const id = requireUuid(ctx.params[0]);
-    const value = ctx.body["maxStake"];
-    if (typeof value !== "number" || !Number.isFinite(value)) throw new HttpError(400, "maxStake must be a number");
+    const value = ctx.body["band"];
+    if (!STAKE_BANDS.some((b) => b.name === value)) {
+      throw new HttpError(400, `band must be one of ${STAKE_BANDS.map((b) => b.name).join(", ")}`);
+    }
     try {
-      return { maxStake: await setCeiling(db, id, ownerId, value) };
+      return { band: await setBand(db, id, ownerId, value as BandName) };
     } catch (error) {
       if (error instanceof Error && /another owner/.test(error.message)) throw new HttpError(403, error.message);
+      // Too poor for that band: the owner can pick a cheaper one.
+      if (error instanceof StakeError) throw new HttpError(409, error.message);
       throw error;
     }
   }
@@ -348,7 +389,7 @@ export function createApp(options: AppOptions): Server {
     const id = requireUuid(ctx.params[0]);
     const row = await publicAgent(db, id);
     if (!row) throw new HttpError(404, "no such agent");
-    return { balance: row.balance, maxStake: row.maxStake, retired: row.retired, movements: await statement(db, id) };
+    return { balance: row.balance, band: row.band, retired: row.retired, movements: await statement(db, id) };
   }
 
   async function getMatch(ctx: Ctx) {
@@ -414,10 +455,13 @@ export function createApp(options: AppOptions): Server {
     const beforeParam = ctx.query.get("before");
     const before = beforeParam === null ? undefined : Number(beforeParam);
     if (before !== undefined && !Number.isSafeInteger(before)) throw new HttpError(400, "before must be a match seq");
+    // Staked-only by default: exhibitions are filler, and one every thirty
+    // seconds buries the real matches. `?staked=false` asks for everything.
+    const stakedOnly = (ctx.query.get("staked") ?? "true") !== "false";
     const t = (options.now ?? Date.now)();
     if (!bluffCache || t - bluffCache.at > BLUFF_TTL_MS) bluffCache = { at: t, value: await latestBluff(db) };
     return {
-      matches: await recentMatches(db, { limit, ...(before !== undefined ? { before } : {}) }),
+      matches: await recentMatches(db, { limit, stakedOnly, ...(before !== undefined ? { before } : {}) }),
       bluff: bluffCache.value,
     };
   }
@@ -528,11 +572,19 @@ export function createApp(options: AppOptions): Server {
   /** Who is out there to play, in a band. Public: the ladder shows this anyway. */
   async function getRoster(ctx: Ctx) {
     const band = ctx.query.get("band");
-    if (band !== null && !CEILING_BANDS.some((b) => b.name === band)) {
-      throw new HttpError(400, `band must be one of ${CEILING_BANDS.map((b) => b.name).join(", ")}`);
+    if (band !== null && !STAKE_BANDS.some((b) => b.name === band)) {
+      throw new HttpError(400, `band must be one of ${STAKE_BANDS.map((b) => b.name).join(", ")}`);
     }
-    const rows = await roster(db, band === null ? {} : { band: band as CeilingBand });
-    return { band, bands: CEILING_BANDS, counts: await bandCounts(db), agents: rows };
+    const rows = await roster(db, band === null ? {} : { band: band as BandName });
+    // Survival rides along so the rent screen can quote it without a second
+    // request, and without the client keeping its own copy of the numbers.
+    return {
+      band,
+      bands: STAKE_BANDS.map((b) => ({ ...b, survival: SURVIVAL[b.name] })),
+      survivalBasis: { hours: SURVIVAL_HOURS, paceMinutes: SURVIVAL_PACE_MINUTES, seedBalance: SURVIVAL_SEED_BALANCE },
+      counts: await bandCounts(db),
+      agents: rows,
+    };
   }
 
   async function postPreview(ctx: Ctx) {
@@ -553,7 +605,14 @@ export function createApp(options: AppOptions): Server {
       table = validatePolicy(result.table);
       remember(ownerId, brief, table);
     }
-    const preview = previewPolicy(table, await rosterProfile(db));
+    // Priced in the band the player is looking at, so the numbers on the rent
+    // screen are the ones they would actually play for.
+    const wanted = ctx.body["band"];
+    if (wanted !== undefined && !STAKE_BANDS.some((b) => b.name === wanted)) {
+      throw new HttpError(400, `band must be one of ${STAKE_BANDS.map((b) => b.name).join(", ")}`);
+    }
+    const band = (wanted as BandName | undefined) ?? "B";
+    const preview = previewPolicy(table, await rosterProfile(db), band);
     return { preview, policyTable: table, elicitation: supplied ? null : { free: freeCall } };
   }
 

@@ -34,14 +34,22 @@ export type FeedItem = {
 const agentA = alias(agents, "agent_a_row");
 const agentB = alias(agents, "agent_b_row");
 
-/** Newest first. `before` pages by seq; `agentId` limits to one agent's matches. */
+/**
+ * Newest first. `before` pages by seq; `agentId` limits to one agent's matches;
+ * `stakedOnly` drops exhibitions.
+ *
+ * The house plays an exhibition every thirty seconds, so a hundred unfiltered
+ * rows reach back less than an hour and a real match is buried within minutes.
+ * Staked-only is what the feed is usually asked for.
+ */
 export async function recentMatches(
   db: Db,
-  options: { limit?: number; before?: number; agentId?: string } = {},
+  options: { limit?: number; before?: number; agentId?: string; stakedOnly?: boolean } = {},
 ): Promise<FeedItem[]> {
   const conditions: SQL[] = [];
   if (options.before !== undefined) conditions.push(lt(matches.seq, options.before));
   if (options.agentId !== undefined) conditions.push(or(eq(matches.agentA, options.agentId), eq(matches.agentB, options.agentId))!);
+  if (options.stakedOnly) conditions.push(eq(matches.exhibition, false));
 
   const rows = await db
     .select({

@@ -4,7 +4,7 @@ import { seatAveragedNet } from "../exact.js";
 import { OXUDE_RULES } from "../round.js";
 import type { Agent } from "../types.js";
 import type { Db } from "./client.js";
-import { agents } from "./schema.js";
+import { agents, bandByName, type BandName } from "./schema.js";
 
 /**
  * Exact ratings. A decision table's expected net against the roster is
@@ -90,18 +90,34 @@ export function rosterWithout(profile: RosterProfile, table: Policy): RosterProf
  * is exact, but it is exact about today's roster: it is not a promise about
  * future opponents, who will include agents written after this was computed.
  */
-export function previewPolicy(table: Policy, profile: RosterProfile) {
+/**
+ * What a table is worth against today's roster, rated on band B's scale and
+ * priced in the band the player is actually considering.
+ *
+ * The rating is deliberately band-neutral: it is always computed at OXUDE_RULES,
+ * so two agents are comparable however they play. The money is not - a band C
+ * player wants to know what a match is worth to them, not to a band B player -
+ * so `priced` scales the same figures by the band's factor. Both come from one
+ * calculation, because a band is only a scale.
+ */
+export function previewPolicy(table: Policy, profile: RosterProfile, band: BandName = "B") {
   const agent = policyAgent(table);
+  const factor = bandByName(band).factor;
+  const rating = trueRatingAgainst(agent, profile);
   return {
-    trueRating: trueRatingAgainst(agent, profile),
+    /** Normalised onto band B, and so comparable with every other agent. */
+    trueRating: rating,
     basis: "against the roster as it stands today",
+    band,
+    /** The same rating in the money this band actually moves. */
+    priced: { band, perMatch: rating * factor, worstMatch: bandByName(band).worstMatch },
     roster: profile.agentCount,
     rosterFingerprint: profile.fingerprint,
     /** Per distinct opponent, so a brief can be aimed at what is actually out there. */
-    breakdown: profile.entries.map((e) => ({
-      weight: e.weight,
-      expectedNet: seatAveragedNet(agent, policyAgent(e.table), OXUDE_RULES),
-    })),
+    breakdown: profile.entries.map((e) => {
+      const net = seatAveragedNet(agent, policyAgent(e.table), OXUDE_RULES);
+      return { weight: e.weight, expectedNet: net, pricedNet: net * factor };
+    }),
   };
 }
 

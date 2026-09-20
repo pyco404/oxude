@@ -96,7 +96,12 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const { agent, record, matches } = found.data;
   const total = record.wins + record.losses + record.level;
   const net = agent.cumulativeNet ?? 0;
-  const tags = [strategy(agent.presetName), agent.house ? "House agent" : "Player agent", `Ceiling ${agent.maxStake}`];
+  const worst = agent.worstMatch ?? { A: 20, B: 40, C: 60 }[agent.band];
+  const tags = [
+    strategy(agent.presetName),
+    agent.house ? "House agent" : "Player agent",
+    `Band ${agent.band} · up to ${worst} a match`,
+  ];
 
   return (
     <Page>

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { firstFreeMark } from "../marks.js";
 import { newAgentId } from "../agent-id.js";
 import { randomInt } from "node:crypto";
@@ -18,13 +18,17 @@ import {
   matches,
   withdrawals,
   ratings,
-  bandOf,
-  CEILING_BANDS,
-  MAX_EXPOSURE,
+  STAKE_BANDS,
+  DEFAULT_BAND,
+  affordableBands,
+  bandByName,
+  bandStakes,
+  canAffordBand,
+  normaliseNet,
   MIN_STAKE,
   RATING_WINDOW,
   STARTING_BALANCE,
-  type CeilingBand,
+  type BandName,
   type AgentRow,
   type MatchRow,
   type RulesConfig,
@@ -56,16 +60,32 @@ const sameStakes = (a: Stakes, b: Stakes) =>
   a.ante === b.ante && a.baseBet === b.baseBet && a.raisedBet === b.raisedBet;
 
 /**
+ * Whether one set of stakes is the other at a different scale: every amount
+ * multiplied by the same factor. A table prices decisions in ratios - what a
+ * fold costs against what the pot pays - and those ratios are untouched by a
+ * uniform scale, so the same table is correct at every band. That is precisely
+ * why bands are money scales and not arbitrary price lists: change one amount
+ * without the others and the table really would be mispriced.
+ */
+export function sameShape(a: Stakes, b: Stakes): boolean {
+  if (a.ante <= 0 || b.ante <= 0) return sameStakes(a, b);
+  const factor = b.ante / a.ante;
+  return b.baseBet === a.baseBet * factor && b.raisedBet === a.raisedBet * factor;
+}
+
+/**
  * A stored table encodes decisions taken at particular prices. Playing it at
- * other stakes would silently misprice every fold, so refuse instead.
+ * stakes of a different shape would silently misprice every fold, so refuse
+ * instead. A different band is not a different shape: it is the same prices,
+ * scaled, so an agent may change band without re-eliciting its table.
  */
 export function assertStakesMatch(row: Pick<AgentRow, "name" | "policyStakes">, stakes: Stakes): void {
   const built = row.policyStakes ?? DEFAULT_RULES.stakes;
-  if (!sameStakes(built, stakes)) {
+  if (!sameShape(built, stakes)) {
     throw new Error(
       `agent ${row.name} has a table built for ante ${built.ante}/${built.baseBet}/${built.raisedBet}, ` +
-        `but this match is at ante ${stakes.ante}/${stakes.baseBet}/${stakes.raisedBet}; ` +
-        `re-elicit or re-snapshot the table for these stakes`,
+        `but this match is at ante ${stakes.ante}/${stakes.baseBet}/${stakes.raisedBet}, which is not the ` +
+        `same prices at a different scale; re-elicit or re-snapshot the table for these stakes`,
     );
   }
 }
@@ -78,14 +98,16 @@ export type CreateAgentInput = {
   policyTable?: Policy;
   /** Defaults to the shipped stakes; must match the stakes matches are played at. */
   policyStakes?: Stakes;
-  /** The owner's per-match ceiling. Defaults to a full match's exposure. */
-  maxStake?: number;
+  /** The money scale to play at. Defaults to DEFAULT_BAND. */
+  band?: BandName;
   /** Balance to seed. Defaults to STARTING_BALANCE. */
   startingBalance?: number;
 };
 
-/** Clamped so an owner cannot set a ceiling no match could honour. */
-export const clampCeiling = (value: number) => Math.max(MIN_STAKE, Math.min(MAX_EXPOSURE, Math.floor(value)));
+/** The rules a band is played under: the shipped rules at that band's scale. */
+export function bandRules(band: BandName): RulesConfig {
+  return { ...DEFAULT_RULES, stakes: bandStakes(band) };
+}
 
 /** Writes an agent with its table snapshotted, a ratings row, and a seeded balance. */
 export async function createAgent(db: Db, input: CreateAgentInput) {
@@ -107,7 +129,7 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
       ownerId: input.ownerId ?? null,
       policyTable: table,
       policyStakes: input.policyStakes ?? DEFAULT_RULES.stakes,
-      maxStake: clampCeiling(input.maxStake ?? MAX_EXPOSURE),
+      band: input.band ?? DEFAULT_BAND,
     })
     .returning();
   await tx.insert(ratings).values({ agentId: row!.id });
@@ -191,18 +213,24 @@ export type RunMatchOptions = { seed?: number; rules?: RulesConfig };
 /** Plays one match and records it, updating both ratings in the same transaction. */
 export async function runMatch(db: Db, agentAId: string, agentBId: string, options: RunMatchOptions = {}) {
   const [rowA, rowB] = await Promise.all([loadAgent(db, agentAId), loadAgent(db, agentBId)]);
-  const rules = options.rules ?? DEFAULT_RULES;
+  // Both agents must be on the same money scale, or the match has two prices.
+  if (rowA.band !== rowB.band) {
+    throw new StakeError(`${rowA.name} plays band ${rowA.band} and ${rowB.name} band ${rowB.band}`);
+  }
+  const band = rowA.band;
+  const rules = options.rules ?? bandRules(band);
   assertStakesMatch(rowA, rules.stakes);
   assertStakesMatch(rowB, rules.stakes);
   for (const row of [rowA, rowB]) {
     if (row.retiredAt !== null) throw new StakeError(`${row.name} is retired`);
   }
 
-  // What both sides can cover, under both owners' ceilings.
+  // The band's worst match, which both sides must be able to cover outright.
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, ceiling: rowA.maxStake },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, ceiling: rowB.maxStake },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+    band,
   );
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
@@ -210,8 +238,9 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
 
   // One transaction: a recorded match and the ratings derived from it move together.
-  // Capped by the stake: a match can never take more than was put at risk.
-  const settledA = settle(log.nets.A, stake);
+  // Nothing is capped: the engine cannot produce more than the band's worst
+  // match, and both sides were checked against that above.
+  const settledA = settle(log.nets.A);
   const { match, retired } = await db.transaction(async (tx) => {
     // Lock both agents, then make sure neither has a withdrawal on its way: while one is
     // in flight the vault is spoken for, and a match would move money the chain isn't expecting.
@@ -235,6 +264,7 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
         netA: settledA,
         netB: -settledA,
         stake,
+        band,
         log,
       })
       .returning();
@@ -277,15 +307,20 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
     if (row.retiredAt !== null) throw new StakeError(`${row.name} is retired`);
   }
   if (rowA.id === rowB.id) throw new StakeError("an agent cannot play itself");
-  const rules = DEFAULT_RULES;
+  if (rowA.band !== rowB.band) {
+    throw new StakeError(`${rowA.name} plays band ${rowA.band} and ${rowB.name} band ${rowB.band}`);
+  }
+  const band = rowA.band;
+  const rules = bandRules(band);
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, ceiling: rowA.maxStake },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, ceiling: rowB.maxStake },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+    band,
   );
   const seed = options.seed ?? newSeed();
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
-  const settledA = settle(log.nets.A, stake);
+  const settledA = settle(log.nets.A);
   const [match] = await db
     .insert(matches)
     .values({
@@ -297,6 +332,7 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
       netA: settledA,
       netB: -settledA,
       stake,
+      band,
       log,
       exhibition: true,
     })
@@ -309,7 +345,18 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
  * RATING_WINDOW, and how many it has played. Derived, so it cannot drift.
  */
 export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Record<string, never>, TablesRelationalConfig>, agentId: string): Promise<void> {
-  const mine = sql<number>`case when ${matches.agentA} = ${agentId} then ${matches.netA} else ${matches.netB} end`;
+  const raw = sql<number>`case when ${matches.agentA} = ${agentId} then ${matches.netA} else ${matches.netB} end`;
+  // Normalised onto band B's scale by dividing out the band's factor, so an
+  // agent's record means the same thing whichever band it earned it in: a band
+  // C win of 30 is a band B win of 20, and a band A win of 10 is too. The money
+  // an agent actually holds is never normalised - only the record is.
+  // The factors are inlined rather than bound: a bare parameter in a CASE result
+  // has no type Postgres can infer. They are this module's own constants.
+  const factor = sql<number>`(case ${sql.join(
+    STAKE_BANDS.map((b) => sql`when ${matches.band} = ${b.name} then ${sql.raw(b.factor.toFixed(4))}`),
+    sql` `,
+  )} else 1 end)::double precision`;
+  const mine = sql<number>`((${raw})::double precision / ${factor})`;
   // Exhibitions stake nothing, so they say nothing about how an agent does for money.
   const played = and(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)), eq(matches.exhibition, false));
 
@@ -334,8 +381,8 @@ export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Reco
 
 export type OpponentPick = {
   opponentId: string;
-  /** The ceiling band both agents are in. */
-  band?: CeilingBand;
+  /** The stake band both agents are in. */
+  band?: BandName;
   /** Which path matchmaking took, for the log. */
   path: "closest-rating" | "preset-fallback";
   candidates: number;
@@ -363,19 +410,12 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
     .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
     .from(ledger)
     .groupBy(ledger.agentId)
-    .having(sql`sum(${ledger.amount}) >= ${MIN_STAKE}`)
+    .having(sql`sum(${ledger.amount}) >= ${bandByName(me.band).worstMatch}`)
     .as("solvent");
 
-  // Same band, and able to cover a stake. The band is what a ceiling buys:
-  // who you meet, not what a match is worth.
-  const band = bandOf(me.maxStake);
-  const bounds = CEILING_BANDS.find((b) => b.name === band)!;
-  const inBand =
-    band === "10-20"
-      ? lte(agents.maxStake, bounds.max)
-      : band === "20-40"
-        ? and(gt(agents.maxStake, 20), lte(agents.maxStake, 40))
-        : gt(agents.maxStake, 40);
+  // Same band: a match has one money scale, so both agents must be on it.
+  const band = me.band;
+  const inBand = eq(agents.band, band);
 
   const candidates = await db
     .select({ id: agents.id, ownerId: agents.ownerId, rating: agents.trueRating })
@@ -385,7 +425,6 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
       and(
         ne(agents.id, agentId),
         isNull(agents.retiredAt),
-        gte(agents.maxStake, MIN_STAKE),
         inBand,
         // Two agents with no owner are not the same owner.
         me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId)),
@@ -488,7 +527,7 @@ const publicAgentColumns = {
   matchesPlayed: ratings.matchesPlayed,
   cumulativeNet: ratings.cumulativeNet,
   recentForm: ratings.rollingNet50,
-  maxStake: agents.maxStake,
+  band: agents.band,
   balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
   retired: sql<boolean>`${agents.retiredAt} is not null`,
   /** A house agent: unowned, seeded so a first player has someone to meet. */
@@ -535,17 +574,9 @@ export async function ownerAgent(db: Db, agentId: string, ownerId: string | null
   return row;
 }
 
-/** Who is available to play, optionally inside one ceiling band. */
-export async function roster(db: Db, options: { band?: CeilingBand; limit?: number } = {}) {
-  const bounds = options.band;
-  const inBand =
-    bounds === undefined
-      ? sql`true`
-      : bounds === "10-20"
-        ? lte(agents.maxStake, 20)
-        : bounds === "20-40"
-          ? and(gt(agents.maxStake, 20), lte(agents.maxStake, 40))
-          : gt(agents.maxStake, 40);
+/** Who is available to play, optionally inside one stake band. */
+export async function roster(db: Db, options: { band?: BandName; limit?: number } = {}) {
+  const inBand = options.band === undefined ? sql`true` : eq(agents.band, options.band);
 
   const balance = sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
   return db
@@ -554,7 +585,7 @@ export async function roster(db: Db, options: { band?: CeilingBand; limit?: numb
       name: agents.name,
       presetName: agents.presetName,
       mark: agents.mark,
-      maxStake: agents.maxStake,
+      band: agents.band,
       matchesPlayed: ratings.matchesPlayed,
       cumulativeNet: ratings.cumulativeNet,
       recentForm: ratings.rollingNet50,
@@ -567,26 +598,47 @@ export async function roster(db: Db, options: { band?: CeilingBand; limit?: numb
     .limit(options.limit ?? 24);
 }
 
-/** Active agents in each ceiling band, so a newcomer can be pointed at the busiest. */
-export async function bandCounts(db: Db): Promise<Record<CeilingBand, number>> {
-  const [row] = await db
-    .select({
-      low: sql<number>`count(*) filter (where ${agents.maxStake} <= 20)::int`,
-      mid: sql<number>`count(*) filter (where ${agents.maxStake} > 20 and ${agents.maxStake} <= 40)::int`,
-      high: sql<number>`count(*) filter (where ${agents.maxStake} > 40)::int`,
-    })
+/** Active agents in each stake band, so a newcomer can be pointed at the busiest. */
+export async function bandCounts(db: Db): Promise<Record<BandName, number>> {
+  const rows = await db
+    .select({ band: agents.band, n: sql<number>`count(*)::int` })
     .from(agents)
-    .where(isNull(agents.retiredAt));
-  return { "10-20": Number(row?.low ?? 0), "20-40": Number(row?.mid ?? 0), "40-60": Number(row?.high ?? 0) };
+    .where(isNull(agents.retiredAt))
+    .groupBy(agents.band);
+  const counts = Object.fromEntries(STAKE_BANDS.map((b) => [b.name, 0])) as Record<BandName, number>;
+  for (const r of rows) if (r.band in counts) counts[r.band] = Number(r.n);
+  return counts;
 }
 
-/** The owner's ceiling, changed after renting. */
-export async function setCeiling(db: Db, agentId: string, ownerId: string | null, ceiling: number) {
+/**
+ * The owner's band, changed after renting. Refused when the balance cannot
+ * cover that band's worst match: the agent would be unable to play the moment
+ * it moved. The table itself needs no re-elicitation - a band is the same
+ * prices at a different scale.
+ */
+export async function setBand(db: Db, agentId: string, ownerId: string | null, band: BandName) {
   const row = await ownerAgent(db, agentId, ownerId);
   if (!row) throw new Error(`no agent ${agentId}`);
-  const maxStake = clampCeiling(ceiling);
-  await db.update(agents).set({ maxStake }).where(eq(agents.id, agentId));
-  return maxStake;
+  const balance = await balanceOf(db, agentId);
+  if (!canAffordBand(balance, band)) {
+    throw new StakeError(
+      `${row.name} holds ${balance} and cannot cover a band ${band} match, which can move ${bandByName(band).worstMatch}`,
+    );
+  }
+  await db.update(agents).set({ band }).where(eq(agents.id, agentId));
+  return band;
 }
 
-export { balanceOf, bandOf, CEILING_BANDS, connect, MAX_EXPOSURE, MIN_STAKE, RATING_WINDOW, StakeError };
+export {
+  affordableBands,
+  balanceOf,
+  bandByName,
+  bandStakes,
+  canAffordBand,
+  connect,
+  normaliseNet,
+  MIN_STAKE,
+  RATING_WINDOW,
+  STAKE_BANDS,
+  StakeError,
+};

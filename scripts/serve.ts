@@ -1,7 +1,7 @@
 import "./env.js";
 import { connect, migrate } from "../src/db/client.js";
 import { listen } from "../src/http/server.js";
-import { assignMissingMarks, createAgent, CEILING_BANDS } from "../src/db/runner.js";
+import { assignMissingMarks, createAgent, STAKE_BANDS } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { agents } from "../src/db/schema.js";
 import { mulberry32, PRESET_NAMES } from "../src/index.js";
@@ -26,15 +26,15 @@ if (process.argv.includes("--migrate")) await migrate(db);
 const rosterSize = arg("--roster", 24);
 if (rosterSize > 0 && (await db.select({ id: agents.id }).from(agents).limit(1)).length === 0) {
   const nextName = nameFactory(mulberry32(Date.now() % 1_000_000));
-  const ceilings = CEILING_BANDS.map((b) => b.max);
+  const bands = STAKE_BANDS.map((b) => b.name);
   for (let i = 0; i < rosterSize; i++) {
     await createAgent(db, {
       name: nextName(),
       presetName: PRESET_NAMES[i % PRESET_NAMES.length]!,
-      maxStake: ceilings[i % ceilings.length]!,
+      band: bands[i % bands.length]!,
     });
   }
-  console.log(`Seeded a house roster of ${rosterSize} agents across ${ceilings.length} bands`);
+  console.log(`Seeded a house roster of ${rosterSize} agents across ${bands.length} bands`);
 }
 // Every agent has its own emoji; agents from before marks existed get theirs now, oldest first.
 const marked = await assignMissingMarks(db);

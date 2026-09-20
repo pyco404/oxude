@@ -5,8 +5,11 @@ import {
   elicitations,
   ledger,
   FREE_ELICITATIONS,
-  MAX_EXPOSURE,
   MIN_STAKE,
+  affordableBands,
+  bandByName,
+  canAffordBand,
+  type BandName,
   type LedgerReason,
 } from "./schema.js";
 
@@ -63,36 +66,48 @@ export async function statement(db: Db, agentId: string, limit = 50) {
 export class StakeError extends Error {}
 
 /**
- * What a match between these two puts at risk: what both can actually cover,
- * within both owners' per-match ceilings, and never more than one match can
- * move. The ceiling is a promise to the owner - "never risk more than this in
- * one match" - so the lower of the two governs. A low ceiling can pull an
- * opponent's stake down, but matchmaking only pairs agents in the same band, so
- * never below that band's floor. Throws when either side cannot cover the minimum.
+ * What a match in this band puts at risk: the whole of the band's worst match,
+ * every time. There is no clamp any more - a band is a money scale, and scaling
+ * only works if both sides pay the scale in full - so both agents must be able
+ * to cover it before the match is played at all.
+ *
+ * The old ceiling clamp is gone deliberately. It let a short balance drag a
+ * stronger opponent's match down to it, which is what made the top two ceiling
+ * bands play identically.
  */
 export function stakeBetween(
-  a: { name: string; balance: number; ceiling?: number },
-  b: { name: string; balance: number; ceiling?: number },
+  a: { name: string; balance: number },
+  b: { name: string; balance: number },
+  band: BandName,
 ): number {
+  const worst = bandByName(band).worstMatch;
   for (const side of [a, b]) {
-    if (side.balance < MIN_STAKE) {
-      throw new StakeError(`${side.name} cannot cover a stake: balance ${side.balance}, minimum ${MIN_STAKE}`);
+    if (!canAffordBand(side.balance, band)) {
+      throw new StakeError(
+        `${side.name} cannot cover a band ${band} match: balance ${side.balance}, needs ${worst}`,
+      );
     }
   }
-  return Math.min(a.balance, b.balance, a.ceiling ?? MAX_EXPOSURE, b.ceiling ?? MAX_EXPOSURE, MAX_EXPOSURE);
+  return worst;
 }
 
-/** Nobody can lose money they do not have: the stake is what both could cover. */
-export const settle = (net: number, stake: number): number => Math.max(-stake, Math.min(stake, net));
+/**
+ * A match's net, as the ledger will record it. Nothing is clamped: the engine
+ * already cannot produce a net beyond the band's worst match, and both sides
+ * were checked against that before playing.
+ */
+export const settle = (net: number): number => net;
 
 /**
- * An agent that can no longer cover a stake is retired: its record stops here.
- * The test is the minimum stake, not zero - a balance below it can never be
- * played again, so leaving it alive would just make an unplayable zombie.
+ * An agent is retired only when no band is open to it - below the cheapest
+ * band's worst match, where the only thing left to do is withdraw. Falling
+ * below its *own* band's cover is not retirement: the agent is simply barred
+ * from that band until its owner moves it to one it can cover. The band is the
+ * owner's choice, so nothing here spends it on their behalf.
  */
 export async function retireIfBroke(db: Writable, agentId: string): Promise<boolean> {
   const balance = await balanceOf(db, agentId);
-  if (balance >= MIN_STAKE) return false;
+  if (affordableBands(balance).length > 0) return false;
   await db.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, agentId));
   return true;
 }
@@ -117,4 +132,4 @@ export async function recordElicitation(
   await db.insert(elicitations).values(input);
 }
 
-export { MAX_EXPOSURE, MIN_STAKE };
+export { MIN_STAKE };

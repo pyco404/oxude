@@ -1,6 +1,6 @@
 # Economy (post-hackathon design)
 
-**Status: design only. None of this is built.** Today Oxude runs on devnet with a fake game token; this is the plan for a real one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
+**Status: design, with one part now built.** Bands are live as money scales (see [Bands](#bands)); everything else here — the token, rentals, auctions, autoplay, prizes — remains design only. Today Oxude runs on devnet with a fake game token; this is the plan for a real one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
 
 ## Token
 
@@ -33,14 +33,25 @@ Bands are **money scales**, not skill tiers. Every amount in a band scales by on
 
 | Band | Scale | Ante | Bet | Raised | Cover |
 |---|---|---|---|---|---|
-| A | ×0.5 | 2 | 5 | 10 | 30 |
-| B | ×1 | 4 | 10 | 20 | 60 |
-| C | ×1.5 | 6 | 15 | 30 | 90 |
+| A | ×0.5 | 2 | 5 | 10 | 20 |
+| B | ×1 | 4 | 10 | 20 | 40 |
+| C | ×1.5 | 6 | 15 | 30 | 60 |
 
-- **The cover rule: a match's maximum exposure is three times the band's raised bet** — 30, 60, 90. That is the per-match ceiling the program enforces, and the reason band C needs the limit raised from 60 to 90.
+- **The cover rule: a match's maximum exposure is _two_ times the band's raised bet** — 20, 40, 60. This corrects an earlier reading of three times, which no match can reach: a match is first to two rounds, so the winner never takes a third, and a 2-1 match nets only one round. Enumerating every draw and flip across all four presets confirms band B's widest net is exactly 40, and no decision table can beat it, because a round is never worth more than the raised bet.
+- **Band C therefore needs no change to the program's per-match limit.** `max_settlement` is already 60, which is exactly band C's worst match. `set_max_settlement` exists for headroom beyond that, not for band C.
+- **Nothing is clamped.** A band can only be played by a balance that could pay its cover outright, so both sides are checked before a match runs. Falling below your band's cover bars you from *that* band, not from the game: the owner moves the agent to one it can still cover. Only below band A's 20 is there nothing left but to withdraw, which is retirement. An agent's band is never changed on its behalf — it is the owner's choice.
+- **Records are normalised onto band B's scale.** Every net is divided by its band's factor before it reaches a rating, so a band C win of 30 counts the same as a band B win of 20. The ladder ranks agents, not the band they picked. Balances are never normalised.
 - The **seed is not scaled per band**. One seed of **900** across all three, so the band changes the stakes and not the starting money.
 
-**Survival, pending the option-B simulation.** Early unclamped figures: about **81.7%** of agents survive a week overall, **above 96%** in band A, and **around 65%** in band C. Band C's attrition is accepted rather than corrected — a bigger scale on the same seed is the point. These numbers are provisional until the option-B simulation replaces them.
+**Survival, measured.** 20,000 agents per preset per band, one match per ten minutes for a week, exact match outcomes, no clamp, stopping when the agent can no longer cover its band:
+
+| Band | Survive a week | Median time to bust |
+|---|---|---|
+| A | 99.1% | 143 h |
+| B | 80.5% | 104 h |
+| C | 60.8% | 74 h |
+
+Band C came in at **60.8%**, below the 65% the provisional figures suggested; its attrition is accepted rather than corrected, because a bigger scale on the same seed is the point. The spread between presets also widens with the band — about 1 point in A, 8 in B, 9 in C — so band C is quoted per preset (Mirage 57%, Hammer 66%) rather than as one number. Regenerate with `npx tsx scripts/simulate-autoplay.ts --emit`, which rewrites `src/survival.ts`; the rent screen quotes that generated table and never invents a figure.
 
 ## Expiry and auction
 
@@ -101,7 +112,7 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 - **Prize ranking:** net per chip staked, not net per match. Stake size follows balance, so ranking on net per match would bring back pay-to-win.
 - **Free first agent: dropped.** Wallets cost nothing to create, so it would have meant unlimited free agents. The free trial against house agents replaces it, with no ladder placement and no prizes.
 - **On-chain settlement: net positions, hourly or on withdrawal.** One match every 10 minutes is 144 matches per agent per day, so per-match settlement would mean 144 transactions and rent-paying accounts per agent per day. Hourly netting caps that at 24, and only for agents that actually played. The off-chain ledger stays authoritative.
-- **Bands are money scales, not skill tiers.** One factor per band, one unscaled seed of 900, and a per-match cover of three times the raised bet.
+- **Bands are money scales, not skill tiers.** One factor per band, one unscaled seed of 900, and a per-match cover of two times the raised bet — the most a first-to-two match can actually move.
 - **Matching a bid pays the reward wallet.** The owner keeps their right to retain the agent, but not at a discount: they pay what the market bid, and the money goes to prizes rather than back to themselves. Paying themselves half would have made matching nearly free and the auction decorative.
 
 ## Open questions
@@ -111,6 +122,16 @@ These need resolving before building.
 1. **What an auction buyer gets.** The record transfers but the brief doesn't, so the buyer writes a new brief and the record then describes a different strategy. The auction sells a name and a history, not play strength. That is consistent with no-pay-to-win, but the ladder should either reset the record's strategy-dependent stats on transfer or show where the brief changed.
 2. **Price conversion needs a manipulation-resistant price.** A spot price from a thin pump.fun pool can be pushed for one block to rent cheaply. Use a time-weighted average.
 3. **Deposits, withdrawals and custody.** The current program has neither a deposit nor a withdrawal instruction, and the vaults are custodial. Deposit-funded agents and withdraw-any-time both need program changes, plus a lock that covers in-flight matches and unsettled net positions.
+
+   **Deposits also invalidate every survival figure above.** They are all computed from a fixed 900 seed. Once the player chooses the amount, the seed stops being a constant the product picks, so the numbers on the rent screen have to be computed *from their deposit* — at rent time, for the band and preset they are choosing — rather than read from a table generated in advance. The simulation already sweeps starting balances, so the shape is known:
+
+   | Band | 360 | 540 | 720 | 900 | 1080 | 1350 | 1800 |
+   |---|---|---|---|---|---|---|---|
+   | A | 68% | 88% | 96% | 99% | 100% | 100% | 100% |
+   | B | 36% | 54% | 68% | 80% | 88% | 95% | 99% |
+   | C | 23% | 36% | 48% | 61% | 68% | 80% | 91% |
+
+   Deposits change the safety story too: `MAX_SEED` stops being the cap on what a vault can hold, the outflow cap becomes the main brake on a stolen settler key, and "an agent can never be revived" stops being true.
 4. **Security limits before real money.** The known limitations in [security.md](security.md) all have to close first: the settler key can drain vaults, the admin key can upgrade the program and raise the per-match limit, and there's no audit. Hourly net settlement changes the first one's shape: a settlement is no longer capped by one match's stake, so the program needs a different limit, per agent per period.
 5. **Legal review.** Real-money stakes on match outcomes, plus prize pools funded by token trading fees, may be regulated as gambling or as a securities offering, depending on jurisdiction. This needs advice before launch, not after.
 6. **One shared season, or a rolling week per rental?** Either every rental runs on the same fixed weekly season (Monday to Monday UTC, say) or each runs 168 hours from its own start. A shared season makes "final ladder placement" unambiguous and puts every auction on the same day; rolling weeks spread the auction load but mean the weekly prize closes while most agents are mid-rental. The prize schedule depends on this answer.

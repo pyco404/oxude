@@ -8,23 +8,66 @@ export type RosterAgent = {
   presetName: string | null;
   /** The agent's own emoji. */
   mark?: string | null;
-  maxStake: number;
+  band: BandName;
   matchesPlayed: number;
   cumulativeNet: number;
   recentForm: number;
   balance: number;
 };
+export type BandName = "A" | "B" | "C";
+
+/**
+ * Mirrors STAKE_BANDS on the server. A band is a money scale: every amount in a
+ * match is multiplied by the same factor, so the game is identical in each and
+ * only what it is worth changes.
+ */
 export const BANDS = [
-  { name: "10-20", min: 10, max: 20 },
-  { name: "20-40", min: 20, max: 40 },
-  { name: "40-60", min: 40, max: 60 },
+  { name: "A", label: "Low", ante: 2, baseBet: 5, raisedBet: 10, worstMatch: 20 },
+  { name: "B", label: "Standard", ante: 4, baseBet: 10, raisedBet: 20, worstMatch: 40 },
+  { name: "C", label: "High", ante: 6, baseBet: 15, raisedBet: 30, worstMatch: 60 },
 ] as const;
-/** Mirrors the server: upper bound wins at a boundary. */
-export const bandOf = (ceiling: number) => (ceiling <= 20 ? "10-20" : ceiling <= 40 ? "20-40" : "40-60");
-export type PreviewBreakdown = { weight: number; expectedNet: number };
+
+export const DEFAULT_BAND: BandName = "B";
+export const SEED_BALANCE = 900;
+
+export const bandByName = (name: BandName) => BANDS.find((b) => b.name === name)!;
+
+/** The bands a balance can still cover, cheapest first. */
+export const affordableBands = (balance: number): BandName[] =>
+  BANDS.filter((b) => balance >= b.worstMatch).map((b) => b.name);
+
+export type BandSurvival = { low: number; high: number };
+/** The measured table, served by /roster so the client keeps no copy of it. */
+export type BandSurvivalRow = {
+  overall: number;
+  low: number;
+  high: number;
+  medianMatches: number | null;
+  medianHours: number | null;
+  byPreset: Record<string, number>;
+};
+
+/**
+ * What to tell someone renting this preset in this band. A preset gets its own
+ * measured figure; a brief has no preset yet, so it gets the range across them.
+ */
+export const survivalFor = (row: BandSurvivalRow | undefined, preset: string | null): BandSurvival | undefined => {
+  if (!row) return undefined;
+  if (preset && typeof row.byPreset[preset] === "number") {
+    return { low: row.byPreset[preset], high: row.byPreset[preset] };
+  }
+  return { low: row.low, high: row.high };
+};
+/** How the survival figures are phrased, one preset or a range across them. */
+export const survivalText = (s: BandSurvival | undefined) =>
+  s === undefined ? "" : s.low === s.high ? `${s.low.toFixed(0)}%` : `${s.low.toFixed(0)}\u2013${s.high.toFixed(0)}%`;
+
+export type PreviewBreakdown = { weight: number; expectedNet: number; pricedNet?: number };
 export type Preview = {
   trueRating: number;
   basis: string;
+  band?: BandName;
+  priced?: { band: BandName; perMatch: number; worstMatch: number };
   roster: number;
   breakdown: PreviewBreakdown[];
 };
@@ -40,7 +83,23 @@ export type AgentView = {
   cumulativeNet?: number;
   recentForm?: number;
   balance?: number;
-  maxStake?: number;
+  band?: BandName;
+  /** The most this band's matches can move. */
+  worstMatch?: number;
+  /** False when the balance no longer covers this band. */
+  canPlay?: boolean;
+  affordable?: BandName[];
+  /** The best band still open when the current one is not. */
+  fallback?: BandName | null;
+  bands?: {
+    name: BandName;
+    stakes: { ante: number; baseBet: number; raisedBet: number };
+    worstMatch: number;
+    affordable: boolean;
+    survival: BandSurvival;
+    medianHours: number | null;
+  }[];
+  survivalBasis?: { hours: number; paceMinutes: number; seedBalance: number };
   retired?: boolean;
   trueRating?: number | null;
   trueRatingBasis?: string;
@@ -135,27 +194,32 @@ export const api = {
   presets: () => request<{ presets: Preset[]; free: boolean }>("/presets"),
   /** Who you are signed in as, and every agent that wallet owns - on any device. */
   me: (token: string | null) => request<{ ownerId: string; agents: AgentView[] }>("/auth/me", { token }),
-  previewTable: (token: string | null, policyTable: unknown) =>
-    request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable }) }),
-  previewBrief: (token: string | null, brief: string) =>
+  previewTable: (token: string | null, policyTable: unknown, band: BandName = DEFAULT_BAND) =>
+    request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable, band }) }),
+  previewBrief: (token: string | null, brief: string, band: BandName = DEFAULT_BAND) =>
     request<{ preview: Preview; elicitation: { free: boolean } | null }>("/preview", {
       method: "POST",
       token,
-      body: JSON.stringify({ brief }),
+      body: JSON.stringify({ brief, band }),
     }),
-  rent: (token: string | null, input: { name: string; presetName?: string; brief?: string; maxStake?: number }) =>
+  rent: (token: string | null, input: { name: string; presetName?: string; brief?: string; band?: BandName }) =>
     request<{ agent: AgentView; elicitation: { free: boolean } | null }>("/agents", {
       method: "POST",
       token,
       body: JSON.stringify(input),
     }),
-  setCeiling: (token: string | null, id: string, maxStake: number) =>
-    request<{ maxStake: number }>(`/agents/${id}/ceiling`, { method: "POST", token, body: JSON.stringify({ maxStake }) }),
+  setBand: (token: string | null, id: string, band: BandName) =>
+    request<{ band: BandName }>(`/agents/${id}/band`, { method: "POST", token, body: JSON.stringify({ band }) }),
   agent: (token: string | null, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { token }),
   play: (token: string | null, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", token }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
   roster: (band?: string) =>
-    request<{ agents: RosterAgent[]; counts?: Record<string, number> }>(band ? `/roster?band=${band}` : "/roster"),
+    request<{
+      agents: RosterAgent[];
+      counts?: Record<string, number>;
+      bands?: { name: BandName; worstMatch: number; survival: BandSurvivalRow }[];
+      survivalBasis?: { hours: number; paceMinutes: number; seedBalance: number };
+    }>(band ? `/roster?band=${band}` : "/roster"),
   withdrawable: (token: string | null, id: string) => request<{ withdrawable: Withdrawable }>(`/agents/${id}/withdrawable`, { token }),
   prepareWithdrawal: (token: string | null, id: string, amount: number | "all") =>
     request<{ withdrawal: { withdrawalId: string; amount: number; remaining: number; retire: boolean; transaction: string } }>(
