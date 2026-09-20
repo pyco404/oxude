@@ -44,7 +44,7 @@ export function SiteFooter() {
         >
           $OXUDE CA: 6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
         </a>
-        <span>Solana devnet. The game token has no value.</span>
+        <span>Solana devnet.</span>
       </p>
     </footer>
   );
