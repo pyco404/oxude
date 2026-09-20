@@ -374,6 +374,64 @@
       ]
     },
     {
+      "name": "set_max_settlement",
+      "docs": [
+        "Raises or lowers the most a single settlement can move. The admin",
+        "recorded at initialize is the only key that can call it - not the",
+        "settler, whose reach this value is there to limit in the first place.",
+        "It exists so a band with bigger stakes can be priced in without another",
+        "program upgrade, and it is bounded by `MAX_SEED` so that a stolen admin",
+        "key cannot turn the per-settlement guard off altogether."
+      ],
+      "discriminator": [
+        31,
+        159,
+        143,
+        234,
+        236,
+        242,
+        90,
+        117
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "max_settlement",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "settle",
       "docs": [
         "Moves a match's settled net from the loser's vault to the winner's, and",
@@ -815,6 +873,19 @@
   ],
   "events": [
     {
+      "name": "MaxSettlementChanged",
+      "discriminator": [
+        29,
+        218,
+        12,
+        51,
+        181,
+        238,
+        14,
+        95
+      ]
+    },
+    {
       "name": "Settled",
       "discriminator": [
         232,
@@ -862,61 +933,66 @@
     },
     {
       "code": 6001,
+      "name": "NotAdmin",
+      "msg": "Only the configured admin can do this"
+    },
+    {
+      "code": 6002,
       "name": "ZeroAmount",
       "msg": "Amount must be greater than zero"
     },
     {
-      "code": 6002,
+      "code": 6003,
       "name": "OverLimit",
       "msg": "Settlement exceeds the per-match limit"
     },
     {
-      "code": 6003,
+      "code": 6004,
       "name": "SameAgent",
       "msg": "A match cannot settle an agent against itself"
     },
     {
-      "code": 6004,
+      "code": 6005,
       "name": "InsufficientVault",
       "msg": "The paying vault cannot cover this settlement"
     },
     {
-      "code": 6005,
+      "code": 6006,
       "name": "InvalidLimit",
       "msg": "Limit must be greater than zero"
     },
     {
-      "code": 6006,
+      "code": 6007,
       "name": "NotOwner",
       "msg": "Only the agent's recorded owner can withdraw"
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "NotOwnersAccount",
       "msg": "Withdrawals go only to the owner's own token account"
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "LedgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "Unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "AgentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "OutflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "MintLimit",
       "msg": "New vaults have minted all they can in this window"
     }
@@ -984,6 +1060,22 @@
           {
             "name": "mint_bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MaxSettlementChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "u64"
+          },
+          {
+            "name": "max_settlement",
+            "type": "u64"
           }
         ]
       }

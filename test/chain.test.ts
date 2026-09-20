@@ -27,7 +27,10 @@ let settler: Keypair;
 let chain: ChainClient;
 const MAX = 60;
 /** Must match the program's constants. */
-const OUTFLOW_CAP = 120;
+const OUTFLOW_FLOOR = 120;
+const MAX_SEED = 900;
+/** What one vault may pay out in a window, measured on what it holds. */
+const outflowCap = (vault: number) => Math.max(OUTFLOW_FLOOR, Math.floor(vault / 4));
 
 /** A house vault: an id derived from no owner, and the salt that proves it. */
 async function houseVault(amount: number, via: ChainClient = chain): Promise<string> {
@@ -91,6 +94,36 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect(config.maxSettlement.toNumber()).toBe(MAX);
   });
 
+  it("lets only the config's admin change the per-match limit", async () => {
+    const asAdmin = new ChainClient(connection, admin);
+    // The settler cannot: this limit exists to bound the settler's own reach.
+    await expect(chain.setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
+    // Nor can a stranger paying their own fees.
+    const stranger = Keypair.generate();
+    await airdrop(stranger, 1);
+    await expect(new ChainClient(connection, stranger).setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
+    expect((await chain.config()).maxSettlement.toNumber()).toBe(MAX);
+
+    // The admin can, and it takes effect at once: 90 is band C's max exposure,
+    // which is the reason this instruction exists.
+    await asAdmin.setMaxSettlement(90);
+    expect((await chain.config()).maxSettlement.toNumber()).toBe(90);
+    const payer = await houseVault(180);
+    const payee = await houseVault(10);
+    await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 90 });
+    expect(await chain.vaultBalance(payer)).toBe(90);
+
+    // Zero, and anything above a full seed, are refused: a stolen admin key
+    // cannot switch the per-settlement guard off.
+    await expect(asAdmin.setMaxSettlement(0)).rejects.toThrow(/InvalidLimit/);
+    await expect(asAdmin.setMaxSettlement(MAX_SEED + 1)).rejects.toThrow(/InvalidLimit/);
+    expect((await chain.config()).maxSettlement.toNumber()).toBe(90);
+
+    // Put it back: the rest of this file assumes the limit it was opened with.
+    await asAdmin.setMaxSettlement(MAX);
+    expect((await chain.config()).maxSettlement.toNumber()).toBe(MAX);
+  });
+
   it("opens a vault funded with the starting balance", async () => {
     const { id, salt } = newAgentId(null);
     await chain.openVault({ agentId: id, owner: null, salt, amount: 180 });
@@ -125,25 +158,28 @@ describe.skipIf(!RUN)("settlement program", () => {
 
   it("mints no more than a starting balance into a new vault", async () => {
     const { id, salt } = newAgentId(null);
-    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 181 })).rejects.toThrow(/OverLimit/);
+    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: MAX_SEED + 1 })).rejects.toThrow(
+      /OverLimit/,
+    );
     await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 0 })).rejects.toThrow(/ZeroAmount/);
   });
 
   it("caps what one vault can pay out through settlements in a window", async () => {
+    // A vault this size is governed by the floor: a quarter of 180 is less.
     const payer = await houseVault(180);
     const payee = await houseVault(10);
     const bystander = await houseVault(180);
     let paid = 0;
-    while (paid + MAX <= OUTFLOW_CAP) {
+    while (paid + MAX <= OUTFLOW_FLOOR) {
       await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: MAX });
       paid += MAX;
     }
-    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_CAP);
+    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_FLOOR);
     // Its window is spent, though the vault still holds enough to pay.
     await expect(chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 1 })).rejects.toThrow(
       /OutflowLimit/,
     );
-    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_CAP);
+    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_FLOOR);
     // The limit is per vault: everyone else carries on settling.
     await chain.settle({ matchId: randomUUID(), fromAgent: bystander, toAgent: payee, amount: MAX });
     expect(await chain.vaultBalance(bystander)).toBe(120);
@@ -152,6 +188,35 @@ describe.skipIf(!RUN)("settlement program", () => {
     await expect(
       chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: elsewhere, amount: 1 }),
     ).rejects.toThrow(/OutflowLimit/);
+  });
+
+  it("lets a large vault pay out more than the floor, in proportion to what it holds", async () => {
+    const payer = await houseVault(MAX_SEED);
+    const payee = await houseVault(10);
+    // The cap is read from the balance before each settlement leaves, so it
+    // falls as the vault pays: at 900 the first window allows three matches at
+    // MAX (caps of 225, 210, 195 against 60, 120, 180 spent), and the fourth
+    // asks 240 of a cap that has fallen to 180.
+    const schedule = [
+      { cap: outflowCap(900), after: 840 },
+      { cap: outflowCap(840), after: 780 },
+      { cap: outflowCap(780), after: 720 },
+    ];
+    let paid = 0;
+    for (const step of schedule) {
+      expect(paid + MAX).toBeLessThanOrEqual(step.cap);
+      await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: MAX });
+      paid += MAX;
+      expect(await chain.vaultBalance(payer)).toBe(step.after);
+    }
+    // More than a flat floor would ever have allowed, and still a quarter-ish.
+    expect(paid).toBe(180);
+    expect(paid).toBeGreaterThan(OUTFLOW_FLOOR);
+    expect(paid + MAX).toBeGreaterThan(outflowCap(720));
+    await expect(chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: MAX })).rejects.toThrow(
+      /OutflowLimit/,
+    );
+    expect(await chain.vaultBalance(payer)).toBe(720);
   });
 
   it("settles a match between vaults and records it once", async () => {

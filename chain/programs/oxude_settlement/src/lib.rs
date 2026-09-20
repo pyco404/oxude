@@ -6,11 +6,13 @@
 //! what the server's key can do:
 //!
 //! - only the configured settler key can open vaults or settle;
-//! - a single settlement can never move more than `max_settlement`, and no
-//!   vault can pay out more than `OUTFLOW_CAP` through settlements in one
-//!   window of `WINDOW_SLOTS`; a vault opens with at most `MAX_SEED`, and all
-//!   vaults opened in one window mint at most `MINT_CAP` between them - so a
-//!   stolen settler key drains and mints slowly enough to be stopped;
+//! - a single settlement can never move more than `max_settlement`, which only
+//!   the admin key can change and never above `MAX_SEED`; and no
+//!   vault can pay out more than `outflow_cap` of its own balance through
+//!   settlements in one window of `WINDOW_SLOTS`; a vault opens with at most
+//!   `MAX_SEED`, and all vaults opened in one window mint at most `MINT_CAP`
+//!   between them - so a stolen settler key drains and mints slowly enough to
+//!   be stopped;
 //! - an agent id is bound to its owner: it is the hash of the owner's key and
 //!   a salt, checked as the vault opens, and the owner is recorded in that same
 //!   instruction. No key - the settler's included - can record anyone else as
@@ -50,12 +52,13 @@ pub const MINT_BUDGET_SEED: &[u8] = b"mint_budget";
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
 pub const WINDOW_SLOTS: u64 = 1_500;
-/// The most one vault can pay out through settlements in one window.
-pub const OUTFLOW_CAP: u64 = 120;
+/// The least one vault can pay out through settlements in one window. A small
+/// vault is allowed this much even though a quarter of it is less.
+pub const OUTFLOW_FLOOR: u64 = 120;
 /// The most a vault can be opened with: the starting balance.
-pub const MAX_SEED: u64 = 180;
+pub const MAX_SEED: u64 = 900;
 /// The most all vaults opened in one window can mint between them.
-pub const MINT_CAP: u64 = 100 * MAX_SEED;
+pub const MINT_CAP: u64 = 20 * MAX_SEED;
 /// The smallest stake a match can have. A vault left with less than this
 /// could never play again, so a withdrawal must leave nothing or at least this.
 pub const MIN_STAKE: u64 = 10;
@@ -75,6 +78,22 @@ pub mod oxude_settlement {
         config.max_settlement = max_settlement;
         config.bump = ctx.bumps.config;
         config.mint_bump = ctx.bumps.mint;
+        Ok(())
+    }
+
+    /// Raises or lowers the most a single settlement can move. The admin
+    /// recorded at initialize is the only key that can call it - not the
+    /// settler, whose reach this value is there to limit in the first place.
+    /// It exists so a band with bigger stakes can be priced in without another
+    /// program upgrade, and it is bounded by `MAX_SEED` so that a stolen admin
+    /// key cannot turn the per-settlement guard off altogether.
+    pub fn set_max_settlement(ctx: Context<SetMaxSettlement>, max_settlement: u64) -> Result<()> {
+        require!(max_settlement > 0, OxudeError::InvalidLimit);
+        require!(max_settlement <= MAX_SEED, OxudeError::InvalidLimit);
+        let config = &mut ctx.accounts.config;
+        let previous = config.max_settlement;
+        config.max_settlement = max_settlement;
+        emit!(MaxSettlementChanged { previous, max_settlement });
         Ok(())
     }
 
@@ -128,7 +147,9 @@ pub mod oxude_settlement {
         let slot = Clock::get()?.slot;
         let outflow = &mut ctx.accounts.outflow;
         outflow.bump = ctx.bumps.outflow;
-        (outflow.window_start, outflow.spent) = charge(outflow.window_start, outflow.spent, slot, amount, OUTFLOW_CAP)
+        // Measured on what the vault holds now, before this settlement leaves it.
+        let cap = outflow_cap(ctx.accounts.from_vault.amount);
+        (outflow.window_start, outflow.spent) = charge(outflow.window_start, outflow.spent, slot, amount, cap)
             .ok_or(OxudeError::OutflowLimit)?;
 
         let bump = ctx.accounts.config.bump;
@@ -210,6 +231,23 @@ pub fn agent_id_for(owner: &Pubkey, salt: &[u8; 16]) -> [u8; 16] {
     let mut id = [0u8; 16];
     id.copy_from_slice(&hash[..16]);
     id
+}
+
+/// The most this vault can pay out through settlements in one window: a quarter
+/// of what it holds, but never less than `OUTFLOW_FLOOR`. Proportional so that
+/// a large vault is not held to a small one's limit, and so that the seed can
+/// grow without loosening the cap on every vault below it.
+///
+/// `settle` reads this from the balance before each payment leaves, so the cap
+/// falls as the vault pays and what it has already spent chases a falling
+/// target. A window therefore closes at a fifth of the balance it opened with,
+/// not a quarter: spending stops once `spent > (start - spent) / 4`, which is
+/// `spent > start / 5`. A vault seeded at `MAX_SEED` pays out 180 in a window
+/// and keeps 720. That is deliberate - the declining cap is the conservative
+/// reading, and it only bites when one agent is being farmed by a crowd, which
+/// the ledger throttles first. Above the floor, no snapshot is stored.
+pub fn outflow_cap(vault: u64) -> u64 {
+    OUTFLOW_FLOOR.max(vault / 4)
 }
 
 /// A fixed-window budget: `(window_start, spent)` after charging `amount` at
@@ -310,6 +348,14 @@ pub struct MintBudget {
     pub window_start: u64,
     pub spent: u64,
     pub bump: u8,
+}
+
+#[derive(Accounts)]
+pub struct SetMaxSettlement<'info> {
+    /// The admin recorded on the config, and nobody else.
+    pub admin: Signer<'info>,
+    #[account(mut, seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
+    pub config: Account<'info, Config>,
 }
 
 #[derive(Accounts)]
@@ -475,6 +521,12 @@ pub struct VaultOpened {
 }
 
 #[event]
+pub struct MaxSettlementChanged {
+    pub previous: u64,
+    pub max_settlement: u64,
+}
+
+#[event]
 pub struct Settled {
     pub match_id: [u8; 16],
     pub from_agent: [u8; 16],
@@ -486,6 +538,8 @@ pub struct Settled {
 pub enum OxudeError {
     #[msg("Only the configured settler can do this")]
     NotSettler,
+    #[msg("Only the configured admin can do this")]
+    NotAdmin,
     #[msg("Amount must be greater than zero")]
     ZeroAmount,
     #[msg("Settlement exceeds the per-match limit")]
@@ -528,6 +582,22 @@ mod tests {
         // One charge can never exceed the cap on its own.
         assert_eq!(charge(0, 0, 5_000, 121, 120), None);
         assert_eq!(charge(0, u64::MAX, 1, 1, u64::MAX), None);
+    }
+
+    #[test]
+    fn the_outflow_cap_is_a_quarter_of_the_vault_with_a_floor() {
+        // Small vaults get the floor: a quarter of them is less than it.
+        assert_eq!(outflow_cap(0), OUTFLOW_FLOOR);
+        assert_eq!(outflow_cap(MIN_STAKE), OUTFLOW_FLOOR);
+        assert_eq!(outflow_cap(480), OUTFLOW_FLOOR);
+        // The floor and the quarter meet at four times the floor.
+        assert_eq!(outflow_cap(4 * OUTFLOW_FLOOR), OUTFLOW_FLOOR);
+        assert_eq!(outflow_cap(4 * OUTFLOW_FLOOR + 4), OUTFLOW_FLOOR + 1);
+        // Above that it is proportional: a full seed can pay out a quarter.
+        assert_eq!(outflow_cap(MAX_SEED), MAX_SEED / 4);
+        assert_eq!(outflow_cap(MAX_SEED), 225);
+        // No overflow at the top of the range.
+        assert_eq!(outflow_cap(u64::MAX), u64::MAX / 4);
     }
 
     #[test]

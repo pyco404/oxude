@@ -34,6 +34,13 @@ if (await connection.getAccountInfo(pdas.config(), "confirmed")) {
     console.error(`Already initialised with a different settler: ${config.settler.toBase58()}`);
     process.exit(1);
   }
+  // The admin on the config is the only key set_max_settlement accepts, and it
+  // is not the same thing as the program's upgrade authority. If they have
+  // drifted apart, say so now rather than at the first failed limit change.
+  if (config.admin.toBase58() !== admin.publicKey.toBase58()) {
+    console.warn(`WARNING  the config's admin is ${config.admin.toBase58()}, not this key.`);
+    console.warn("         set-max-settlement will refuse this key with NotAdmin.");
+  }
   console.log(`config   ${pdas.config().toBase58()}  already initialised, limit ${config.maxSettlement.toString()}`);
 } else {
   const signature = await new ChainClient(connection, admin).initialize(settler.publicKey, MAX_EXPOSURE);

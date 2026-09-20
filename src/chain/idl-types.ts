@@ -380,6 +380,64 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "setMaxSettlement",
+      "docs": [
+        "Raises or lowers the most a single settlement can move. The admin",
+        "recorded at initialize is the only key that can call it - not the",
+        "settler, whose reach this value is there to limit in the first place.",
+        "It exists so a band with bigger stakes can be priced in without another",
+        "program upgrade, and it is bounded by `MAX_SEED` so that a stolen admin",
+        "key cannot turn the per-settlement guard off altogether."
+      ],
+      "discriminator": [
+        31,
+        159,
+        143,
+        234,
+        236,
+        242,
+        90,
+        117
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "maxSettlement",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "settle",
       "docs": [
         "Moves a match's settled net from the loser's vault to the winner's, and",
@@ -821,6 +879,19 @@ export type OxudeSettlement = {
   ],
   "events": [
     {
+      "name": "maxSettlementChanged",
+      "discriminator": [
+        29,
+        218,
+        12,
+        51,
+        181,
+        238,
+        14,
+        95
+      ]
+    },
+    {
       "name": "settled",
       "discriminator": [
         232,
@@ -868,61 +939,66 @@ export type OxudeSettlement = {
     },
     {
       "code": 6001,
+      "name": "notAdmin",
+      "msg": "Only the configured admin can do this"
+    },
+    {
+      "code": 6002,
       "name": "zeroAmount",
       "msg": "Amount must be greater than zero"
     },
     {
-      "code": 6002,
+      "code": 6003,
       "name": "overLimit",
       "msg": "Settlement exceeds the per-match limit"
     },
     {
-      "code": 6003,
+      "code": 6004,
       "name": "sameAgent",
       "msg": "A match cannot settle an agent against itself"
     },
     {
-      "code": 6004,
+      "code": 6005,
       "name": "insufficientVault",
       "msg": "The paying vault cannot cover this settlement"
     },
     {
-      "code": 6005,
+      "code": 6006,
       "name": "invalidLimit",
       "msg": "Limit must be greater than zero"
     },
     {
-      "code": 6006,
+      "code": 6007,
       "name": "notOwner",
       "msg": "Only the agent's recorded owner can withdraw"
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "notOwnersAccount",
       "msg": "Withdrawals go only to the owner's own token account"
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "ledgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "agentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "outflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "mintLimit",
       "msg": "New vaults have minted all they can in this window"
     }
@@ -990,6 +1066,22 @@ export type OxudeSettlement = {
           {
             "name": "mintBump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "maxSettlementChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "u64"
+          },
+          {
+            "name": "maxSettlement",
+            "type": "u64"
           }
         ]
       }
