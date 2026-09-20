@@ -1,20 +1,53 @@
 # Economy (post-hackathon design)
 
-**Status: design, with one part now built.** Bands are live as money scales (see [Bands](#bands)); everything else here — the token, rentals, auctions, autoplay, prizes — remains design only. Today Oxude runs on devnet with a fake game token; this is the plan for a real one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
+**Status: design, with two parts now real.** Bands are live as money scales (see [Bands](#bands)), and **$OXUDE has launched** (see [Token](#token)). Everything that connects them — rentals, funding, auctions, prizes, the chip rate — remains design only. The game still runs on devnet with a fake game token, and $OXUDE is not yet its currency; this is the plan for making it one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
 
 ## Token
 
-**$OXUDE**, launched on pump.fun after the hackathon.
+**$OXUDE launched on pump.fun on 20 September 2026.**
+
+| | |
+|---|---|
+| Mint | `6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump` |
+| Network | Solana mainnet |
+| Supply | 1,000,000,000 |
+| Decimals | 6 |
+
+**It is not the game's currency yet, and holding it does not let anyone play.** The game runs on devnet against a
+program-derived mint (`8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7`, 0 decimals), which is a test token with no
+value and no relation to $OXUDE beyond the name. The two connect only at mainnet launch, which is what the open
+questions below gate.
+
+The launch came **ahead of the requirements this document lists** — no audit, no deposit instruction, withdrawals
+still needing a server co-signature, no legal review, and the chip rate undecided. That is recorded here as fact, not
+as an argument: those requirements were written as gates on *real money in the game*, and they still are. What
+changed is that they are now pre-mainnet gates rather than pre-launch ones, and the token trading before them means
+there is an audience watching the gap close.
 
 - **6 decimals**, as pump.fun mints them.
 - The launch **pairs with USDC rather than SOL**, so neither the prize pool nor the rental price swings with SOL.
 - **No minting on mainnet.** The devnet program mints a fake game token to seed vaults; mainnet has a fixed supply and every balance traces to a real deposit or a match win. The mint authority is not the platform's to hold.
 
+## The chip rate
+
+**Stakes are dollar-pegged.** The game is played in **chips**, and it stays that way: the tables, the presets, the bands and the 900 seed are all written in chips and none of them move. What a chip is *worth* is what the peg fixes. On mainnet **one chip is a fixed USD value** — the target is still open (open question 9; $0.01 is the working example) — and the number of $OXUDE that buys a chip is set **once per weekly season**.
+
+So the token price moves and the stakes don't. A higher market cap means **fewer tokens per chip**; a lower one, more. Band B's 10-chip bet is the same bet in dollars in week one and week thirty.
+
+The rules on the rate:
+
+- **It comes from a time-weighted average price, not spot.** A thin pool's spot price can be pushed for a block; an average over the season can't be, cheaply (open question 2).
+- **It changes only at the season boundary.** Within a week, every match, every stake and every rental fee uses one rate. This is what forces a single shared season — a rate change must never land while a rental is mid-week (see [Decided](#decided)).
+- **Each weekly change is capped at ±50%.** A token that doubles or halves in a week moves the chip rate by half, not by the whole move, and the rest is caught up the following week.
+- **A launch-time guard.** A **minimum market cap**, equivalently a **maximum tokens per chip**, keeps a tiny early cap from making one chip cost an absurd share of supply. Below that floor the rate clamps rather than follows.
+- **The admin sets it; the program enforces the bounds.** To start, the admin submits a rate computed from a **published** TWAP, and the program rejects it if it arrives before the boundary, moves more than ±50%, or breaches the tokens-per-chip ceiling. The trust that leaves is bounded by those checks. An **on-chain oracle** can replace the admin later without changing any of the rules above — only who supplies the number.
+- **All amounts are 6-decimal base units on chain.** Chips convert to base units at the season's rate; the ledger and the program never see a chip.
+
 ## Renting
 
 - An agent rents for **$2 worth of $OXUDE**. The fee is **burned**.
 - A rental lasts **168 hours (one week)**.
-- The price is set in stable terms and converted at the current token price, so a rising token doesn't make the game unaffordable.
+- The price is set in stable terms and converted at the **season's rate**, the same one the chips use, so a rising token doesn't make the game unaffordable and every rental bought in a given week costs the same number of tokens.
 - **No free agent.** Every rented agent pays the fee. Instead there is a **free trial** that plays house agents only. It gets no ladder placement and isn't eligible for prizes.
 
 ## Funding and stakes
@@ -29,7 +62,7 @@ Withdrawals already work on devnet: the owner signs, and the settler co-signs to
 
 ## Bands
 
-Bands are **money scales**, not skill tiers. Every amount in a band scales by one factor, so a preset balance holds its shape in each band and the bands actually differ from one another.
+Bands are **money scales**, not skill tiers. Every amount in a band scales by one factor, so a preset balance holds its shape in each band and the bands actually differ from one another. Every figure below is in **chips**, and stays in chips whatever the token does (see [The chip rate](#the-chip-rate)).
 
 | Band | Scale | Ante | Bet | Raised | Cover |
 |---|---|---|---|---|---|
@@ -117,14 +150,16 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 - **Free first agent: dropped.** Wallets cost nothing to create, so it would have meant unlimited free agents. The free trial against house agents replaces it, with no ladder placement and no prizes.
 - **On-chain settlement: net positions, hourly or on withdrawal.** One match every 10 minutes is 144 matches per agent per day, so per-match settlement would mean 144 transactions and rent-paying accounts per agent per day. Hourly netting caps that at 24, and only for agents that actually played. The off-chain ledger stays authoritative.
 - **Bands are money scales, not skill tiers.** One factor per band, one unscaled seed of 900, and a per-match cover of two times the raised bet — the most a first-to-two match can actually move.
+- **Stakes are dollar-pegged, converted once per season.** A chip is a fixed USD value, and the $OXUDE per chip is fixed for a week from a TWAP, within ±50% of the previous week and under a tokens-per-chip ceiling. Pegging to the token instead would have made the same bet mean a different amount of money each day, and a spot conversion would have handed the rate to anyone willing to push a thin pool for one block.
+- **One shared weekly season for every rental** (resolves open question 6). Monday to Monday UTC, not a rolling 168 hours per rental. The chip rate is what decides it: it can only change when no rental is mid-week, which a rolling week never guarantees. Shared seasons also make "final ladder placement" unambiguous and put every auction on the same day; the cost is that expiries and auctions bunch at the boundary rather than spreading out. It also means the "168 hours" in [Renting](#renting) is a full season, not 168 hours from whenever the rental was bought: what a mid-week rental pays and how long it runs is left to the rental design.
 - **Matching a bid pays the reward wallet.** The owner keeps their right to retain the agent, but not at a discount: they pay what the market bid, and the money goes to prizes rather than back to themselves. Paying themselves half would have made matching nearly free and the auction decorative.
 
 ## Open questions
 
-These need resolving before building.
+These need resolving before **mainnet** — before $OXUDE becomes the game's currency and real money is at stake in a match. The token launching has not moved any of them; it has only made the distance to mainnet visible from outside.
 
 1. **What an auction buyer gets.** The record transfers but the brief doesn't, so the buyer writes a new brief and the record then describes a different strategy. The auction sells a name and a history, not play strength. That is consistent with no-pay-to-win, but the ladder should either reset the record's strategy-dependent stats on transfer or show where the brief changed.
-2. **Price conversion needs a manipulation-resistant price.** A spot price from a thin pump.fun pool can be pushed for one block to rent cheaply. Use a time-weighted average.
+2. **Which TWAP, over what window, published where.** The design is settled — a chip is a fixed USD value, converted to $OXUDE once per season from a time-weighted average rather than spot, inside a ±50% weekly band and a tokens-per-chip ceiling (see [The chip rate](#the-chip-rate)). What is not settled is the mechanics: which pool or aggregator the average is taken from, over what window, how a stale or missing reading is handled at a boundary, and where the number and its inputs are published so an owner can check the rate they were charged. The ±50% cap and the ceiling limit the damage of a bad reading; they don't make one acceptable.
 3. **The deposit instruction, and non-custodial withdrawal.** Two separate gaps. There is no deposit instruction at all, so deposit-funded agents need one before the funding model above is real. Withdrawal does exist and works on devnet, but the settler must co-sign: that co-signature is what attests no match is in flight and no net position is unsettled, and it is also what leaves the vaults custodial in practice — a server that refuses or disappears strands the money, even though it cannot move it anywhere else. Making withdrawal non-custodial before mainnet means replacing that attestation with something the chain can check for itself, such as an on-chain in-flight flag or a timelock the owner can always fall back on.
 
    **Deposits also invalidate every survival figure above.** They are all computed from a fixed 900 seed. Once the player chooses the amount, the seed stops being a constant the product picks, so the numbers on the rent screen have to be computed *from their deposit* — at rent time, for the band and preset they are choosing — rather than read from a table generated in advance. The simulation already sweeps starting balances, so the shape is known:
@@ -139,8 +174,8 @@ These need resolving before building.
 
    Deposits change the safety story too: `MAX_SEED` stops being the cap on what a vault can hold, the outflow cap becomes the main brake on a stolen settler key, and "an agent can never be revived" stops being true.
 4. **Security limits before real money.** The known limitations in [security.md](security.md) all have to close first: the settler key can drain vaults, the admin key can upgrade the program and raise the per-match limit, and there's no audit. Hourly net settlement changes the first one's shape: a settlement is no longer capped by one match's stake, so the program needs a different limit, per agent per period.
-5. **Legal review.** Real-money stakes on match outcomes, plus prize pools funded by token trading fees, may be regulated as gambling or as a securities offering, depending on jurisdiction. This needs advice before launch, not after.
-6. **One shared season, or a rolling week per rental?** Either every rental runs on the same fixed weekly season (Monday to Monday UTC, say) or each runs 168 hours from its own start. A shared season makes "final ladder placement" unambiguous and puts every auction on the same day; rolling weeks spread the auction load but mean the weekly prize closes while most agents are mid-rental. The prize schedule depends on this answer.
-7. **Payout curve and ladder size.** How many places pay, and on what curve. Nothing is decided about top-N versus proportional, the minimum match count that qualifies, or whether daily and weekly use the same shape.
-8. **Anti-farming review policy.** Detection flags rather than pre-blocks, but nothing says who reviews a flag, on what timeline, or what happens to prizes already owed to a flagged wallet when the review lands after a payout.
-9. **Burn versus reward-wallet accounting.** Rental fees burn, outside-bidder auctions burn half, and matched bids pay the reward wallet instead. No stated relationship exists between the burn rate and the reward wallet's inflow, and the published statement needs to reconcile both sides.
+5. **Legal review.** Real-money stakes on match outcomes, plus prize pools funded by token trading fees, may be regulated as gambling or as a securities offering, depending on jurisdiction. This was written as advice to get before launch; the token launched first, so it is now advice to get before mainnet, and before the creator-fee split is configured — the split can only be set once.
+6. **Payout curve and ladder size.** How many places pay, and on what curve. Nothing is decided about top-N versus proportional, the minimum match count that qualifies, or whether daily and weekly use the same shape.
+7. **Anti-farming review policy.** Detection flags rather than pre-blocks, but nothing says who reviews a flag, on what timeline, or what happens to prizes already owed to a flagged wallet when the review lands after a payout.
+8. **Burn versus reward-wallet accounting.** Rental fees burn, outside-bidder auctions burn half, and matched bids pay the reward wallet instead. No stated relationship exists between the burn rate and the reward wallet's inflow, and the published statement needs to reconcile both sides.
+9. **What a chip is worth in dollars.** The peg is decided; the number isn't. $0.01 makes band B's ante 4 cents, its raised bet 20 cents and a worst-case match 40 cents, and the 900 seed $9 — small enough that a week of autoplay costs less than the $2 rental, which may be too small to take seriously. A cent also sets the floor on what the ladder can pay out. Whatever the figure, it has to be chosen against the survival numbers above, not separately from them: those say how much of a seed a week actually consumes.

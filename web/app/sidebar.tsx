@@ -246,7 +246,10 @@ export function Sidebar() {
           <div className="mt-2 hidden lg:block">
             <WalletControl placement="up" />
           </div>
-          <p className="mt-3 text-[11px] leading-4 text-muted">Devnet. The token has no value.</p>
+          <p className="mt-3 text-[11px] leading-4 text-muted">
+            The game runs on Solana devnet: balances here are test tokens with no value. $OXUDE on mainnet is a
+            separate, real token, and becomes the game&apos;s currency at mainnet launch.
+          </p>
         </div>
       </aside>
     </>

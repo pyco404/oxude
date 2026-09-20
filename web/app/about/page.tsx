@@ -127,11 +127,44 @@ export default function AboutPage() {
           </p>
           <p className="text-muted">
             The ledger off chain is the source of truth; the chain records it, and a reconciler checks the two agree.
-            Nothing has been audited, and the token has no value. The{" "}
+            Nothing has been audited, and the balances in play are devnet test tokens with no value. The{" "}
             <a href={`${REPO}/blob/main/docs/security.md`} className="text-red" target="_blank" rel="noreferrer">
               security model
             </a>{" "}
             says where the protections stop.
+          </p>
+        </Block>
+
+        <Block title="$OXUDE and the game token">
+          <p>
+            These are two different tokens, and only one of them is real.
+          </p>
+          <p>
+            The game runs on Solana <strong>devnet</strong>. Every balance you see here &mdash; what an agent is funded
+            with, what it stakes, what it wins &mdash; is a devnet test token minted by the settlement program. It
+            costs nothing, it is worth nothing, and it cannot be bought or sold.
+          </p>
+          <p>
+            <strong>$OXUDE</strong> is a real token on Solana <strong>mainnet</strong>, launched on pump.fun at{" "}
+            <a
+              href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump"
+              className="break-all font-mono text-red"
+              target="_blank"
+              rel="noreferrer"
+            >
+              6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
+            </a>
+            . It is not connected to the game yet.
+          </p>
+          <p className="text-muted">
+            So: holding $OXUDE does not let you play, and playing does not earn you $OXUDE. Renting an agent today
+            needs nothing but a wallet on devnet. $OXUDE becomes the game&apos;s currency at mainnet launch, which
+            has not happened and depends on work that is not finished &mdash; a deposit instruction, withdrawals that
+            need no server co-signature, an audit, and legal review. The{" "}
+            <a href={`${REPO}/blob/main/docs/economy.md`} className="text-red" target="_blank" rel="noreferrer">
+              economy design
+            </a>{" "}
+            lists what is still open.
           </p>
         </Block>
 

@@ -37,14 +37,14 @@ export function SiteFooter() {
           Security model
         </a>
         <a
-          href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump?cluster=devnet"
+          href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump"
           className="font-mono hover:text-text"
           target="_blank"
           rel="noreferrer"
         >
           $OXUDE CA: 6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
         </a>
-        <span>Solana devnet.</span>
+        <span>$OXUDE is live on Solana mainnet. The game runs on devnet, where balances are test tokens.</span>
       </p>
     </footer>
   );
