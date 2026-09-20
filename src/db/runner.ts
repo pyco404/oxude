@@ -389,6 +389,41 @@ export type OpponentPick = {
   ratingGap: number | null;
 };
 
+/**
+ * How many agents are ready to play in each band, from this agent's point of
+ * view: in the band, not retired, solvent for that band's worst match, not the
+ * agent itself and not one of its owner's. Used to name a band worth trying
+ * when the agent's own has nobody in it.
+ */
+export async function playableBands(
+  db: Db,
+  agentId: string,
+  ownerId: string | null,
+): Promise<{ band: BandName; count: number }[]> {
+  // Joined rather than correlated: a subquery grouped by agent is the pattern
+  // the rest of this file uses, and it is the one that actually correlates.
+  const balances = db
+    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
+    .from(ledger)
+    .groupBy(ledger.agentId)
+    .as("balances");
+  const rows = await db
+    .select({ band: agents.band, balance: balances.balance })
+    .from(agents)
+    .innerJoin(balances, eq(balances.agentId, agents.id))
+    .where(
+      and(
+        ne(agents.id, agentId),
+        isNull(agents.retiredAt),
+        ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, ownerId)),
+      ),
+    );
+  return STAKE_BANDS.map((b) => ({
+    band: b.name,
+    count: rows.filter((r) => r.band === b.name && Number(r.balance) >= b.worstMatch).length,
+  }));
+}
+
 export type PickOpponentOptions = {
   /** Below this many candidates, fall back to a preset agent. Default 4. */
   minCandidates?: number;
@@ -449,15 +484,32 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   }
 
   // Fall back to a preset agent in the same band, so a thin queue does not
-  // silently put a cautious agent in with the boldest on the roster.
+  // silently put a cautious agent in with the boldest on the roster. The owner
+  // check matters here as much as above: without it a wallet's own agents could
+  // meet each other whenever the band was thin.
+  const notMine = me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId));
   const [preset] = await db
     .select({ id: agents.id })
     .from(agents)
     .innerJoin(solvent, eq(solvent.agentId, agents.id))
-    .where(and(ne(agents.id, agentId), isNull(agents.retiredAt), inBand, sql`${agents.presetName} is not null`))
+    .where(
+      and(ne(agents.id, agentId), isNull(agents.retiredAt), inBand, notMine, sql`${agents.presetName} is not null`),
+    )
     .orderBy(sql`random()`)
     .limit(1);
-  if (!preset) throw new StakeError(`no opponent in the ${band} band can cover a stake right now`);
+  if (!preset) {
+    // Nobody here. Point at a band that does have opponents rather than leaving
+    // the owner to guess which one to try.
+    const elsewhere = await playableBands(db, agentId, me.ownerId);
+    const best = elsewhere.filter((b) => b.band !== band && b.count > 0).sort((x, y) => y.count - x.count)[0];
+    throw new StakeError(
+      best
+        ? `no opponent in the ${band} band right now. Band ${best.band} has ${best.count} ${
+            best.count === 1 ? "agent" : "agents"
+          } ready to play - move there, or try again later.`
+        : `no opponent in the ${band} band right now, and no other band has one either. Try again later.`,
+    );
+  }
   const pick: OpponentPick = {
     opponentId: preset.id,
     band,

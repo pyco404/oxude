@@ -23,7 +23,7 @@ import {
   recordElicitation,
   elicitationCount,
 } from "../src/db/ledger.js";
-import { createAgent, leaderboard, pickOpponent, runMatch, setBand } from "../src/db/runner.js";
+import { createAgent, leaderboard, pickOpponent, playableBands, runMatch, setBand } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { someWallet } from "./helpers.js";
 
@@ -183,6 +183,43 @@ describe("settlement", () => {
     expect(pick.band).toBe("C");
     expect(low.map((a) => a.id)).not.toContain(pick.opponentId);
     await expect(setBand(d, cautious.id, "88888888-8888-4888-8888-888888888888", "C")).rejects.toThrow(/another owner/);
+    await c();
+  });
+
+  it("never pairs a wallet's own agents, even when the band is too thin to pick on rating", async () => {
+    const { db: d, close: c } = await fresh();
+    const owner = someWallet();
+    // Two agents, one wallet, one band, and nobody else at all. The rating path
+    // needs four candidates, so this always falls through to the preset one.
+    const mine = await createAgent(d, { name: "Mine", presetName: "Anchor", ownerId: owner, band: "C" });
+    await createAgent(d, { name: "Also mine", presetName: "Bully", ownerId: owner, band: "C" });
+    await refreshTrueRatings(d);
+    await expect(pickOpponent(d, mine.id)).rejects.toThrow(/no opponent in the C band/);
+
+    // A stranger in the band is picked by that same fallback.
+    const stranger = await createAgent(d, { name: "Stranger", presetName: "Hammer", ownerId: someWallet(), band: "C" });
+    await refreshTrueRatings(d);
+    const pick = await pickOpponent(d, mine.id);
+    expect(pick.opponentId).toBe(stranger.id);
+    expect(pick.path).toBe("preset-fallback");
+    await c();
+  });
+
+  it("names a band that does have opponents when this one has none", async () => {
+    const { db: d, close: c } = await fresh();
+    const lonely = await createAgent(d, { name: "Lonely", presetName: "Anchor", ownerId: someWallet(), band: "C" });
+    for (let i = 0; i < 3; i++) await createAgent(d, { name: `B ${i}`, presetName: "Bully", band: "B" });
+    await createAgent(d, { name: "A one", presetName: "Mirage", band: "A" });
+    await refreshTrueRatings(d);
+    // Band B has the most ready opponents, so that is the one suggested.
+    await expect(pickOpponent(d, lonely.id)).rejects.toThrow(/Band B has 3 agents ready to play/);
+
+    // Counting is per band and respects the cover rule: an agent too poor for
+    // its own band is not offered as a reason to go there.
+    const counts = await playableBands(d, lonely.id, null);
+    expect(counts.find((x) => x.band === "B")?.count).toBe(3);
+    expect(counts.find((x) => x.band === "A")?.count).toBe(1);
+    expect(counts.find((x) => x.band === "C")?.count).toBe(0);
     await c();
   });
 
