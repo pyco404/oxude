@@ -89,6 +89,9 @@ describe("house exhibitions", () => {
     await close();
   });
 
+  // The wait below is the point of the test, so its budget has to be comfortably
+  // inside the timeout: at the default 5s they were equal, and a loaded suite
+  // failed here for no reason but contention.
   it("keeps playing when run the way the server runs it, with no callbacks", async () => {
     const { db, close } = await fresh();
     for (let i = 0; i < 3; i++) await createAgent(db, { name: `H${i}`, presetName: "Anchor" });
@@ -105,7 +108,7 @@ describe("house exhibitions", () => {
       loop.stop();
     }
     await close();
-  });
+  }, 20_000);
 
   it("leave platform activity to staked matches only", async () => {
     const { db, close } = await fresh();
