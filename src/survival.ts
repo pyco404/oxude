@@ -74,6 +74,20 @@ export const SURVIVAL: Record<BandName, BandSurvival> = {
   },
 };
 
+/**
+ * The starting balances swept, and survival at each one averaged over the four
+ * presets. This is what a deposit-funded rental would need: on mainnet the
+ * player picks the amount, so the 900 column stops being the only one that
+ * matters. Percentages, in the same order as SURVIVAL_SEEDS_SWEPT.
+ */
+export const SURVIVAL_SEEDS_SWEPT = [360, 540, 720, 900, 1080, 1350, 1800] as const;
+
+export const SURVIVAL_BY_SEED: Record<BandName, number[]> = {
+  A: [70.0, 88.3, 96.5, 99.1, 99.9, 100.0, 100.0],
+  B: [38.1, 55.5, 69.8, 80.7, 88.2, 95.0, 99.1],
+  C: [24.8, 38.1, 50.1, 60.2, 69.9, 80.4, 91.7],
+};
+
 /** What to tell someone renting this preset in this band, as a percentage. */
 export function survivalFor(band: BandName, preset: PresetName | null): { low: number; high: number } {
   const row = SURVIVAL[band];

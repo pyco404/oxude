@@ -25,7 +25,7 @@
 - **Settlement is by net position, not per match.** Matches move balances in the off-chain ledger, which stays authoritative. Each agent's net position settles on chain periodically, **hourly or on withdrawal**, whichever comes first.
 - **No pay-to-win.** A larger balance must never make an agent play better. Power comes from the brief only. This is non-negotiable.
 
-Neither the deposit nor the withdrawal exists in the program today — funding currently means the rental seed, so a busted agent cannot be revived. Both are program changes that have to land before mainnet (open question 3).
+Withdrawals already work on devnet: the owner signs, and the settler co-signs to attest that nothing is in flight. The deposit does not exist — funding currently means the rental seed, so a busted agent cannot be revived. Both the deposit instruction and a withdrawal that needs no server co-signature have to land before mainnet (open question 3).
 
 ## Bands
 
@@ -45,13 +45,17 @@ Bands are **money scales**, not skill tiers. Every amount in a band scales by on
 
 **Survival, measured.** 20,000 agents per preset per band, one match per ten minutes for a week, exact match outcomes, no clamp, stopping when the agent can no longer cover its band:
 
-| Band | Survive a week | Median time to bust |
-|---|---|---|
-| A | 99.1% | 143 h |
-| B | 80.5% | 104 h |
-| C | 60.8% | 74 h |
+| Band | Survive a week | Worst preset | Best preset | Median time to bust |
+|---|---|---|---|---|
+| A | 99.1% | Mirage 98.5% | Hammer 99.5% | 851 matches (141.8 h) |
+| B | 80.6% | Mirage 76.5% | Hammer 84.4% | 617 matches (102.8 h) |
+| C | 60.6% | Mirage 56.1% | Hammer 65.4% | 441 matches (73.5 h) |
 
-Band C came in at **60.8%**, below the 65% the provisional figures suggested; its attrition is accepted rather than corrected, because a bigger scale on the same seed is the point. The spread between presets also widens with the band — about 1 point in A, 8 in B, 9 in C — so band C is quoted per preset (Mirage 57%, Hammer 66%) rather than as one number. Regenerate with `npx tsx scripts/simulate-autoplay.ts --emit`, which rewrites `src/survival.ts`; the rent screen quotes that generated table and never invents a figure.
+The median is over the agents that busted, not all of them: in band A that is the last 0.9%, so it describes a rare exit rather than a typical week.
+
+Band C came in at **60.6%**, below the 65% the provisional figures suggested; its attrition is accepted rather than corrected, because a bigger scale on the same seed is the point. The spread between presets also widens with the band — 1.0 points in A, 7.9 in B, 9.3 in C — so band C is quoted per preset rather than as one number.
+
+The run is seeded with a fixed constant that is deliberately **not** derived from any band amount, so these numbers move only when a rule moves. Regenerate with `npx tsx scripts/simulate-autoplay.ts --emit`, which rewrites `src/survival.ts`. The rent screen and this page both quote that generated table, and neither may state a survival figure that is not in it.
 
 ## Expiry and auction
 
@@ -121,15 +125,17 @@ These need resolving before building.
 
 1. **What an auction buyer gets.** The record transfers but the brief doesn't, so the buyer writes a new brief and the record then describes a different strategy. The auction sells a name and a history, not play strength. That is consistent with no-pay-to-win, but the ladder should either reset the record's strategy-dependent stats on transfer or show where the brief changed.
 2. **Price conversion needs a manipulation-resistant price.** A spot price from a thin pump.fun pool can be pushed for one block to rent cheaply. Use a time-weighted average.
-3. **Deposits, withdrawals and custody.** The current program has neither a deposit nor a withdrawal instruction, and the vaults are custodial. Deposit-funded agents and withdraw-any-time both need program changes, plus a lock that covers in-flight matches and unsettled net positions.
+3. **The deposit instruction, and non-custodial withdrawal.** Two separate gaps. There is no deposit instruction at all, so deposit-funded agents need one before the funding model above is real. Withdrawal does exist and works on devnet, but the settler must co-sign: that co-signature is what attests no match is in flight and no net position is unsettled, and it is also what leaves the vaults custodial in practice — a server that refuses or disappears strands the money, even though it cannot move it anywhere else. Making withdrawal non-custodial before mainnet means replacing that attestation with something the chain can check for itself, such as an on-chain in-flight flag or a timelock the owner can always fall back on.
 
    **Deposits also invalidate every survival figure above.** They are all computed from a fixed 900 seed. Once the player chooses the amount, the seed stops being a constant the product picks, so the numbers on the rent screen have to be computed *from their deposit* — at rent time, for the band and preset they are choosing — rather than read from a table generated in advance. The simulation already sweeps starting balances, so the shape is known:
 
    | Band | 360 | 540 | 720 | 900 | 1080 | 1350 | 1800 |
    |---|---|---|---|---|---|---|---|
-   | A | 68% | 88% | 96% | 99% | 100% | 100% | 100% |
-   | B | 36% | 54% | 68% | 80% | 88% | 95% | 99% |
-   | C | 23% | 36% | 48% | 61% | 68% | 80% | 91% |
+   | A | 70.0% | 88.3% | 96.5% | 99.1% | 99.9% | 100% | 100% |
+   | B | 38.1% | 55.5% | 69.8% | 80.7% | 88.2% | 95.0% | 99.1% |
+   | C | 24.8% | 38.1% | 50.1% | 60.2% | 69.9% | 80.4% | 91.7% |
+
+   That sweep is generated too, as `SURVIVAL_BY_SEED` in the same file, so no figure on this page is one someone typed from memory.
 
    Deposits change the safety story too: `MAX_SEED` stops being the cap on what a vault can hold, the outflow cap becomes the main brake on a stolen settler key, and "an agent can never be revived" stops being true.
 4. **Security limits before real money.** The known limitations in [security.md](security.md) all have to close first: the settler key can drain vaults, the admin key can upgrade the program and raise the per-match limit, and there's no audit. Hourly net settlement changes the first one's shape: a settlement is no longer capped by one match's stake, so the program needs a different limit, per agent per period.
