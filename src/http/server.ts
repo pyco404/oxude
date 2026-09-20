@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { elicitPolicy } from "../agents/llm.js";
 import { validatePolicy, type Policy } from "../agents/policy.js";
 import { headlineFor, renderTranscript } from "../transcript.js";
@@ -8,6 +8,8 @@ import type { Db } from "../db/client.js";
 import { agents, matches, withdrawals } from "../db/schema.js";
 import { isFirstElicitationFree, recordElicitation, StakeError, statement } from "../db/ledger.js";
 import {
+  activeAgentsOf,
+  agentsOf,
   clampCeiling,
   createAgent,
   setCeiling,
@@ -191,7 +193,9 @@ export function createApp(options: AppOptions): Server {
   }
 
   async function getMe(ctx: Ctx) {
-    return { ownerId: ctx.requireOwner() };
+    const ownerId = ctx.requireOwner();
+    // Every agent this wallet owns, so a second device shows the same ones as the first.
+    return { ownerId, agents: await agentsOf(db, ownerId) };
   }
 
   async function postAgent(ctx: Ctx) {
@@ -221,13 +225,26 @@ export function createApp(options: AppOptions): Server {
     }
 
     const ceiling = ctx.body["maxStake"];
-    const row = await createAgent(db, {
-      name,
-      ownerId,
-      ...(presetName ? { presetName } : {}),
-      ...(brief ? { brief } : {}),
-      ...(table ? { policyTable: table } : {}),
-      ...(typeof ceiling === "number" ? { maxStake: clampCeiling(ceiling) } : {}),
+    // One agent in play per wallet. The check and the rental share a transaction
+    // and a lock on this wallet, so renting from two devices at once still
+    // leaves one agent, not two.
+    const row = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ownerId}, 0))`);
+      const active = await activeAgentsOf(tx as unknown as Db, ownerId);
+      if (active.length > 0) {
+        const held = active.map((a) => a.name).join(", ");
+        throw new HttpError(409, `you already have an agent in play: ${held}. An agent retires when its balance is withdrawn in full, and then you can rent another.`, {
+          agents: active.map((a) => ({ id: a.id, name: a.name })),
+        });
+      }
+      return createAgent(tx as unknown as Db, {
+        name,
+        ownerId,
+        ...(presetName ? { presetName } : {}),
+        ...(brief ? { brief } : {}),
+        ...(table ? { policyTable: table } : {}),
+        ...(typeof ceiling === "number" ? { maxStake: clampCeiling(ceiling) } : {}),
+      });
     });
     await refreshTrueRatings(db);
     const view = await publicAgent(db, row.id);

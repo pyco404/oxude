@@ -18,6 +18,9 @@ import {
 import { api, ApiError, BANDS, bandOf, type Feed, type RosterAgent, type AgentView, type PlayResult, type Preset, type Preview } from "@/lib/api";
 
 const AGENT_KEY = "oxude.agent";
+
+/** Agent views carry their id under either name, depending on the route that made them. */
+const idOf = (a: AgentView) => (a.id ?? a.agentId)!;
 const BRIEF_DEBOUNCE_MS = 1500;
 
 const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
@@ -30,6 +33,8 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const { session, wallets } = wallet;
   const token = session?.token ?? null;
   const [agent, setAgent] = useState<AgentView | null>(null);
+  // Every agent this wallet owns, from the server: the same list on every device.
+  const [mine, setMine] = useState<AgentView[]>([]);
   const [tab, setTab] = useState<"preset" | "brief">("preset");
   const [presets, setPresets] = useState<Preset[]>([]);
   const [chosen, setChosen] = useState<string>("");
@@ -63,7 +68,10 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
 
   // Signing out, from here or the top bar, puts the agent card away.
   useEffect(() => {
-    if (!session) setAgent(null);
+    if (!session) {
+      setAgent(null);
+      setMine([]);
+    }
   }, [session]);
 
   const connect = (name: WalletName) => void wallet.connect(name);
@@ -81,12 +89,34 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     [],
   );
 
-  // Your agent is only yours while you are signed in as its owner.
+  /**
+   * The wallet's agents come from the server, so every device shows the same
+   * ones. localStorage only remembers which of them this device had open.
+   */
+  const loadMine = useCallback(
+    async (sessionToken: string) => {
+      const { agents: owned } = await api.me(sessionToken);
+      setMine(owned);
+      const inPlay = owned.filter((a) => !a.retired);
+      const saved = localStorage.getItem(AGENT_KEY);
+      const open = inPlay.find((a) => idOf(a) === saved) ?? inPlay[0] ?? null;
+      if (open) {
+        localStorage.setItem(AGENT_KEY, idOf(open));
+        await refreshAgent(idOf(open), sessionToken);
+      } else {
+        localStorage.removeItem(AGENT_KEY);
+        setAgent(null);
+      }
+    },
+    [refreshAgent],
+  );
+
   useEffect(() => {
     if (!token) return;
-    const saved = localStorage.getItem(AGENT_KEY);
-    if (saved) void refreshAgent(saved, token);
-  }, [token, refreshAgent]);
+    void loadMine(token).catch(() => {
+      /* offline or a dead session: the sign-in state handles it */
+    });
+  }, [token, loadMine]);
 
 
   const run = async (label: string, fn: () => Promise<void>) => {
@@ -187,6 +217,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       const id = created.id ?? created.agentId!;
       localStorage.setItem(AGENT_KEY, id);
       setAgent({ ...created, id });
+      setMine((held) => [{ ...created, id }, ...held]);
       setTranscript("");
       setLastPlay(null);
       setLadderKey((k) => k + 1);
@@ -204,23 +235,24 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       setLadderKey((k) => k + 1);
     });
 
-  const release = () => {
-    localStorage.removeItem(AGENT_KEY);
-    setAgent(null);
+  const select = (id: string) => {
+    if (!token || id === (agent ? idOf(agent) : null)) return;
+    localStorage.setItem(AGENT_KEY, id);
     setTranscript("");
     setLastPlay(null);
+    void refreshAgent(id, token);
   };
 
-  const agentOrRent = agent ? (
+  const inPlay = mine.filter((a) => !a.retired);
+  const agentCard = agent ? (
     <AgentCard
       agent={agent}
       onPlay={play}
-      onRelease={release}
       busy={busy === "play"}
       lastPlay={lastPlay}
       onWithdrawn={() => {
-        const id = agent.id ?? agent.agentId;
-        if (id) void refreshAgent(id, token);
+        // A full withdrawal retires it, so the list and the card both move on.
+        if (token) void loadMine(token);
         setLadderKey((k) => k + 1);
       }}
       onCeiling={(value) =>
@@ -232,7 +264,9 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         })
       }
     />
-  ) : (
+  ) : null;
+
+  const rentPanel = (
     <RentPanel
       tab={tab}
       setTab={setTab}
@@ -259,6 +293,18 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       presetRatings={presetRatings}
       signedIn={Boolean(session)}
     />
+  );
+
+  // The list of everything this wallet holds, then the open agent, then renting
+  // - which is only offered when nothing is still in play.
+  const agentOrRent = (
+    <>
+      {mine.length > 1 || (mine.length === 1 && inPlay.length === 0) ? (
+        <YourAgents agents={mine} open={agent ? idOf(agent) : null} onSelect={select} />
+      ) : null}
+      {agentCard}
+      {inPlay.length === 0 ? rentPanel : null}
+    </>
   );
 
   return (
@@ -640,10 +686,59 @@ function RosterPanel({
   );
 }
 
+/**
+ * Everything this wallet owns, the ones still playing first. A wallet holds one
+ * agent in play at a time, so this is usually one line plus whatever has
+ * retired - and retired agents stay, because the record is the point.
+ */
+function YourAgents({
+  agents,
+  open,
+  onSelect,
+}: {
+  agents: AgentView[];
+  open: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <section className="border border-line bg-panel">
+      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+        Your agents<span className="ml-2 normal-case tracking-normal">{agents.length}</span>
+      </h2>
+      <ul className="p-1">
+        {agents.map((a) => {
+          const id = idOf(a);
+          const isOpen = id === open;
+          return (
+            <li key={id}>
+              <button
+                onClick={() => onSelect(id)}
+                aria-current={isOpen ? "true" : undefined}
+                className={`flex w-full items-center gap-2 px-2 py-2 text-left text-[13px] ${isOpen ? "bg-panel-2 text-text" : "text-muted hover:text-text"}`}
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  <AgentName name={a.name} mark={a.mark} preset={a.presetName} />
+                </span>
+                {a.retired ? (
+                  <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted">retired</span>
+                ) : (
+                  <span className="shrink-0 font-mono text-[12px]">{a.balance ?? 0}</span>
+                )}
+                <span className="shrink-0 font-mono text-[11px] text-muted">
+                  {a.matchesPlayed ?? 0} {a.matchesPlayed === 1 ? "match" : "matches"}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function AgentCard({
   agent,
   onPlay,
-  onRelease,
   busy,
   lastPlay,
   onCeiling,
@@ -651,7 +746,6 @@ function AgentCard({
 }: {
   agent: AgentView;
   onPlay: () => void;
-  onRelease: () => void;
   busy: boolean;
   lastPlay: PlayResult | null;
   onCeiling: (value: number) => void;
@@ -661,11 +755,8 @@ function AgentCard({
   const retired = agent.retired === true;
   return (
     <section className="border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
-        Your agent
-        <button onClick={onRelease} className="text-[11px] normal-case tracking-normal text-muted hover:text-red">
-          release
-        </button>
+      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+        {retired ? "Retired agent" : "Your agent"}
       </h2>
       <div className="p-3">
         <div className="flex items-baseline justify-between gap-3">

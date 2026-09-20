@@ -133,6 +133,8 @@ async function request<T>(path: string, init: RequestInit & { token?: string | n
 
 export const api = {
   presets: () => request<{ presets: Preset[]; free: boolean }>("/presets"),
+  /** Who you are signed in as, and every agent that wallet owns - on any device. */
+  me: (token: string | null) => request<{ ownerId: string; agents: AgentView[] }>("/auth/me", { token }),
   previewTable: (token: string | null, policyTable: unknown) =>
     request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable }) }),
   previewBrief: (token: string | null, brief: string) =>

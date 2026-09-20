@@ -117,18 +117,18 @@ afterAll(async () => {
 
 describe("POST /agents", () => {
   it("rents a preset agent and returns its private rating", async () => {
-    const res = await api("/agents", { method: "POST", body: JSON.stringify({ name: "Preset rental", presetName: "Bully" }) });
+    const res = await api("/agents", { method: "POST", owner: "preset-renter", body: JSON.stringify({ name: "Preset rental", presetName: "Bully" }) });
     expect(res.status).toBe(201);
     const created = await readBody(res);
     expect(created.agent.presetName).toBe("Bully");
-    expect(created.agent.ownerId).toBe(walletOf(OWNER));
+    expect(created.agent.ownerId).toBe(walletOf("preset-renter"));
     expect(typeof created.agent.trueRating).toBe("number");
     expect(created.agent.trueRatingBasis).toBe("against the roster as it stands today");
   });
 
   it("elicits and snapshots a table for a brief", async () => {
     const before = elicitCalls;
-    const res = await api("/agents", { method: "POST", body: JSON.stringify({ name: "Briefed", brief: "bluff often" }) });
+    const res = await api("/agents", { method: "POST", owner: "brief-renter", body: JSON.stringify({ name: "Briefed", brief: "bluff often" }) });
     expect(res.status).toBe(201);
     const created = await readBody(res);
     expect(elicitCalls).toBe(before + 1);
@@ -137,7 +137,7 @@ describe("POST /agents", () => {
 
     // Playing it does not call the model again: the table is stored.
     const calls = elicitCalls;
-    const play = await api(`/agents/${created.agent.id}/play`, { method: "POST" });
+    const play = await api(`/agents/${created.agent.id}/play`, { method: "POST", owner: "brief-renter" });
     expect(play.status).toBe(201);
     expect(elicitCalls).toBe(calls);
   });
@@ -164,7 +164,7 @@ describe("POST /agents", () => {
 
   it("creates no agent when elicitation fails", async () => {
     elicitResult = { table: null, reason: "timed out" };
-    const res = await api("/agents", { method: "POST", body: JSON.stringify({ name: "Doomed", brief: "whatever" }) });
+    const res = await api("/agents", { method: "POST", owner: "doomed-renter", body: JSON.stringify({ name: "Doomed", brief: "whatever" }) });
     expect(res.status).toBe(503);
     expect((await readBody(res)).reason).toBe("timed out");
     elicitResult = { table: snapshotPreset("Mirage") };
@@ -176,11 +176,12 @@ describe("POST /agents", () => {
 
 describe("GET /agents/:id", () => {
   it("shows the owner their brief and table, and shows others neither", async () => {
+    const owner = "secret-keeper";
     const created = await readBody(
-        await api("/agents", { method: "POST", body: JSON.stringify({ name: "Secretive", brief: "my edge" }) }),
+        await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Secretive", brief: "my edge" }) }),
     );
 
-    const own = await readBody(await api(`/agents/${created.agent.id}`));
+    const own = await readBody(await api(`/agents/${created.agent.id}`, { owner }));
     expect(own.view).toBe("owner");
     expect(own.agent.brief).toBe("my edge");
     expect(own.agent.policyTable).toBeDefined();
@@ -200,10 +201,11 @@ describe("GET /agents/:id", () => {
 
 describe("POST /agents/:id/play", () => {
   it("finds an opponent, plays, and records a readable match", async () => {
+    const owner = "player-renter";
     const created = await readBody(
-        await api("/agents", { method: "POST", body: JSON.stringify({ name: "Player", presetName: "Anchor" }) }),
+        await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Player", presetName: "Anchor" }) }),
     );
-    const played = await api(`/agents/${created.agent.id}/play`, { method: "POST" });
+    const played = await api(`/agents/${created.agent.id}/play`, { method: "POST", owner });
     expect(played.status).toBe(201);
     const result = await readBody(played);
     expect(result.opponent.id).not.toBe(created.agent.id);
@@ -219,7 +221,7 @@ describe("POST /agents/:id/play", () => {
 
   it("will not play someone else's agent", async () => {
     const created = await readBody(
-        await api("/agents", { method: "POST", body: JSON.stringify({ name: "Mine alone", presetName: "Hammer" }) }),
+        await api("/agents", { method: "POST", owner: "sole-owner", body: JSON.stringify({ name: "Mine alone", presetName: "Hammer" }) }),
     );
     const res = await api(`/agents/${created.agent.id}/play`, { method: "POST", owner: OTHER });
     expect(res.status).toBe(403);
@@ -364,9 +366,8 @@ describe("CORS", () => {
 });
 
 describe("staking over HTTP", () => {
-  const owner = someWallet();
-
   it("seeds a balance on renting and reports it with the ceiling", async () => {
+    const owner = someWallet();
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Banked", presetName: "Anchor", maxStake: 25 }) }),
     );
@@ -380,6 +381,7 @@ describe("staking over HTTP", () => {
   });
 
   it("stakes a match, settles it against balances, and reports both", async () => {
+    const owner = someWallet();
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Stakes", presetName: "Bully" }) }),
     );
@@ -396,6 +398,7 @@ describe("staking over HTTP", () => {
   });
 
   it("lets the owner change the ceiling, and refuses anyone else", async () => {
+    const owner = someWallet();
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Ceilinged", presetName: "Hammer" }) }),
     );
@@ -416,6 +419,7 @@ describe("staking over HTTP", () => {
   });
 
   it("refuses to play an agent that cannot cover a stake", async () => {
+    const owner = someWallet();
     const created = await readBody(
       await api("/agents", { method: "POST", owner, body: JSON.stringify({ name: "Skint", presetName: "Mirage" }) }),
     );
@@ -556,7 +560,7 @@ describe("wallet sign-in", () => {
 
   it("ignores the old x-owner-id header entirely", async () => {
     const created = await readBody(
-      await api("/agents", { method: "POST", body: JSON.stringify({ name: "Guarded", presetName: "Hammer" }) }),
+      await api("/agents", { method: "POST", owner: "guarded-owner", body: JSON.stringify({ name: "Guarded", presetName: "Hammer" }) }),
     );
     const res = await fetch(`${url}/agents/${created.agent.id}/play`, {
       method: "POST",
@@ -650,5 +654,73 @@ describe("match feed and agent pages", () => {
 
     const missing = "00000000-0000-4000-8000-000000000000";
     expect((await api(`/agents/${missing}/matches`, { owner: null })).status).toBe(404);
+  });
+});
+
+describe("one agent at a time", () => {
+  const rent = (owner: string, name: string) =>
+    api("/agents", { method: "POST", owner, body: JSON.stringify({ name, presetName: "Anchor" }) });
+
+  it("refuses a second rental while the first is still in play, and says what holds the place", async () => {
+    const owner = "one-at-a-time";
+    const first = await readBody(await rent(owner, "First"));
+    expect(first.agent.name).toBe("First");
+
+    const res = await rent(owner, "Second");
+    expect(res.status).toBe(409);
+    const body = await readBody(res);
+    expect(body.error).toMatch(/already have an agent in play: First/);
+    expect(body.agents).toEqual([{ id: first.agent.id, name: "First" }]);
+
+    // Nothing was created, and no model call was spent on the refusal.
+    const mine = await readBody(await api("/auth/me", { owner }));
+    expect(mine.agents.map((a: Json) => a.name)).toEqual(["First"]);
+  });
+
+  it("holds the line when two devices rent at the same moment", async () => {
+    const owner = "two-devices";
+    const [a, b] = await Promise.all([rent(owner, "Laptop"), rent(owner, "Phone")]);
+    const codes = [a.status, b.status].sort();
+    expect(codes).toEqual([201, 409]);
+    const mine = await readBody(await api("/auth/me", { owner }));
+    expect(mine.agents).toHaveLength(1);
+    expect(["Laptop", "Phone"]).toContain(mine.agents[0]!.name);
+  });
+
+  it("lets the owner rent again once the agent has retired, and keeps the old one on the list", async () => {
+    const owner = "renter-again";
+    const first = await readBody(await rent(owner, "Retiree"));
+    await db.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, first.agent.id));
+
+    expect((await rent(owner, "Successor")).status).toBe(201);
+    const mine = await readBody(await api("/auth/me", { owner }));
+    // Still playing first, then the retired one: both are the owner's.
+    expect(mine.agents.map((a: Json) => [a.name, a.retired])).toEqual([
+      ["Successor", false],
+      ["Retiree", true],
+    ]);
+  });
+
+  it("lists every agent an owner holds, whichever device asks", async () => {
+    const owner = "lister";
+    const { agent } = await readBody(await rent(owner, "Only"));
+    const mine = await readBody(await api("/auth/me", { owner }));
+    expect(mine.ownerId).toBe(walletOf(owner));
+    expect(mine.agents).toHaveLength(1);
+    // Enough for the panel to render without a second request per agent.
+    expect(mine.agents[0]).toMatchObject({
+      agentId: agent.id,
+      name: "Only",
+      presetName: "Anchor",
+      balance: STARTING_BALANCE,
+      retired: false,
+      house: false,
+    });
+    expect(mine.agents[0]!.mark).toBeTruthy();
+  });
+
+  it("does not stop a different wallet renting", async () => {
+    await rent("wallet-one", "Mine");
+    expect((await rent("wallet-two", "Theirs")).status).toBe(201);
   });
 });

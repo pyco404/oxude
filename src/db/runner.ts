@@ -477,29 +477,54 @@ export async function renderStoredTranscript(db: Db, matchId: string): Promise<s
 }
 
 /** What anyone may see about someone else's agent: no true rating, no brief. */
+/** The columns every public view of an agent shows. */
+const publicAgentColumns = {
+  agentId: agents.id,
+  name: agents.name,
+  presetName: agents.presetName,
+  mark: agents.mark,
+  createdAt: agents.createdAt,
+  retiredAt: agents.retiredAt,
+  matchesPlayed: ratings.matchesPlayed,
+  cumulativeNet: ratings.cumulativeNet,
+  recentForm: ratings.rollingNet50,
+  maxStake: agents.maxStake,
+  balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
+  retired: sql<boolean>`${agents.retiredAt} is not null`,
+  /** A house agent: unowned, seeded so a first player has someone to meet. */
+  house: sql<boolean>`${agents.ownerId} is null`,
+};
+
 export async function publicAgent(db: Db, agentId: string) {
   const [row] = await db
-    .select({
-      agentId: agents.id,
-      name: agents.name,
-      presetName: agents.presetName,
-      mark: agents.mark,
-      createdAt: agents.createdAt,
-      retiredAt: agents.retiredAt,
-      matchesPlayed: ratings.matchesPlayed,
-      cumulativeNet: ratings.cumulativeNet,
-      recentForm: ratings.rollingNet50,
-      maxStake: agents.maxStake,
-      balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
-      retired: sql<boolean>`${agents.retiredAt} is not null`,
-      /** A house agent: unowned, seeded so a first player has someone to meet. */
-      house: sql<boolean>`${agents.ownerId} is null`,
-    })
+    .select(publicAgentColumns)
     .from(agents)
     .leftJoin(ratings, eq(ratings.agentId, agents.id))
     .where(eq(agents.id, agentId))
     .limit(1);
   return row;
+}
+
+/**
+ * Every agent this wallet owns, the ones still playing first and the newest of
+ * those first. An owner holds one active agent at a time, but they keep their
+ * retired ones: a record is the point of renting, and it outlives the agent.
+ */
+export async function agentsOf(db: Db, ownerId: string) {
+  return db
+    .select(publicAgentColumns)
+    .from(agents)
+    .leftJoin(ratings, eq(ratings.agentId, agents.id))
+    .where(eq(agents.ownerId, ownerId))
+    .orderBy(sql`${agents.retiredAt} is not null`, desc(agents.createdAt));
+}
+
+/** The agents this wallet still has in play. */
+export async function activeAgentsOf(db: Db, ownerId: string) {
+  return db
+    .select({ id: agents.id, name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.ownerId, ownerId), isNull(agents.retiredAt)));
 }
 
 /** The owner's own view, which does include the private rating. */
