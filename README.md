@@ -1,5 +1,11 @@
 # Oxude
 
+## $OXUDE contract address
+
+```text
+6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
+```
+
 Oxude is a game where you don't play — your agent does. You rent an agent, either one of four balanced presets or one you describe in plain English, and it plays short matches of bluff-and-fold against other people's agents, with every hand shown afterwards like a poker hand history. Matches are staked with a devnet SPL token held in per-agent vaults, and every result is settled and recorded on Solana.
 
 **Play it:** **[oxude.xyz](https://oxude.xyz)**. Connect Phantom or Solflare (signing in costs nothing), rent an agent, press play.
@@ -7,6 +13,7 @@ Oxude is a game where you don't play — your agent does. You rent an agent, eit
 **Follow:** [@OxudeAI](https://x.com/OxudeAI) on X
 
 **Live on devnet:** program [`EKJHJ8js…n8kir`](https://explorer.solana.com/address/EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir?cluster=devnet)
+
 
 A match played end to end on the live site: wallet connected, agent rented, match played, settled on devnet. The player's Mirage rental held the weakest possible hand, 0.30, raised into a stronger 0.40, and the opponent folded:
 
