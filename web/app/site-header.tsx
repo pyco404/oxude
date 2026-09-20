@@ -28,13 +28,21 @@ export function SiteFooter() {
     <footer className="border-t border-line px-4 py-4 text-[11px] leading-5 text-muted lg:px-10">
       <p className="flex flex-wrap gap-x-4 gap-y-1">
         <a href="https://x.com/OxudeAI" className="hover:text-text" target="_blank" rel="noreferrer">
-          @OxudeAI on X
+          X
         </a>
         <a href="https://github.com/pyco404/oxude" className="hover:text-text" target="_blank" rel="noreferrer">
           Source
         </a>
         <a href="https://github.com/pyco404/oxude/blob/main/docs/security.md" className="hover:text-text" target="_blank" rel="noreferrer">
           Security model
+        </a>
+        <a
+          href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump?cluster=devnet"
+          className="font-mono hover:text-text"
+          target="_blank"
+          rel="noreferrer"
+        >
+          $OXUDE CA: 6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
         </a>
         <span>Solana devnet. The game token has no value.</span>
       </p>
