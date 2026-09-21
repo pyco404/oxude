@@ -3,7 +3,7 @@ import { connect, migrate } from "../src/db/client.js";
 import { listen } from "../src/http/server.js";
 import { assignMissingMarks, createAgent, STAKE_BANDS } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
-import { agents } from "../src/db/schema.js";
+import { agents, AUTOPLAY_INTERVAL_MS } from "../src/db/schema.js";
 import { mulberry32, PRESET_NAMES } from "../src/index.js";
 import { nameFactory } from "./names.js";
 
@@ -53,6 +53,22 @@ if (exhibitionMs > 0) {
   });
   console.log(`House exhibitions: about one every ${Math.round(exhibitionMs / 1000)}s, off-chain`);
 }
+// Autoplay: rented agents play on a timer, without their owners present. On by
+// default, because an agent only plays once its own owner has switched it on;
+// AUTOPLAY_INTERVAL_MS=0 turns the loop off entirely.
+const autoplayMs = Number(process.env["AUTOPLAY_INTERVAL_MS"] ?? AUTOPLAY_INTERVAL_MS);
+if (autoplayMs > 0) {
+  const { startAutoplay } = await import("../src/db/autoplay.js");
+  startAutoplay(db, {
+    intervalMs: autoplayMs,
+    onError: (error) => console.error(`autoplay: ${String(error).slice(0, 160)}`),
+  });
+  const minutes = autoplayMs / 60_000;
+  console.log(`Autoplay: one match per agent every ${minutes === 10 ? "10 minutes" : `${minutes.toFixed(1)} minutes`}`);
+} else {
+  console.log("Autoplay: off (AUTOPLAY_INTERVAL_MS=0)");
+}
+
 // Settlement on chain, when configured. The ledger is authoritative either
 // way; without a chain the outbox simply waits, and withdrawals are unavailable.
 const rpc = process.env["CHAIN_RPC_URL"];

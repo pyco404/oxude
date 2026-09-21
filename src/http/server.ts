@@ -22,6 +22,7 @@ import {
   type LadderTab,
   bandCounts,
 } from "../db/runner.js";
+import { checkAgent, isHold } from "../db/autoplay.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
 import {
@@ -125,6 +126,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/agents\/([^/]+)$/, getAgent],
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
     ["POST", /^\/agents\/([^/]+)\/band$/, postBand],
+    ["POST", /^\/agents\/([^/]+)\/autoplay$/, postAutoplay],
     ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
     ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
@@ -382,6 +384,56 @@ export function createApp(options: AppOptions): Server {
       if (error instanceof StakeError) throw new HttpError(409, error.message);
       throw error;
     }
+  }
+
+  /**
+   * Turn autoplay on or off, and set the balance floor.
+   *
+   * Turning it on clears whatever stopped it last: the owner has seen the
+   * reason and decided to carry on. Autoplay is checked again on the next tick
+   * anyway, so an agent that still cannot play stops again immediately, with a
+   * current reason rather than a stale one.
+   */
+  async function postAutoplay(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    const [row] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+    if (!row) throw new HttpError(404, "no such agent");
+    if (row.ownerId !== ownerId) throw new HttpError(403, "that agent belongs to someone else");
+    if (row.retiredAt !== null) throw new HttpError(409, "that agent is retired");
+
+    const enabled = ctx.body["enabled"];
+    if (typeof enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
+
+    // A floor is optional; null removes it. It is rejected rather than clamped:
+    // a floor the server quietly changed would not be the owner's floor.
+    let floor = row.autoplayFloor;
+    if ("floor" in ctx.body) {
+      const value = ctx.body["floor"];
+      if (value === null) floor = null;
+      else if (typeof value === "number" && Number.isInteger(value) && value >= 0) floor = value;
+      else throw new HttpError(400, "floor must be a whole number of chips, or null");
+    }
+
+    await db
+      .update(agents)
+      .set({
+        autoplay: enabled,
+        autoplayFloor: floor,
+        ...(enabled ? { autoplayStoppedReason: null, autoplayStoppedAt: null } : {}),
+      })
+      .where(eq(agents.id, id));
+
+    // Say now whether it can actually play, so turning it on does not look
+    // like it worked when the balance says otherwise.
+    const [updated] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+    const check = await checkAgent(db, updated!);
+    return {
+      autoplay: enabled,
+      floor,
+      playable: check.play,
+      ...(check.play ? {} : { stopped: { reason: check.reason, detail: check.detail, hold: isHold(check.reason) } }),
+    };
   }
 
   /** An agent's money, movement by movement. Public: the ladder shows balances anyway. */

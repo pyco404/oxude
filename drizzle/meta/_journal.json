@@ -78,6 +78,13 @@
       "when": 1789888150820,
       "tag": "0010_stake_bands",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789939925956,
+      "tag": "0011_autoplay",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,8 @@ import {
   bandStakes,
   canAffordBand,
   normaliseNet,
+  outflowBudget,
+  OUTFLOW_WINDOW_MS,
   MIN_STAKE,
   RATING_WINDOW,
   STARTING_BALANCE,
@@ -428,7 +430,80 @@ export type PickOpponentOptions = {
   /** Below this many candidates, fall back to a preset agent. Default 4. */
   minCandidates?: number;
   onLog?: (pick: OpponentPick & { agentId: string }) => void;
+  /**
+   * Prefer opponents this agent has not just played. Autoplay sets this: it
+   * picks by closest rating, which is deterministic, so without it the same
+   * pairing would repeat every ten minutes and pile onto one vault's window.
+   */
+  spread?: boolean;
 };
+
+/** How many recent matches the spread penalty looks back over. */
+const RECENT_OPPONENTS = 6;
+/**
+ * What one recent meeting costs an opponent in rating distance. Large enough
+ * to break a tie between similarly rated agents, small enough that it never
+ * pairs a cautious agent with the boldest on the roster to avoid a repeat.
+ */
+const RECENT_OPPONENT_PENALTY = 0.05;
+
+/** Who this agent has played lately, and how often, most recent matches first. */
+async function recentOpponents(db: Db, agentId: string, limit: number): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ a: matches.agentA, b: matches.agentB })
+    .from(matches)
+    .where(and(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)), eq(matches.exhibition, false)))
+    .orderBy(desc(matches.seq))
+    .limit(limit);
+  const met = new Map<string, number>();
+  for (const r of rows) {
+    const other = r.a === agentId ? r.b : r.a;
+    met.set(other, (met.get(other) ?? 0) + 1);
+  }
+  return met;
+}
+
+/**
+ * What a vault has already committed to pay out inside the chain's current
+ * window, as SQL: settlements queued against it in the trailing window,
+ * whatever became of them.
+ *
+ * Pending and confirmed both count. A pending op is money the chain has not
+ * been asked for yet but will be, and a failed one is money it refused, which
+ * is the situation this is here to avoid rather than a reason to try again.
+ */
+const committedOutflow = (agentId: unknown) => sql<number>`coalesce((
+  select sum(${chainOps.amount})::int from ${chainOps}
+  where ${chainOps.kind} = 'settle'
+    and ${chainOps.fromAgent} = ${agentId}
+    and ${chainOps.status} <> 'failed'
+    and ${chainOps.createdAt} > now() - interval '${sql.raw(String(Math.round(OUTFLOW_WINDOW_MS / 1000)))} seconds'
+), 0)`;
+
+/**
+ * Whether this agent could lose `worstMatch` without pushing its vault past
+ * what the chain will let it pay out in one window.
+ *
+ * The program caps a vault's outflow per window and re-reads the cap from the
+ * balance before each transfer, so the cap falls as the vault pays. If several
+ * autoplayers all pick the same popular opponent inside one window and it
+ * loses, the ledger records every loss and the chain refuses the ones past the
+ * cap: the money is still right, but the ledger and the chain stop agreeing
+ * and the reconciler has to report it.
+ *
+ * So the ledger declines the pairing first. This is a smoothing measure, not a
+ * safety one - the program's cap is the guarantee, and this only keeps us from
+ * walking into it.
+ */
+export async function hasOutflowRoom(db: Db, agentId: string, worstMatch: number): Promise<boolean> {
+  const [row] = await db
+    .select({ balance: sql<number>`coalesce(sum(${ledger.amount})::int, 0)`, spent: committedOutflow(agentId) })
+    .from(ledger)
+    .where(eq(ledger.agentId, agentId));
+  const balance = Number(row?.balance ?? 0);
+  const spent = Number(row?.spent ?? 0);
+  return spent + worstMatch <= outflowBudget(balance);
+}
 
 /**
  * Picks the closest-rated active opponent that has played recently and does not
@@ -452,8 +527,15 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   const band = me.band;
   const inBand = eq(agents.band, band);
 
-  const candidates = await db
-    .select({ id: agents.id, ownerId: agents.ownerId, rating: agents.trueRating })
+  const worstMatch = bandByName(band).worstMatch;
+  const all = await db
+    .select({
+      id: agents.id,
+      ownerId: agents.ownerId,
+      rating: agents.trueRating,
+      balance: solvent.balance,
+      spent: committedOutflow(agents.id),
+    })
     .from(agents)
     .innerJoin(solvent, eq(solvent.agentId, agents.id))
     .where(
@@ -468,10 +550,25 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
       ),
     );
 
-  if (candidates.length >= minCandidates) {
-    const best = candidates.reduce((closest, c) =>
-      Math.abs((c.rating ?? 0) - mine) < Math.abs((closest.rating ?? 0) - mine) ? c : closest,
+  // Drop anyone whose vault could not pay a full loss inside the chain's
+  // window. Both sides are checked: this agent can lose too, and its own vault
+  // is under exactly the same cap.
+  const candidates = all.filter((c) => Number(c.spent) + worstMatch <= outflowBudget(Number(c.balance)));
+  if (!(await hasOutflowRoom(db, agentId, worstMatch))) {
+    throw new StakeError(
+      `${me.name} has settled as much as its vault can pay out in one window. It plays again within fifteen minutes.`,
     );
+  }
+
+  if (candidates.length >= minCandidates) {
+    // Closest rating is the signal. With `spread`, an opponent met in the last
+    // few matches is pushed down it, so a timer that fires every ten minutes
+    // does not keep serving the same pairing - and does not keep charging the
+    // same vault's window.
+    const recent = options.spread ? await recentOpponents(db, agentId, RECENT_OPPONENTS) : new Map<string, number>();
+    const distance = (c: (typeof candidates)[number]) =>
+      Math.abs((c.rating ?? 0) - mine) + (recent.get(c.id) ?? 0) * RECENT_OPPONENT_PENALTY;
+    const best = candidates.reduce((closest, c) => (distance(c) < distance(closest) ? c : closest));
     const pick: OpponentPick = {
       opponentId: best.id,
       band,

@@ -68,11 +68,67 @@ export const agents = pgTable(
     trueRatingRoster: text("true_rating_roster"),
     /** The owner's wallet: a base58 Solana public key. */
     ownerId: text("owner_id"),
+    /**
+     * Autoplay: the server plays this agent on a timer, with nothing to press
+     * and nothing to sign. Off until the owner turns it on - a rental that
+     * started playing by itself would be spending money nobody asked it to.
+     * Only ever true for a player agent; house agents have their own
+     * exhibition loop, which stakes nothing (see house.ts).
+     */
+    autoplay: boolean("autoplay").notNull().default(false),
+    /**
+     * The balance the owner will not play below. Autoplay stops before any
+     * match that *could* breach it, so it is a floor and not a line the agent
+     * is allowed to fall through: a band C loss is 60, so an agent at 310 with
+     * a floor of 300 does not play. Null means no floor - it plays until it
+     * cannot cover its band.
+     */
+    autoplayFloor: integer("autoplay_floor"),
+    /**
+     * Why autoplay is not playing, or null when nothing is wrong. Two kinds,
+     * and the panel must not confuse them: `withdrawal` is a *hold* that clears
+     * itself when the withdrawal lands, and leaves `autoplay` true. The others
+     * are *pauses*: they set `autoplay` false, and the owner turns it back on.
+     */
+    autoplayStoppedReason: text("autoplay_stopped_reason").$type<AutoplayStop>(),
+    autoplayStoppedAt: timestamp("autoplay_stopped_at", { withTimezone: true }),
+    /**
+     * When this agent last played under autoplay. The interval is per agent and
+     * counted from here, so agents do not all fire on the same tick.
+     */
+    autoplayLastMatchAt: timestamp("autoplay_last_match_at", { withTimezone: true }),
+    /**
+     * Set the first time a tick finds no opponent, cleared by the next match.
+     * Waiting is not a pause: the agent keeps trying every interval and plays
+     * the moment someone appears. This is only so the panel can say how long.
+     */
+    autoplayWaitingSince: timestamp("autoplay_waiting_since", { withTimezone: true }),
+    /** When the owner last looked at this agent, for the "since you left" summary. */
+    ownerLastSeenAt: timestamp("owner_last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     retiredAt: timestamp("retired_at", { withTimezone: true }),
   },
-  (t) => [index("agents_owner_idx").on(t.ownerId), index("agents_true_rating_idx").on(t.trueRating)],
+  (t) => [
+    index("agents_owner_idx").on(t.ownerId),
+    index("agents_true_rating_idx").on(t.trueRating),
+    // The scheduler's own query: who is due, oldest first.
+    index("agents_autoplay_idx").on(t.autoplay, t.autoplayLastMatchAt),
+  ],
 );
+
+/**
+ * Why autoplay stopped. `withdrawal` is a hold and clears itself; the rest are
+ * pauses and need the owner.
+ */
+export type AutoplayStop = "floor" | "insolvent" | "retired" | "withdrawal";
+
+/** Whether a stop clears itself, or waits for the owner to switch autoplay back on. */
+export const AUTOPLAY_SELF_CLEARING: Record<AutoplayStop, boolean> = {
+  withdrawal: true,
+  floor: false,
+  insolvent: false,
+  retired: false,
+};
 
 export const matches = pgTable(
   "matches",
@@ -307,6 +363,40 @@ export const STARTING_BALANCE = 900;
  * not this: see `canAffordBand`.
  */
 export const MIN_STAKE = 10;
+/**
+ * How often autoplay plays one agent. Ten minutes is the figure every survival
+ * number is measured at (src/survival.ts), so changing it invalidates the
+ * table the rent screen quotes. Overridable for testing on devnet through
+ * AUTOPLAY_INTERVAL_MS.
+ */
+export const AUTOPLAY_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * How much of a vault's balance the ledger will commit inside one chain window.
+ *
+ * The program caps what a vault pays out per window of 1,500 slots at
+ * `max(120, balance / 4)`, re-read from the balance before every transfer - so
+ * the cap falls as the vault pays, and a window really closes at about a fifth
+ * of the balance it opened with. We budget against the fifth, not the quarter,
+ * because the fifth is what actually happens.
+ */
+export const OUTFLOW_BUDGET_DIVISOR = 5;
+/** The program's floor, mirrored: a small vault may always pay out this much. */
+export const OUTFLOW_BUDGET_FLOOR = 120;
+/**
+ * The trailing window the ledger measures against. Longer than the chain's ten
+ * minutes on purpose: the chain's window is fixed and restarts whenever a
+ * settlement lands past its end, so no rolling window can line up with it.
+ * Overshooting costs a skipped pairing; undershooting costs a settlement the
+ * program refuses and a reconciler disagreement.
+ */
+export const OUTFLOW_WINDOW_MS = 15 * 60 * 1000;
+
+/** The most this vault should be asked to pay out inside one window. */
+export function outflowBudget(balance: number): number {
+  return Math.max(OUTFLOW_BUDGET_FLOOR, Math.floor(balance / OUTFLOW_BUDGET_DIVISOR));
+}
+
 /** Each owner's first elicitation costs them nothing. */
 export const FREE_ELICITATIONS = 1;
 
