@@ -92,6 +92,61 @@ describe("house exhibitions", () => {
   // The wait below is the point of the test, so its budget has to be comfortably
   // inside the timeout: at the default 5s they were equal, and a loaded suite
   // failed here for no reason but contention.
+  it("only pairs agents in the same band, and does not stall on a freshly seeded one", async () => {
+    const { db, close } = await fresh();
+    // The shape production had: a full band B, fresh agents on zero plays in A
+    // and C, and one agent alone in its band with nobody to meet.
+    const band = new Map<string, string>();
+    for (const [b, n] of [["B", 6], ["A", 3], ["C", 3]] as const) {
+      for (let i = 0; i < n; i++) {
+        const row = await createAgent(db, { name: `${b}${i}`, presetName: "Anchor", band: b });
+        band.set(row.id, b);
+      }
+    }
+
+    // Run the real loop's own steps: pick, then play. Every pick must be
+    // playable, so no exhibition is ever refused and every agent gets a turn.
+    const played = new Set<string>();
+    for (let k = 0; k < 40; k++) {
+      const pair = await pickHousePair(db);
+      expect(pair).not.toBeNull();
+      const [x, y] = pair!;
+      expect(band.get(x)).toBe(band.get(y));
+      await runExhibition(db, x, y, { seed: k + 1 });
+      played.add(x).add(y);
+    }
+    // Nobody is stuck on zero - the fresh A and C agents included.
+    expect(played.size).toBe(band.size);
+    await close();
+  });
+
+  it("leaves out a band with nobody to pair, and anyone too poor for their own band", async () => {
+    const { db, close } = await fresh();
+    const b1 = await createAgent(db, { name: "B1", presetName: "Anchor", band: "B" });
+    const b2 = await createAgent(db, { name: "B2", presetName: "Bully", band: "B" });
+    // Alone in band C: there is no one it could meet.
+    const lonely = await createAgent(db, { name: "C1", presetName: "Hammer", band: "C" });
+    // In band B with too little to cover a band B match.
+    const poor = await createAgent(db, { name: "Poor", presetName: "Mirage", band: "B", startingBalance: 39 });
+
+    for (let k = 0; k < 20; k++) {
+      const pair = await pickHousePair(db);
+      expect(pair).not.toBeNull();
+      expect([...pair!].sort()).toEqual([b1.id, b2.id].sort());
+      expect(pair).not.toContain(lonely.id);
+      expect(pair).not.toContain(poor.id);
+    }
+    await close();
+  });
+
+  it("schedules nothing when no band holds two agents that could play", async () => {
+    const { db, close } = await fresh();
+    await createAgent(db, { name: "OnlyA", presetName: "Anchor", band: "A" });
+    await createAgent(db, { name: "OnlyC", presetName: "Bully", band: "C" });
+    expect(await pickHousePair(db)).toBeNull();
+    await close();
+  });
+
   it("keeps playing when run the way the server runs it, with no callbacks", async () => {
     const { db, close } = await fresh();
     for (let i = 0; i < 3; i++) await createAgent(db, { name: `H${i}`, presetName: "Anchor" });

@@ -1,8 +1,8 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { runExhibition } from "./runner.js";
-import { agents, matches } from "./schema.js";
+import { agents, bandByName, ledger, matches, type BandName } from "./schema.js";
 
 /**
  * Exhibitions between house agents, so the platform is visibly running when no
@@ -10,17 +10,43 @@ import { agents, matches } from "./schema.js";
  * only decides who plays whom, and when.
  */
 
-/** Picks a pair that spreads play across the house roster rather than repeating one matchup. */
+/**
+ * Picks a pair that spreads play across the house roster rather than repeating
+ * one matchup. Both agents are always in the same band and both can cover its
+ * worst match, because runExhibition refuses anything else.
+ *
+ * That constraint is not decoration. Picking across the whole roster once bands
+ * existed meant the least-played agent - a freshly seeded one, on zero plays -
+ * was paired with someone in another band, refused, and left on zero plays, so
+ * it was picked again next time. Exhibitions did not fail sometimes; they
+ * stopped.
+ */
 export async function pickHousePair(
   db: Db,
   random: (n: number) => number = (n) => randomInt(n),
 ): Promise<[string, string] | null> {
-  const house = (
-    await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(isNull(agents.ownerId), isNull(agents.retiredAt)))
-  ).map((r) => r.id);
+  // Joined rather than correlated, as in playableBands.
+  const balances = db
+    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
+    .from(ledger)
+    .groupBy(ledger.agentId)
+    .as("balances");
+  const rows = await db
+    .select({ id: agents.id, band: agents.band, balance: balances.balance })
+    .from(agents)
+    .innerJoin(balances, eq(balances.agentId, agents.id))
+    .where(and(isNull(agents.ownerId), isNull(agents.retiredAt)));
+
+  // Only agents that could actually play their own band, and only bands with
+  // at least two of them - a lone agent has nobody to meet.
+  const bandOf = new Map<string, BandName>();
+  const byBand = new Map<BandName, string[]>();
+  for (const r of rows) {
+    if (Number(r.balance) < bandByName(r.band).worstMatch) continue;
+    bandOf.set(r.id, r.band);
+    byBand.set(r.band, [...(byBand.get(r.band) ?? []), r.id]);
+  }
+  const house = [...byBand.values()].filter((ids) => ids.length >= 2).flat();
   if (house.length < 2) return null;
 
   // Recent history: roughly two rounds of the roster.
@@ -47,7 +73,8 @@ export async function pickHousePair(
   // Whoever has played least goes next, against whoever it has met least,
   // then whoever has played least; ties at random.
   const first = leastBy(house, (id) => plays.get(id) ?? 0);
-  const others = house.filter((id) => id !== first);
+  // Its opponent comes from its own band only.
+  const others = byBand.get(bandOf.get(first)!)!.filter((id) => id !== first);
   const second = leastBy(others, (id) => (met.get(pairKey(first, id)) ?? 0) * 1000 + (plays.get(id) ?? 0));
   return random(2) === 0 ? [first, second] : [second, first];
 }
