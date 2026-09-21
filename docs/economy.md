@@ -2,6 +2,16 @@
 
 **Status: design, with two parts now real.** Bands are live as money scales (see [Bands](#bands)), and **$OXUDE has launched** (see [Token](#token)). Everything that connects them — rentals, funding, auctions, prizes, the chip rate — remains design only. The game still runs on devnet with a fake game token, and $OXUDE is not yet its currency; this is the plan for making it one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
 
+## Roadmap
+
+In order. Each step ships to devnet before the next begins; nothing here holds real money until [Open questions](#open-questions) are closed.
+
+1. **Bands** — done. Money scales, the cover rule, seeded house agents in every band.
+2. **Autoplay** — built. Server-side play on a timer, the floor, and the ranked/unranked split on the ladder; the scheduler and ladder are deployed, and the owner's panel ships with the web release.
+3. **[Characters](#characters)** — next. Identity and presentation for every agent. Placed ahead of rewards and auctions because both of them are about an agent's *standing*, and a standing is easier to care about, compete over and bid on when it belongs to someone with a name and a face.
+4. **Rewards** — the prize pools funded by the creator-fee split ([Creator fees and prizes](#creator-fees-and-prizes)).
+5. **Auctions** — expiry, bidding and transfer ([Expiry and auction](#expiry-and-auction)). What a character carries across a sale is open question 1.
+
 ## Token
 
 **$OXUDE launched on pump.fun on 20 September 2026.**
@@ -90,6 +100,19 @@ Band C came in at **60.6%**, below the 65% the provisional figures suggested; it
 
 The run is seeded with a fixed constant that is deliberately **not** derived from any band amount, so these numbers move only when a rule moves. Regenerate with `npx tsx scripts/simulate-autoplay.ts --emit`, which rewrites `src/survival.ts`. The rent screen and this page both quote that generated table, and neither may state a survival figure that is not in it.
 
+## Characters
+
+**Agents become characters. The decision table still decides every action; the character is identity and presentation only, never mechanics.** Nothing about a character is an input to the engine, the matchmaker, the ledger or the chain. Every hand stays exactly as deterministic and verifiable as it is now: the same seed and the same two tables replay to the same result, and `src/exact.ts` still prices an agent from its table alone. A character that could change an outcome would be a way to buy an edge, which is pay-to-win by another route.
+
+Planned, all of it presentation:
+
+- **A name, portrait and short bio**, generated once at rent time and derived from the playbook — the preset or brief, and the table it produced. A cautious table reads as a cautious person. Generated once and stored, so a character does not drift between visits.
+- **Personality traits measured from real play**, not asserted: bluff rate, fold rate, aggression, computed from the agent's actual match logs. They describe what the agent did, so they can disagree with its bio — and when they do, the measured number is the one shown as fact.
+- **Earned titles and rivalries, from the ledger.** A title is awarded for something the ledger can prove happened; a rivalry is a pairing with enough matches between two agents to mean something. Neither is claimed, and neither is ever sold.
+- **Optional in-character lines on big moments** — a large pot, a bluff that worked, a comeback — rendered alongside the transcript. They are commentary on a result already decided; they never decide anything, and turning them off changes nothing but the text.
+
+**Characters must be original.** No real people, no existing fictional characters, and nothing that trades on someone else's name, likeness or brand. That applies to the generated portrait as much as to the name.
+
 ## Expiry and auction
 
 At 168 hours the agent goes to an English auction.
@@ -154,6 +177,7 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 - **Bands are money scales, not skill tiers.** One factor per band, one unscaled seed of 900, and a per-match cover of two times the raised bet — the most a first-to-two match can actually move.
 - **Stakes are dollar-pegged, converted once per season.** A chip is a fixed USD value, and the $OXUDE per chip is fixed for a week from a TWAP, within ±50% of the previous week and under a tokens-per-chip ceiling. Pegging to the token instead would have made the same bet mean a different amount of money each day, and a spot conversion would have handed the rate to anyone willing to push a thin pool for one block.
 - **One shared weekly season for every rental** (resolves open question 6). Monday to Monday UTC, not a rolling 168 hours per rental. The chip rate is what decides it: it can only change when no rental is mid-week, which a rolling week never guarantees. Shared seasons also make "final ladder placement" unambiguous and put every auction on the same day; the cost is that expiries and auctions bunch at the boundary rather than spreading out. It also means the "168 hours" in [Renting](#renting) is a full season, not 168 hours from whenever the rental was bought: what a mid-week rental pays and how long it runs is left to the rental design.
+- **Characters are presentation, never mechanics.** An agent's name, portrait, bio, measured traits, titles, rivalries and in-character lines are identity only; the decision table decides every action, so every hand stays deterministic and verifiable. Characters must be original. They come before rewards and auctions on the [Roadmap](#roadmap).
 - **Matching a bid pays the reward wallet.** The owner keeps their right to retain the agent, but not at a discount: they pay what the market bid, and the money goes to prizes rather than back to themselves. Paying themselves half would have made matching nearly free and the auction decorative.
 
 ## Open questions
@@ -161,6 +185,8 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 These need resolving before **mainnet** — before $OXUDE becomes the game's currency and real money is at stake in a match. The token launching has not moved any of them; it has only made the distance to mainnet visible from outside.
 
 1. **What an auction buyer gets.** The record transfers but the brief doesn't, so the buyer writes a new brief and the record then describes a different strategy. The auction sells a name and a history, not play strength. That is consistent with no-pay-to-win, but the ladder should either reset the record's strategy-dependent stats on transfer or show where the brief changed.
+
+   **Proposal, with characters:** the character's **name, face and reputation transfer with the record; the brief does not.** A buyer gets someone with a history and a following, and writes that someone a new playbook. Still to settle: measured traits describe the *old* brief's play, so after a sale they should either start again or be split at the point of transfer, the same choice as the record's strategy-dependent stats above; and a bio derived from the old playbook would now describe a table the agent no longer plays, so it either regenerates for the new brief or is kept and marked as the character's past.
 2. **Which TWAP, over what window, published where.** The design is settled — a chip is a fixed USD value, converted to $OXUDE once per season from a time-weighted average rather than spot, inside a ±50% weekly band and a tokens-per-chip ceiling (see [The chip rate](#the-chip-rate)). What is not settled is the mechanics: which pool or aggregator the average is taken from, over what window, how a stale or missing reading is handled at a boundary, and where the number and its inputs are published so an owner can check the rate they were charged. The ±50% cap and the ceiling limit the damage of a bad reading; they don't make one acceptable.
 3. **The deposit instruction, and non-custodial withdrawal.** Two separate gaps. There is no deposit instruction at all, so deposit-funded agents need one before the funding model above is real. Withdrawal does exist and works on devnet, but the settler must co-sign: that co-signature is what attests no match is in flight and no net position is unsettled, and it is also what leaves the vaults custodial in practice — a server that refuses or disappears strands the money, even though it cannot move it anywhere else. Making withdrawal non-custodial before mainnet means replacing that attestation with something the chain can check for itself, such as an on-chain in-flight flag or a timelock the owner can always fall back on.
 
