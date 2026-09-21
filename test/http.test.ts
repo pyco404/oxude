@@ -740,3 +740,62 @@ describe("one agent at a time", () => {
     expect((await rent("wallet-two", "Theirs")).status).toBe(201);
   });
 });
+
+describe("autoplay over http", () => {
+  const create = async (owner: string, name: string) =>
+    (await readBody(await api("/agents", { method: "POST", owner, body: JSON.stringify({ name, presetName: "Anchor" }) }))).agent;
+
+  it("shows autoplay and the summary to the owner only", async () => {
+    const owner = someWallet();
+    const agent = await create(owner, "Private");
+    const mine = await readBody(await api(`/agents/${agent.id}`, { owner }));
+    expect(mine.view).toBe("owner");
+    expect(mine.autoplay.state).toBe("off");
+    expect(mine).toHaveProperty("sinceYouLeft");
+
+    const theirs = await readBody(await api(`/agents/${agent.id}`, { owner: someWallet() }));
+    expect(theirs.view).toBe("public");
+    expect(theirs.autoplay).toBeUndefined();
+    expect(theirs.sinceYouLeft).toBeUndefined();
+
+    const signedOut = await readBody(await api(`/agents/${agent.id}`, { owner: null }));
+    expect(signedOut.autoplay).toBeUndefined();
+  });
+
+  it("turns autoplay on with a floor, and reports at once whether it can play", async () => {
+    const owner = someWallet();
+    const agent = await create(owner, "Switch");
+    const on = await readBody(
+      await api(`/agents/${agent.id}/autoplay`, { method: "POST", owner, body: JSON.stringify({ enabled: true, floor: 300 }) }),
+    );
+    expect(on.autoplay.enabled).toBe(true);
+    expect(on.autoplay.floor).toBe(300);
+    expect(["on", "waiting"]).toContain(on.autoplay.state);
+
+    // A floor it cannot clear: the response says so now, not on the next tick.
+    const tooHigh = await readBody(
+      await api(`/agents/${agent.id}/autoplay`, { method: "POST", owner, body: JSON.stringify({ enabled: true, floor: 5000 }) }),
+    );
+    expect(tooHigh.autoplay.state).toBe("paused");
+    expect(tooHigh.autoplay.message).toBe("Paused: balance reached your floor (5000).");
+  });
+
+  it("refuses to let anyone else switch it or mark it seen", async () => {
+    const owner = someWallet();
+    const agent = await create(owner, "NotYours");
+    const other = someWallet();
+    const flip = await api(`/agents/${agent.id}/autoplay`, { method: "POST", owner: other, body: JSON.stringify({ enabled: true }) });
+    expect(flip.status).toBe(403);
+    const seen = await api(`/agents/${agent.id}/seen`, { method: "POST", owner: other });
+    expect(seen.status).toBe(403);
+  });
+
+  it("rejects a floor that is not a whole number of chips", async () => {
+    const owner = someWallet();
+    const agent = await create(owner, "BadFloor");
+    for (const floor of [-1, 12.5, "300"]) {
+      const res = await api(`/agents/${agent.id}/autoplay`, { method: "POST", owner, body: JSON.stringify({ enabled: true, floor }) });
+      expect(res.status).toBe(400);
+    }
+  });
+});

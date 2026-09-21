@@ -4,7 +4,7 @@ import { connect, migrate } from "../src/db/client.js";
 import { agents, chainOps, matches, withdrawals, bandByName, outflowBudget } from "../src/db/schema.js";
 import { record } from "../src/db/ledger.js";
 import { createAgent, hasOutflowRoom, pickOpponent } from "../src/db/runner.js";
-import { checkAgent, dueAgents, isHold, stopAgent, tick } from "../src/db/autoplay.js";
+import { autoplayStatus, checkAgent, dueAgents, isHold, markSeen, sinceYouLeft, stopAgent, tick } from "../src/db/autoplay.js";
 import { someWallet } from "./helpers.js";
 
 const fresh = async () => {
@@ -267,6 +267,141 @@ describe("autoplay: the popular-opponent budget", () => {
     expect(result.waiting).toEqual([row.id]);
     const [after] = await db.select().from(agents).where(eq(agents.id, row.id));
     expect(after!.autoplay).toBe(true);
+    await close();
+  });
+});
+
+describe("autoplay: what the panel says", () => {
+  const rowOf = async (db: Awaited<ReturnType<typeof fresh>>["db"], id: string) =>
+    (await db.select().from(agents).where(eq(agents.id, id)))[0]!;
+
+  it("is off until switched on, with no countdown", async () => {
+    const { db, close } = await fresh();
+    const row = await createAgent(db, { name: "Off", presetName: "Anchor", ownerId: someWallet() });
+    const status = await autoplayStatus(db, await rowOf(db, row.id));
+    expect(status.state).toBe("off");
+    expect(status.nextMatchAt).toBeNull();
+    expect(status.message).toBeNull();
+    await close();
+  });
+
+  it("counts down to the next match from the last one", async () => {
+    const { db, close } = await fresh();
+    const row = await playerOn(db);
+    const now = new Date("2026-09-21T12:00:00Z");
+    await db.update(agents).set({ autoplayLastMatchAt: new Date(now.getTime() - 4 * 60_000) }).where(eq(agents.id, row.id));
+    const status = await autoplayStatus(db, await rowOf(db, row.id), { intervalMs: 10 * 60_000, now });
+    expect(status.state).toBe("on");
+    expect(status.nextMatchAt!.getTime() - now.getTime()).toBe(6 * 60_000);
+    await close();
+  });
+
+  it("says a hold clears itself and a pause needs the owner, in those words", async () => {
+    const { db, close } = await fresh();
+    const held = await playerOn(db);
+    await db.insert(withdrawals).values({
+      agentId: held.id, ownerId: held.ownerId!, amount: 10, remaining: 890, retire: false,
+      preparedTx: "test", lastValidBlockHeight: 1, status: "submitted",
+    });
+    const h = await autoplayStatus(db, await rowOf(db, held.id));
+    expect(h.state).toBe("held");
+    expect(h.message).toBe("Held: withdrawal settling, resumes automatically.");
+    expect(h.stop).toEqual({ reason: "withdrawal", hold: true });
+
+    const paused = await playerOn(db);
+    await db.update(agents).set({ autoplayFloor: 300 }).where(eq(agents.id, paused.id));
+    await stopAgent(db, paused.id, "floor");
+    const p = await autoplayStatus(db, await rowOf(db, paused.id));
+    expect(p.state).toBe("paused");
+    expect(p.enabled).toBe(false);
+    // The reason with its number, and what the owner has to do.
+    expect(p.message).toBe("Paused: balance reached your floor (300).");
+    expect(p.action).toContain("You need to switch it back on");
+    await close();
+  });
+
+  it("names the balance and the band's worst match when it cannot cover one", async () => {
+    const { db, close } = await fresh();
+    const row = await playerOn(db);
+    await record(db, [{ agentId: row.id, amount: -(900 - 25), reason: "match-settlement" }]);
+    await stopAgent(db, row.id, "insolvent");
+    const status = await autoplayStatus(db, await rowOf(db, row.id));
+    expect(status.message).toBe("Paused: balance 25 can't cover a band B match, which can move up to 40.");
+    await close();
+  });
+
+  it("does not tell a retired agent's owner to switch it back on", async () => {
+    const { db, close } = await fresh();
+    const row = await playerOn(db);
+    await db.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, row.id));
+    await stopAgent(db, row.id, "retired");
+    const status = await autoplayStatus(db, await rowOf(db, row.id));
+    expect(status.action).not.toContain("switch it back on");
+    await close();
+  });
+
+  it("shows how long it has waited, and no countdown while it waits", async () => {
+    const { db, close } = await fresh();
+    const row = await playerOn(db, { band: "C" });
+    await tick(db, { intervalMs: 0 });
+    const status = await autoplayStatus(db, await rowOf(db, row.id));
+    expect(status.state).toBe("waiting");
+    expect(status.waitingSince).not.toBeNull();
+    expect(status.nextMatchAt).toBeNull();
+    await close();
+  });
+
+  it("totals today's matches and net as money, house opponents included", async () => {
+    const { db, close } = await fresh();
+    await house(db, 4);
+    const row = await playerOn(db);
+    await tick(db, { intervalMs: 0 });
+    const [m] = await db.select().from(matches);
+    const mine = m!.agentA === row.id ? m!.netA : m!.netB;
+    const status = await autoplayStatus(db, await rowOf(db, row.id));
+    expect(status.today).toEqual({ matches: 1, net: mine });
+    await close();
+  });
+});
+
+describe("since you left", () => {
+  it("is empty until the owner has been seen once", async () => {
+    const { db, close } = await fresh();
+    const row = await createAgent(db, { name: "New", presetName: "Anchor", ownerId: someWallet() });
+    expect(await sinceYouLeft(db, (await db.select().from(agents).where(eq(agents.id, row.id)))[0]!)).toBeNull();
+    await close();
+  });
+
+  it("counts matches since the owner was last seen, their net, and the best win", async () => {
+    const { db, close } = await fresh();
+    await house(db, 4);
+    const row = await playerOn(db);
+    await markSeen(db, row.id, new Date(Date.now() - 60_000));
+    for (let i = 0; i < 4; i++) {
+      await db.update(agents).set({ autoplayLastMatchAt: null }).where(eq(agents.id, row.id));
+      await tick(db, { intervalMs: 0 });
+    }
+    const played = await db.select().from(matches);
+    const nets = played.map((m) => (m.agentA === row.id ? m.netA : m.netB));
+
+    const summary = await sinceYouLeft(db, (await db.select().from(agents).where(eq(agents.id, row.id)))[0]!);
+    expect(summary!.matches).toBe(played.length);
+    expect(summary!.net).toBe(nets.reduce((a, b) => a + b, 0));
+    const best = Math.max(...nets);
+    if (best > 0) expect(summary!.bestHand!.net).toBe(best);
+    else expect(summary!.bestHand).toBeNull();
+    await close();
+  });
+
+  it("starts again from the moment the owner dismisses it", async () => {
+    const { db, close } = await fresh();
+    await house(db, 4);
+    const row = await playerOn(db);
+    await markSeen(db, row.id, new Date(Date.now() - 60_000));
+    await tick(db, { intervalMs: 0 });
+    await markSeen(db, row.id);
+    const summary = await sinceYouLeft(db, (await db.select().from(agents).where(eq(agents.id, row.id)))[0]!);
+    expect(summary!.matches).toBe(0);
     await close();
   });
 });

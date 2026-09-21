@@ -9,6 +9,7 @@ import { Segmented } from "@/app/ui";
 import { PrivyOption } from "@/app/privy-option";
 import { useWallet } from "@/app/wallet-context";
 import { WithdrawPanel } from "@/app/withdraw-panel";
+import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
 import {
@@ -804,6 +805,13 @@ function AgentCard({
           <Stat label="net won" value={whole(agent.cumulativeNet ?? 0)} />
           <Stat label="matches" value={String(agent.matchesPlayed ?? 0)} />
         </dl>
+        {typeof agent.rankedMatches === "number" && agent.rankedMatches !== (agent.matchesPlayed ?? 0) ? (
+          <p className="mt-1 text-[11px] leading-4 text-muted">
+            The ladder counts {agent.rankedMatches} of {agent.matchesPlayed ?? 0} &mdash; the ones against other
+            players &mdash; for {whole(agent.rankedNet ?? 0)}. The rest were against house agents: they settled for
+            money, but don&apos;t rank.
+          </p>
+        ) : null}
         <dl className="mt-2 grid grid-cols-2 gap-2 border border-line">
           <Stat label="recent form" value={money(agent.recentForm ?? 0)} />
           <Stat label="band" value={`${agent.band ?? "B"} · up to ${agent.worstMatch ?? bandByName(agent.band ?? "B").worstMatch}`} />
@@ -885,6 +893,20 @@ function AgentCard({
             · paired by {lastPlay.matchmaking.path.replace("-", " ")}
           </p>
         ) : null}
+        {lastPlay && lastPlay.ranked === false ? (
+          <p className="mt-1 text-[11px] leading-4 text-muted">
+            Against a house agent: settles for money, doesn&apos;t count toward the ladder.
+          </p>
+        ) : null}
+
+        {!(agent.id ?? agent.agentId) ? null : (
+          <AutoplayPanel
+            agentId={(agent.id ?? agent.agentId)!}
+            retired={retired}
+            refreshKey={`${agent.balance ?? ""}-${agent.matchesPlayed ?? ""}`}
+            onChanged={onWithdrawn}
+          />
+        )}
 
         {/* Stays mounted when the agent retires, so the withdrawal that retired it can say so. */}
         {!(agent.id ?? agent.agentId) ? null : (

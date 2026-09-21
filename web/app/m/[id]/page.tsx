@@ -86,6 +86,11 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             {summary.rounds === 1 ? "round" : "rounds"}, {match.exhibition ? "nothing staked" : `staked ${summary.stake}`}.
           </p>
           {summary.headline ? <p className="mt-2 text-[14px] leading-6 text-red">{summary.headline}.</p> : null}
+          {!match.exhibition && match.ranked === false ? (
+            <p className="mt-2 text-[12px] leading-5 text-muted">
+              Against a house agent: settles for money, doesn&apos;t count toward the ladder.
+            </p>
+          ) : null}
           <p className="mt-3 border-t border-line pt-2 font-mono text-[11px] leading-5 text-muted">
             {match.exhibition
               ? "Exhibition between house agents: nothing was staked or settled."

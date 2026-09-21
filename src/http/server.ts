@@ -5,7 +5,7 @@ import { validatePolicy, type Policy } from "../agents/policy.js";
 import { headlineFor, renderTranscript } from "../transcript.js";
 import { PRESET_DESCRIPTIONS, PRESET_NAMES, type PresetName } from "../presets.js";
 import type { Db } from "../db/client.js";
-import { agents, matches, withdrawals } from "../db/schema.js";
+import { agents, matches, withdrawals, AUTOPLAY_INTERVAL_MS } from "../db/schema.js";
 import { isFirstElicitationFree, recordElicitation, StakeError, statement } from "../db/ledger.js";
 import {
   activeAgentsOf,
@@ -22,7 +22,7 @@ import {
   type LadderTab,
   bandCounts,
 } from "../db/runner.js";
-import { checkAgent, isHold } from "../db/autoplay.js";
+import { autoplayStatus, markSeen, sinceYouLeft } from "../db/autoplay.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
 import {
@@ -71,6 +71,12 @@ export type AppOptions = {
   now?: () => number;
   /** The chain, for withdrawals: the settler builds and co-signs them. Without it they are unavailable. */
   chain?: WithdrawalChain;
+  /**
+   * How often autoplay plays one agent, so the panel's countdown matches the
+   * loop that is actually running. Defaults to AUTOPLAY_INTERVAL_MS from the
+   * environment, which is what scripts/serve.ts starts the loop with.
+   */
+  autoplayIntervalMs?: number;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,6 +99,8 @@ class HttpError extends Error {
 
 export function createApp(options: AppOptions): Server {
   const { db } = options;
+  const autoplayIntervalMs =
+    options.autoplayIntervalMs ?? (Number(process.env["AUTOPLAY_INTERVAL_MS"]) || AUTOPLAY_INTERVAL_MS);
   const elicit = options.elicit ?? defaultElicit;
   const limiter = new RateLimiter(options.rateLimit ?? { limit: 5, windowMs: 60_000 }, options.now);
   // Playing costs no money but writes a match row and rewrites two ratings;
@@ -127,6 +135,7 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents\/([^/]+)\/play$/, postPlay],
     ["POST", /^\/agents\/([^/]+)\/band$/, postBand],
     ["POST", /^\/agents\/([^/]+)\/autoplay$/, postAutoplay],
+    ["POST", /^\/agents\/([^/]+)\/seen$/, postSeen],
     ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
     ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
@@ -308,6 +317,7 @@ export function createApp(options: AppOptions): Server {
     const [owned] = await db.select({ ownerId: agents.ownerId }).from(agents).where(eq(agents.id, id)).limit(1);
     if (ctx.ownerId && owned?.ownerId === ctx.ownerId) {
       const own = await ownerAgent(db, id, ctx.ownerId);
+      const [full] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
       return {
         agent: {
           ...row,
@@ -317,6 +327,9 @@ export function createApp(options: AppOptions): Server {
           trueRatingBasis: "against the roster as it stands today",
           ...bandStatus(row),
         },
+        // Private to the owner: whether it is playing, and what it did while they were away.
+        autoplay: await autoplayStatus(db, full!, { intervalMs: autoplayIntervalMs }),
+        sinceYouLeft: await sinceYouLeft(db, full!),
         view: "owner",
       };
     }
@@ -366,6 +379,11 @@ export function createApp(options: AppOptions): Server {
       },
       balance: after?.balance ?? 0,
       retired: retired.includes(id),
+      /**
+       * Whether this counts toward the ladder. False means the opponent was a
+       * house agent: the money moved all the same, but it earns no ranking.
+       */
+      ranked: match.ranked,
     };
   }
 
@@ -427,13 +445,20 @@ export function createApp(options: AppOptions): Server {
     // Say now whether it can actually play, so turning it on does not look
     // like it worked when the balance says otherwise.
     const [updated] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
-    const check = await checkAgent(db, updated!);
-    return {
-      autoplay: enabled,
-      floor,
-      playable: check.play,
-      ...(check.play ? {} : { stopped: { reason: check.reason, detail: check.detail, hold: isHold(check.reason) } }),
-    };
+    // The same block the panel reads, so turning it on shows at once whether
+    // it can actually play - not a success that the next tick contradicts.
+    return { autoplay: await autoplayStatus(db, updated!, { intervalMs: autoplayIntervalMs }) };
+  }
+
+  /** The owner has read "since you left": the next summary starts from now. */
+  async function postSeen(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    const [row] = await db.select({ ownerId: agents.ownerId }).from(agents).where(eq(agents.id, id)).limit(1);
+    if (!row) throw new HttpError(404, "no such agent");
+    if (row.ownerId !== ownerId) throw new HttpError(403, "that agent belongs to someone else");
+    await markSeen(db, id);
+    return { ok: true };
   }
 
   /** An agent's money, movement by movement. Public: the ladder shows balances anyway. */
@@ -474,6 +499,8 @@ export function createApp(options: AppOptions): Server {
         createdAt: row.createdAt,
         /** House agents playing each other: nothing was staked or settled. */
         exhibition: row.exhibition,
+        /** Player against player: counts toward the ladder. Staked but unranked means a house opponent. */
+        ranked: row.ranked,
       },
       /** Everything a shared card needs, without parsing the transcript. */
       summary: {

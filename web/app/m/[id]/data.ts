@@ -13,6 +13,8 @@ export type MatchPayload = {
     createdAt: string;
     /** House agents playing each other: nothing was staked or settled. */
     exhibition: boolean;
+    /** Player against player. Staked but unranked means one side was a house agent. */
+    ranked?: boolean;
   };
   summary: {
     names: { A: string; B: string };

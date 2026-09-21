@@ -701,8 +701,12 @@ const publicAgentColumns = {
   mark: agents.mark,
   createdAt: agents.createdAt,
   retiredAt: agents.retiredAt,
+  // Every staked match: the agent's money.
   matchesPlayed: ratings.matchesPlayed,
   cumulativeNet: ratings.cumulativeNet,
+  // Player-versus-player only: what the ladder counts. Already public there.
+  rankedMatches: ratings.rankedMatches,
+  rankedNet: ratings.rankedNet,
   recentForm: ratings.rollingNet50,
   band: agents.band,
   balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,

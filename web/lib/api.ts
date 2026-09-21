@@ -81,6 +81,9 @@ export type AgentView = {
   brief?: string | null;
   matchesPlayed?: number;
   cumulativeNet?: number;
+  /** Player-versus-player only: what the ladder counts. */
+  rankedMatches?: number;
+  rankedNet?: number;
   recentForm?: number;
   balance?: number;
   band?: BandName;
@@ -130,6 +133,30 @@ export type PlayResult = {
   result: { winner: "A" | "B" | null; net: number; opponentNet: number; rounds: number; uncappedNet: number };
   balance: number;
   retired: boolean;
+  /** False when the opponent was a house agent: settled for money, not ranked. */
+  ranked?: boolean;
+};
+
+/** Mirrors src/db/autoplay.ts. `held` clears itself; `paused` needs the owner. */
+export type AutoplayState = "off" | "on" | "waiting" | "held" | "paused";
+export type AutoplayStatus = {
+  enabled: boolean;
+  floor: number | null;
+  state: AutoplayState;
+  message: string | null;
+  action: string | null;
+  stop: { reason: "floor" | "insolvent" | "retired" | "withdrawal"; hold: boolean } | null;
+  lastMatchAt: string | null;
+  nextMatchAt: string | null;
+  waitingSince: string | null;
+  today: { matches: number; net: number };
+  intervalMs: number;
+};
+export type SinceYouLeft = {
+  since: string;
+  matches: number;
+  net: number;
+  bestHand: { matchId: string; net: number; headline: string | null; createdAt: string } | null;
 };
 
 /** One match as the public feed shows it. Mirrors the API's FeedItem. */
@@ -145,6 +172,8 @@ export type FeedItem = {
   stake: number;
   rounds: number;
   headline: string | null;
+  /** Both sides player-rented. Staked but unranked means a house opponent. */
+  ranked?: boolean;
   beat: string | null;
   beatSeat: "A" | "B" | null;
   /** House agents playing each other: nothing was staked or settled. */
@@ -215,7 +244,14 @@ export const api = {
     }),
   setBand: (token: string | null, id: string, band: BandName) =>
     request<{ band: BandName }>(`/agents/${id}/band`, { method: "POST", token, body: JSON.stringify({ band }) }),
-  agent: (token: string | null, id: string) => request<{ agent: AgentView; view: string }>(`/agents/${id}`, { token }),
+  agent: (token: string | null, id: string) =>
+    request<{ agent: AgentView; view: string; autoplay?: AutoplayStatus; sinceYouLeft?: SinceYouLeft | null }>(
+      `/agents/${id}`,
+      { token },
+    ),
+  setAutoplay: (token: string | null, id: string, input: { enabled: boolean; floor?: number | null }) =>
+    request<{ autoplay: AutoplayStatus }>(`/agents/${id}/autoplay`, { method: "POST", token, body: JSON.stringify(input) }),
+  markSeen: (token: string | null, id: string) => request<{ ok: true }>(`/agents/${id}/seen`, { method: "POST", token }),
   play: (token: string | null, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", token }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
   roster: (band?: string) =>

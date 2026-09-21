@@ -1,10 +1,12 @@
-import { and, eq, isNull, isNotNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull, isNotNull, lte, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { pickOpponent, runMatch } from "./runner.js";
 import { balanceOf, StakeError } from "./ledger.js";
+import { headlineFor } from "../transcript.js";
 import {
   agents,
+  matches,
   withdrawals,
   bandByName,
   AUTOPLAY_INTERVAL_MS,
@@ -219,4 +221,198 @@ export function startAutoplay(
       if (timer) clearTimeout(timer);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// What the owner's panel shows.
+// ---------------------------------------------------------------------------
+
+/**
+ * The panel's state, as one word. `held` and `paused` are deliberately
+ * different words, because they ask different things of the owner: a hold
+ * needs nothing, a pause needs them.
+ */
+export type AutoplayState = "off" | "on" | "waiting" | "held" | "paused";
+
+export type AutoplayStatus = {
+  enabled: boolean;
+  floor: number | null;
+  state: AutoplayState;
+  /** The headline, with the numbers: "Paused: balance reached your floor (300)." */
+  message: string | null;
+  /** What, if anything, the owner has to do about it. */
+  action: string | null;
+  stop: { reason: AutoplayStop; hold: boolean } | null;
+  lastMatchAt: Date | null;
+  /** When the next match is due; null when it is not going to play on a timer. */
+  nextMatchAt: Date | null;
+  /** Set while there is nobody in the band to play. */
+  waitingSince: Date | null;
+  /** Staked matches since midnight UTC, and their net. Money, not normalised. */
+  today: { matches: number; net: number };
+  intervalMs: number;
+};
+
+/** The words for a stop, with its numbers filled in from the agent as it stands. */
+function describeStop(
+  reason: AutoplayStop,
+  row: AgentRow,
+  balance: number,
+): { message: string; action: string } {
+  const worst = bandByName(row.band).worstMatch;
+  switch (reason) {
+    case "withdrawal":
+      return {
+        message: "Held: withdrawal settling, resumes automatically.",
+        action: "Nothing to do - it picks up again once the withdrawal lands.",
+      };
+    case "floor":
+      return {
+        message: `Paused: balance reached your floor (${row.autoplayFloor ?? 0}).`,
+        action: `Balance is ${balance}, and a band ${row.band} match can move ${worst}, so the next match could take it below your floor. You need to switch it back on - lower the floor first if you want it to keep playing.`,
+      };
+    case "insolvent":
+      return {
+        message: `Paused: balance ${balance} can't cover a band ${row.band} match, which can move up to ${worst}.`,
+        action: "You need to switch it back on, and it can only play again in a band this balance covers.",
+      };
+    case "retired":
+      return {
+        message: "Paused: this agent is retired.",
+        action: "A retired agent can't play again.",
+      };
+  }
+}
+
+/** Net for this agent over a set of its matches, as money: its own side of each. */
+const netFor = (agentId: string) =>
+  sql<number>`coalesce(sum(case when ${matches.agentA} = ${agentId} then ${matches.netA} else ${matches.netB} end), 0)::int`;
+
+/**
+ * Everything the owner's autoplay panel needs, computed from the agent as it
+ * stands. An agent that is on is checked live rather than trusted to its
+ * stored reason: a withdrawal may have landed since the last tick, and the
+ * panel should say what is true now, not what was true ten minutes ago.
+ */
+export async function autoplayStatus(
+  db: Db,
+  row: AgentRow,
+  options: { intervalMs?: number; now?: Date } = {},
+): Promise<AutoplayStatus> {
+  const intervalMs = options.intervalMs ?? AUTOPLAY_INTERVAL_MS;
+  const now = options.now ?? new Date();
+  const balance = await balanceOf(db, row.id);
+
+  const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const [today] = await db
+    .select({ n: sql<number>`count(*)::int`, net: netFor(row.id) })
+    .from(matches)
+    .where(
+      and(
+        or(eq(matches.agentA, row.id), eq(matches.agentB, row.id)),
+        eq(matches.exhibition, false),
+        gte(matches.createdAt, midnight),
+      ),
+    );
+
+  let state: AutoplayState;
+  let stop: AutoplayStatus["stop"] = null;
+  if (row.autoplay) {
+    const check = await checkAgent(db, row);
+    if (!check.play) {
+      stop = { reason: check.reason, hold: isHold(check.reason) };
+      state = stop.hold ? "held" : "paused";
+    } else {
+      state = row.autoplayWaitingSince ? "waiting" : "on";
+    }
+  } else if (row.autoplayStoppedReason && !isHold(row.autoplayStoppedReason)) {
+    stop = { reason: row.autoplayStoppedReason, hold: false };
+    state = "paused";
+  } else {
+    state = "off";
+  }
+
+  const words = stop ? describeStop(stop.reason, row, balance) : null;
+  // A countdown only means something while the timer is actually running. A
+  // waiting agent retries on every poll so that it plays the moment an
+  // opponent appears, which is sooner than any countdown would claim.
+  const nextMatchAt =
+    state === "on"
+      ? new Date(Math.max(now.getTime(), (row.autoplayLastMatchAt?.getTime() ?? 0) + intervalMs))
+      : null;
+
+  return {
+    enabled: row.autoplay,
+    floor: row.autoplayFloor,
+    state,
+    message: words?.message ?? null,
+    action: words?.action ?? null,
+    stop,
+    lastMatchAt: row.autoplayLastMatchAt,
+    nextMatchAt,
+    waitingSince: state === "waiting" ? row.autoplayWaitingSince : null,
+    today: { matches: Number(today?.n ?? 0), net: Number(today?.net ?? 0) },
+    intervalMs,
+  };
+}
+
+export type SinceYouLeft = {
+  since: Date;
+  matches: number;
+  net: number;
+  /** The biggest single win in the period, told by its headline. Null if it won nothing. */
+  bestHand: { matchId: string; net: number; headline: string | null; createdAt: Date } | null;
+};
+
+/**
+ * What happened while the owner was away: every staked match since they last
+ * dismissed this, the net, and the best of them.
+ *
+ * Measured from `owner_last_seen_at`, which only moves when the owner says so
+ * (markSeen), not whenever the panel loads. The panel refreshes itself to keep
+ * its countdown current, and a summary that reset on every refresh would be
+ * gone before anyone read it.
+ */
+export async function sinceYouLeft(db: Db, row: AgentRow): Promise<SinceYouLeft | null> {
+  const since = row.ownerLastSeenAt;
+  if (!since) return null;
+  const mine = and(
+    or(eq(matches.agentA, row.id), eq(matches.agentB, row.id)),
+    eq(matches.exhibition, false),
+    gt(matches.createdAt, since),
+  );
+  const [totals] = await db
+    .select({ n: sql<number>`count(*)::int`, net: netFor(row.id) })
+    .from(matches)
+    .where(mine);
+  const n = Number(totals?.n ?? 0);
+  if (n === 0) return { since, matches: 0, net: 0, bestHand: null };
+
+  const myNet = sql<number>`case when ${matches.agentA} = ${row.id} then ${matches.netA} else ${matches.netB} end`;
+  const [best] = await db
+    .select({ id: matches.id, net: myNet, log: matches.log, createdAt: matches.createdAt, a: matches.agentA, b: matches.agentB })
+    .from(matches)
+    .where(and(mine, sql`${myNet} > 0`))
+    .orderBy(desc(myNet), desc(matches.seq))
+    .limit(1);
+
+  let bestHand: SinceYouLeft["bestHand"] = null;
+  if (best) {
+    const [a, b] = await Promise.all([
+      db.select({ name: agents.name }).from(agents).where(eq(agents.id, best.a)).limit(1),
+      db.select({ name: agents.name }).from(agents).where(eq(agents.id, best.b)).limit(1),
+    ]);
+    bestHand = {
+      matchId: best.id,
+      net: Number(best.net),
+      headline: headlineFor(best.log, { A: a[0]?.name ?? "A", B: b[0]?.name ?? "B" }),
+      createdAt: best.createdAt,
+    };
+  }
+  return { since, matches: n, net: Number(totals?.net ?? 0), bestHand };
+}
+
+/** The owner has read the summary: start the next one from now. */
+export async function markSeen(db: Db, agentId: string, now = new Date()): Promise<void> {
+  await db.update(agents).set({ ownerLastSeenAt: now }).where(eq(agents.id, agentId));
 }

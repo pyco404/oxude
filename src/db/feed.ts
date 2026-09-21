@@ -29,6 +29,12 @@ export type FeedItem = {
   beatSeat: Seat | null;
   /** House agents playing each other: nothing was staked or settled. */
   exhibition: boolean;
+  /**
+   * Both sides player-rented, so it counts toward the ladder. A staked match
+   * that is not ranked was played against a house agent: it settled for money
+   * like any other, and earned no ranking.
+   */
+  ranked: boolean;
 };
 
 const agentA = alias(agents, "agent_a_row");
@@ -70,6 +76,7 @@ export async function recentMatches(
       stake: matches.stake,
       log: matches.log,
       exhibition: matches.exhibition,
+      ranked: matches.ranked,
     })
     .from(matches)
     .innerJoin(agentA, eq(agentA.id, matches.agentA))
@@ -96,6 +103,7 @@ export async function recentMatches(
       beat: beat?.kind ?? null,
       beatSeat: beat?.seat ?? null,
       exhibition: r.exhibition,
+      ranked: r.ranked,
     };
   });
 }
