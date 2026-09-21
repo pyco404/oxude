@@ -18,6 +18,7 @@
     "brief-sweep": "tsx scripts/brief-sweep.ts",
     "seed-roster": "tsx scripts/seed-roster.ts",
     "seed-bands": "tsx scripts/seed-bands.ts",
+    "refresh-ratings": "tsx scripts/refresh-ratings.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "serve": "tsx scripts/serve.ts",
