@@ -4,13 +4,16 @@
 
 ## Roadmap
 
-In order. Each step ships to devnet before the next begins; nothing here holds real money until [Open questions](#open-questions) are closed.
+In order. Each step ships to devnet before the next begins, until the last, which is mainnet itself; nothing here holds real money until [Open questions](#open-questions) are closed.
 
 1. **Bands** — done. Money scales, the cover rule, seeded house agents in every band.
 2. **Autoplay** — built. Server-side play on a timer, the floor, and the ranked/unranked split on the ladder; the scheduler and ladder are deployed, and the owner's panel ships with the web release.
-3. **[Characters](#characters)** — next. Identity and presentation for every agent. Placed ahead of rewards and auctions because both of them are about an agent's *standing*, and a standing is easier to care about, compete over and bid on when it belongs to someone with a name and a face.
-4. **Rewards** — the prize pools funded by the creator-fee split ([Creator fees and prizes](#creator-fees-and-prizes)).
-5. **Auctions** — expiry, bidding and transfer ([Expiry and auction](#expiry-and-auction)). What a character carries across a sale is open question 1.
+3. **Weekly seasons** — next. One shared Monday-to-Monday UTC season for every rental ([Decided](#decided)). Placed here because three later pieces depend on it: rewards pay out on final season placement, auctions run at the season boundary, and [the chip rate](#the-chip-rate) can only change between seasons.
+4. **Deposits and paid rent** — the deposit instruction (open question 3) and rent paid at the season's rate ([Renting](#renting)), so an agent is funded by its owner rather than a fixed seed.
+5. **[Characters](#characters)** — identity and presentation for every agent. Placed ahead of rewards and auctions because both of them are about an agent's *standing*, and a standing is easier to care about, compete over and bid on when it belongs to someone with a name and a face.
+6. **Rewards** — the prize pools funded by the creator-fee split ([Creator fees and prizes](#creator-fees-and-prizes)).
+7. **Auctions** — expiry, bidding and transfer ([Expiry and auction](#expiry-and-auction)). What a character carries across a sale is open question 1.
+8. **Security hardening and mainnet** — close the known limitations in [security.md](security.md) (open question 4) and the rest of the [Open questions](#open-questions), then $OXUDE becomes the game's currency.
 
 ## Token
 
