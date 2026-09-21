@@ -66,6 +66,8 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const [firstFreeUsed, setFirstFreeUsed] = useState(false);
   const [band, setBand] = useState<BandName>(DEFAULT_BAND);
   const [presetRatings, setPresetRatings] = useState<Record<string, number>>({});
+  /** The table the last brief preview elicited, so a band change can re-rate it for free. */
+  const [briefTable, setBriefTable] = useState<unknown>(null);
   // undefined while loading, null if the request failed: neither may read as "nobody here".
   const [roster, setRoster] = useState<RosterAgent[] | null | undefined>(undefined);
   // Set once the player moves the slider, so the busiest-band default never overrides a choice.
@@ -150,15 +152,21 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     }
   };
 
-  // Free: every preset rated once against today's roster, so the picker can compare them.
+  // Free: every preset rated against the chosen band's roster, so the picker can
+  // compare them. Re-rated when the band changes: matches never cross bands, so
+  // each band is a different set of opponents.
   useEffect(() => {
     if (presets.length === 0) return;
+    let current = true;
     void Promise.all(
-      presets.map(async (p) => [p.name, (await api.previewTable(null, p.policyTable)).preview.trueRating] as const),
+      presets.map(async (p) => [p.name, (await api.previewTable(null, p.policyTable, band)).preview.trueRating] as const),
     )
-      .then((pairs) => setPresetRatings(Object.fromEntries(pairs)))
-      .catch(() => setPresetRatings({}));
-  }, [presets]);
+      .then((pairs) => current && setPresetRatings(Object.fromEntries(pairs)))
+      .catch(() => current && setPresetRatings({}));
+    return () => {
+      current = false;
+    };
+  }, [presets, band]);
 
   // Who you would meet: your agent's band once you have one, otherwise the one
   // you are about to rent at. Matches only ever happen inside a band.
@@ -194,14 +202,30 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     if (!table) return;
     setPreviewing(true);
     void api
-      .previewTable(null, table)
+      .previewTable(null, table, band)
       .then((r) => setPreview({ value: r.preview, paid: false }))
       .catch(() => setPreview(null))
       .finally(() => setPreviewing(false));
-  }, [tab, chosen, presets]);
+  }, [tab, chosen, presets, band]);
+
+  // A brief already rated keeps its table, so a band change re-rates that table
+  // for free instead of paying for another model call on the same brief.
+  useEffect(() => {
+    if (tab !== "brief" || !briefTable) return;
+    setPreviewing(true);
+    void api
+      .previewTable(null, briefTable, band)
+      .then((r) => setPreview({ value: r.preview, paid: true }))
+      .catch(() => setPreview(null))
+      .finally(() => setPreviewing(false));
+    // Only the band: a new brief is rated by the paid path below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [band]);
 
   // Paid: rating a brief needs a model call, so it waits until typing stops.
   useEffect(() => {
+    // The rated table belongs to the brief as it was; a new brief needs a new one.
+    setBriefTable(null);
     if (tab !== "brief" || !token) return;
     if (briefTimer.current) clearTimeout(briefTimer.current);
     if (!autoPreview || brief.trim().length < 12) return;
@@ -217,8 +241,9 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     setPreviewing(true);
     setError(null);
     try {
-      const r = await api.previewBrief(token, brief.trim());
+      const r = await api.previewBrief(token, brief.trim(), band);
       setPreview({ value: r.preview, paid: true });
+      setBriefTable(r.policyTable);
       if (r.elicitation?.free) setFirstFreeUsed(true);
       else setPaidCalls((n) => n + 1);
     } catch (e) {
@@ -496,7 +521,8 @@ function RentPanel(props: {
             ))}
           </ul>
           <p className="text-[11px] leading-4 text-muted">
-            Figures are exact expected net per match against the roster as it stands today. Free to see.
+            Figures are exact expected net per match against band {props.band}&apos;s roster as it stands today, on band
+            B&apos;s scale. Free to see.
           </p>
           </>
         ) : (

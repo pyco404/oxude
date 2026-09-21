@@ -231,7 +231,7 @@ export const api = {
   previewTable: (token: string | null, policyTable: unknown, band: BandName = DEFAULT_BAND) =>
     request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable, band }) }),
   previewBrief: (token: string | null, brief: string, band: BandName = DEFAULT_BAND) =>
-    request<{ preview: Preview; elicitation: { free: boolean } | null }>("/preview", {
+    request<{ preview: Preview; policyTable: unknown; elicitation: { free: boolean } | null }>("/preview", {
       method: "POST",
       token,
       body: JSON.stringify({ brief, band }),
