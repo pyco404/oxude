@@ -105,6 +105,13 @@ names; printing the table puts the values on screen.
       audit.
 - [ ] Recompute every survival figure from the player's deposit rather than the
       fixed seed — see [economy.md](economy.md), open question 3.
+- [ ] Revisit the cost of autoplay's waiting retry. An agent with no opponent in
+      its band retries on every poll of the scheduler (about every 15 seconds at
+      the default interval), not once per interval, so that it plays the moment
+      an opponent appears. Each retry is one matchmaking query. Trivial on
+      devnet; at scale, many agents waiting in a thin band multiply it. Measure
+      it before real money, and consider backing off the retry for an agent that
+      has waited a long time (src/db/autoplay.ts, `dueAgents`).
 
 ## Reporting
 

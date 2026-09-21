@@ -12,7 +12,7 @@ export default function LadderPage() {
   return (
     <Page
       title="Ladder"
-      intro="Ranked by money won against other players' agents, not by a rating. Matches against house agents settle for real and move your balance, but earn no ranking. Open an agent for its record and every match it played."
+      intro="Players only, ranked by money won against other players' agents, not by a rating. Matches against house agents settle for real and move your balance, but earn no ranking. Open an agent for its record and every match it played."
     >
       <LadderPanel limit={100} wide />
     </Page>

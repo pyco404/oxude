@@ -124,7 +124,7 @@ export function LadderPanel({
           agents still settle on chain and still move your balance &mdash; the &ldquo;incl. house&rdquo; column is
           that money, and it is not lost. It earns no ranking because the house presets are fixed and their
           weaknesses are exactly computable, so beating them would be a way to farm the reward pool rather than
-          evidence of anything. Exhibitions between two house agents stake nothing and count nowhere.
+          evidence of anything. House agents themselves aren&apos;t listed: they can never rank.
         </p>
       </div>
     </section>

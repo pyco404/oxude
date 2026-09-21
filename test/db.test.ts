@@ -216,15 +216,23 @@ describe("ladder", () => {
     const { db: fresh, close: closeFresh } = await connect();
     await migrate(fresh);
     const make = async (name: string, nets: number[], retired = false) => {
+      // Players on both sides: the ladder lists only rented agents, and only
+      // their matches against each other are ranked.
       const [row] = await fresh
         .insert(agents)
-        .values({ name, presetName: "Anchor", policyTable: snapshotPreset("Anchor"), retiredAt: retired ? new Date() : null })
+        .values({
+          name,
+          presetName: "Anchor",
+          policyTable: snapshotPreset("Anchor"),
+          ownerId: someWallet(),
+          retiredAt: retired ? new Date() : null,
+        })
         .returning();
       await fresh.insert(ratings).values({ agentId: row!.id });
       await fresh.insert(ledger).values({ agentId: row!.id, amount: STARTING_BALANCE, reason: "rental-seed" });
       const [opp] = await fresh
         .insert(agents)
-        .values({ name: `${name}-opp`, presetName: "Bully", policyTable: snapshotPreset("Bully") })
+        .values({ name: `${name}-opp`, presetName: "Bully", policyTable: snapshotPreset("Bully"), ownerId: someWallet() })
         .returning();
       await fresh.insert(ratings).values({ agentId: opp!.id });
       await fresh.insert(ledger).values({ agentId: opp!.id, amount: STARTING_BALANCE, reason: "rental-seed" });
@@ -254,7 +262,7 @@ describe("ladder", () => {
     await make("Retired", [100, 100], true);
 
     const board = await leaderboard(fresh);
-    // Every agent appears, opponents and retired ones included; ranking is all-time net won.
+    // Every player appears, opponents and retired ones included; ranking is all-time net won.
     const active = board.filter((r) => !r.retired);
     expect(active.map((r) => r.name).slice(0, 2)).toEqual(["Grinder", "Sprinter"]);
     const retired = board.find((r) => r.name === "Retired");
@@ -422,8 +430,8 @@ describe("ladder tabs", () => {
     const { db: fresh, close: closeFresh } = await connect();
     await migrate(fresh);
     const make = async (name: string, nets: number[]) => {
-      const row = await createAgent(fresh, { name, presetName: "Anchor" });
-      const opp = await createAgent(fresh, { name: `${name}-opp`, presetName: "Bully" });
+      const row = await createAgent(fresh, { name, presetName: "Anchor", ownerId: someWallet() });
+      const opp = await createAgent(fresh, { name: `${name}-opp`, presetName: "Bully", ownerId: someWallet() });
       for (const [i, net] of nets.entries()) {
         await fresh.insert(matches).values({
           agentA: row.id,
@@ -446,7 +454,7 @@ describe("ladder tabs", () => {
     await make("Grinder", Array.from({ length: 40 }, () => 5));
     // Sharp: fewer matches, far better per match.
     await make("Sharp", [30, 30, 30]);
-    const idle = await createAgent(fresh, { name: "Idle", presetName: "Mirage" });
+    const idle = await createAgent(fresh, { name: "Idle", presetName: "Mirage", ownerId: someWallet() });
 
     const winnings = await leaderboard(fresh, 50, "winnings");
     expect(winnings[0]!.name).toBe("Grinder");

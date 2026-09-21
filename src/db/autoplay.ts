@@ -238,7 +238,7 @@ export type AutoplayStatus = {
   enabled: boolean;
   floor: number | null;
   state: AutoplayState;
-  /** The headline, with the numbers: "Paused: balance reached your floor (300)." */
+  /** The headline, with the numbers: "Paused: one match from your floor (300)." */
   message: string | null;
   /** What, if anything, the owner has to do about it. */
   action: string | null;
@@ -268,7 +268,13 @@ function describeStop(
       };
     case "floor":
       return {
-        message: `Paused: balance reached your floor (${row.autoplayFloor ?? 0}).`,
+        // Two cases, so the headline never contradicts the balance beside it:
+        // usually it is one match away, but an owner can set a floor above what
+        // the agent holds, and then it is already past it.
+        message:
+          balance <= (row.autoplayFloor ?? 0)
+            ? `Paused: balance is below your floor (${row.autoplayFloor ?? 0}).`
+            : `Paused: one match from your floor (${row.autoplayFloor ?? 0}).`,
         action: `Balance is ${balance}, and a band ${row.band} match can move ${worst}, so the next match could take it below your floor. You need to switch it back on - lower the floor first if you want it to keep playing.`,
       };
     case "insolvent":

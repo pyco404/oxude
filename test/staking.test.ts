@@ -264,9 +264,10 @@ describe("rating across bands", () => {
 describe("running out", () => {
   it("retires an agent at zero, freezes its record, and marks it on the ladder", async () => {
     const { db: d, close: c } = await fresh();
-    // Enough to cover one band A match and very little more.
-    const doomed = await createAgent(d, { name: "Doomed", presetName: "Mirage", band: "A", startingBalance: 24 });
-    const rival = await createAgent(d, { name: "Rival", presetName: "Bully", band: "A", startingBalance: 900 });
+    // Enough to cover one band A match and very little more. Both are players:
+    // the ladder lists only rented agents, and that is where a retirement shows.
+    const doomed = await createAgent(d, { name: "Doomed", presetName: "Mirage", band: "A", startingBalance: 24, ownerId: someWallet() });
+    const rival = await createAgent(d, { name: "Rival", presetName: "Bully", band: "A", startingBalance: 900, ownerId: someWallet() });
 
     let retiredAfter = 0;
     for (let seed = 1; seed <= 60; seed++) {

@@ -77,6 +77,8 @@ describe("only player-versus-player matches are ranked", () => {
     for (let seed = 20; seed <= 25; seed++) await runMatch(db, honest.id, rival.id, { seed });
 
     const rows = await leaderboard(db, 50, "winnings");
+    // Players only: the house agent the farmer beat is not listed at all.
+    expect(rows.find((r) => r.name === "HouseA")).toBeUndefined();
     const farmerRow = rows.find((r) => r.name === "Farmer")!;
     // Nothing the farmer did against the house reaches the ladder's figure.
     expect(farmerRow.matchesPlayed).toBe(0);

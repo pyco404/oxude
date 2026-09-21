@@ -777,7 +777,7 @@ describe("autoplay over http", () => {
       await api(`/agents/${agent.id}/autoplay`, { method: "POST", owner, body: JSON.stringify({ enabled: true, floor: 5000 }) }),
     );
     expect(tooHigh.autoplay.state).toBe("paused");
-    expect(tooHigh.autoplay.message).toBe("Paused: balance reached your floor (5000).");
+    expect(tooHigh.autoplay.message).toBe("Paused: balance is below your floor (5000).");
   });
 
   it("refuses to let anyone else switch it or mark it seen", async () => {

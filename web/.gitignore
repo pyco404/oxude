@@ -1,0 +1,5 @@
+# Written by `next dev` (Next 16, server/lib/generate-agent-files.js) every time
+# the dev server starts, and re-created if deleted. They are instructions for AI
+# coding agents, not part of the app, so they stay out of the repository.
+AGENTS.md
+CLAUDE.md

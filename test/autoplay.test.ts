@@ -315,7 +315,7 @@ describe("autoplay: what the panel says", () => {
     expect(p.state).toBe("paused");
     expect(p.enabled).toBe(false);
     // The reason with its number, and what the owner has to do.
-    expect(p.message).toBe("Paused: balance reached your floor (300).");
+    expect(p.message).toBe("Paused: one match from your floor (300).");
     expect(p.action).toContain("You need to switch it back on");
     await close();
   });

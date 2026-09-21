@@ -674,10 +674,14 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
     .from(ratings)
     .innerJoin(agents, eq(agents.id, ratings.agentId));
 
+  // Players only. A house agent can never rank - every match it plays is
+  // against a player and so unranked, or against the house and an exhibition -
+  // so listing one would only put a permanent zero between real players.
+  const players = isNotNull(agents.ownerId);
   // "Per match" needs a match to divide by; that is arithmetic, not a skill bar.
   return tab === "winnings"
-    ? rows.orderBy(desc(ratings.rankedNet)).limit(limit)
-    : rows.where(gt(ratings.rankedMatches, 0)).orderBy(desc(netPerMatch)).limit(limit);
+    ? rows.where(players).orderBy(desc(ratings.rankedNet)).limit(limit)
+    : rows.where(and(players, gt(ratings.rankedMatches, 0))).orderBy(desc(netPerMatch)).limit(limit);
 }
 
 /**
