@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import {
   agents,
@@ -233,30 +233,49 @@ describe("settlement", () => {
 });
 
 describe("rating across bands", () => {
-  it("normalises a record onto band B's scale, so bands rank against each other", async () => {
+  it("normalises the ranked record onto band B's scale, so bands rank against each other", async () => {
     const { db: d, close: c } = await fresh();
     // The same preset, the same seed, the same opponent preset - one pair in
-    // band A, one in band C. The money differs by the scale; the record must not.
-    const results: Record<string, { cumulative: number; form: number; raw: number }> = {};
+    // band A, one in band C. Owned on both sides, so the match is ranked. The
+    // money differs by the scale; the ranked record must not.
+    const results: Record<string, { cumulative: number; ranked: number; form: number; raw: number }> = {};
     for (const band of ["A", "C"] as const) {
-      const a = await createAgent(d, { name: `A-${band}`, presetName: "Bully", band });
-      const b = await createAgent(d, { name: `B-${band}`, presetName: "Mirage", band });
+      const a = await createAgent(d, { name: `A-${band}`, presetName: "Bully", band, ownerId: someWallet() });
+      const b = await createAgent(d, { name: `B-${band}`, presetName: "Mirage", band, ownerId: someWallet() });
       const { match } = await runMatch(d, a.id, b.id, { seed: 7 });
       const [row] = await d.select().from(matches).where(eq(matches.id, match.id));
       const [rating] = await d.select().from(ratings).where(eq(ratings.agentId, a.id));
       results[band] = {
         cumulative: rating!.cumulativeNet,
+        ranked: rating!.rankedNet,
         form: rating!.rollingNet50,
         raw: row!.netA,
       };
     }
     // Band C moved three times band A's money on the same match.
     expect(results["C"]!.raw).toBe(results["A"]!.raw * 3);
-    // But the normalised record is identical: that is what the ladder ranks.
-    expect(results["C"]!.cumulative).toBe(results["A"]!.cumulative);
+    // What the ladder ranks is identical, and on band B's scale: a band A net of n reads as 2n.
+    expect(results["C"]!.ranked).toBe(results["A"]!.ranked);
     expect(results["C"]!.form).toBe(results["A"]!.form);
-    // And it is band B's scale: a band A net of n reads as 2n.
-    expect(results["A"]!.cumulative).toBe(results["A"]!.raw * 2);
+    expect(results["A"]!.ranked).toBe(results["A"]!.raw * 2);
+    // But net won is money, and stays the money each band actually moved.
+    expect(results["A"]!.cumulative).toBe(results["A"]!.raw);
+    expect(results["C"]!.cumulative).toBe(results["C"]!.raw);
+    await c();
+  });
+
+  it("keeps net won equal to the ledger's settlements in a band that is not B", async () => {
+    const { db: d, close: c } = await fresh();
+    const me = await createAgent(d, { name: "Banded", presetName: "Mirage", band: "A", ownerId: someWallet() });
+    const opp = await createAgent(d, { name: "Opp", presetName: "Anchor", band: "A" });
+    for (let seed = 1; seed <= 12; seed++) await runMatch(d, me.id, opp.id, { seed });
+    const [rating] = await d.select().from(ratings).where(eq(ratings.agentId, me.id));
+    const [settled] = await d
+      .select({ total: sql<number>`coalesce(sum(${ledger.amount}), 0)::int` })
+      .from(ledger)
+      .where(and(eq(ledger.agentId, me.id), eq(ledger.reason, "match-settlement")));
+    expect(rating!.matchesPlayed).toBe(12);
+    expect(rating!.cumulativeNet).toBe(Number(settled!.total));
     await c();
   });
 });

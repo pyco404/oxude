@@ -352,11 +352,16 @@ export const ratings = pgTable("ratings", {
    * were never ranked.
    */
   matchesPlayed: integer("matches_played").notNull().default(0),
-  /** All-time net won across every staked match. A fact, not an estimate. */
+  /**
+   * All-time net won across every staked match, in real money: the chips the
+   * agent actually won or lost, so it reconciles with the ledger. Never
+   * normalised across bands - the ranked figures below are.
+   */
   cumulativeNet: bigint("cumulative_net", { mode: "number" }).notNull().default(0),
   /**
-   * The same two figures over player-versus-player matches only. **These are
-   * what the ladder ranks on**, and what a minimum match count counts. House
+   * The same two figures over player-versus-player matches only, with the
+   * net normalised onto band B's scale. **These are what the ladder ranks
+   * on**, and what a minimum match count counts. House
    * matches are excluded because a fixed preset's weaknesses are exactly
    * computable, so beating them is not evidence of anything a prize should pay
    * for.

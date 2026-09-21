@@ -353,8 +353,9 @@ export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Reco
   const raw = sql<number>`case when ${matches.agentA} = ${agentId} then ${matches.netA} else ${matches.netB} end`;
   // Normalised onto band B's scale by dividing out the band's factor, so an
   // agent's record means the same thing whichever band it earned it in: a band
-  // C win of 30 is a band B win of 20, and a band A win of 10 is too. The money
-  // an agent actually holds is never normalised - only the record is.
+  // C win of 30 is a band B win of 20, and a band A win of 10 is too. Only what
+  // the ladder compares is normalised (the ranked figures and recent form);
+  // cumulativeNet is the money the agent actually won, so it sums `raw`.
   // The factors are inlined rather than bound: a bare parameter in a CASE result
   // has no type Postgres can infer. They are this module's own constants.
   const factor = sql<number>`(case ${sql.join(
@@ -369,12 +370,12 @@ export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Reco
   // matches share a timestamp.
   const recent = await db.select({ net: mine }).from(matches).where(played).orderBy(desc(matches.seq)).limit(RATING_WINDOW);
   const totals = await db
-    .select({ n: sql<number>`count(*)::int`, total: sql<number>`coalesce(sum(${mine}), 0)::int` })
+    .select({ n: sql<number>`count(*)::int`, total: sql<number>`coalesce(sum(${raw}), 0)::int` })
     .from(matches)
     .where(played);
 
-  // The ladder's figures: the same arithmetic over player-versus-player
-  // matches only. Kept apart rather than replacing the totals above, because
+  // The ladder's figures: player-versus-player matches only, normalised so
+  // agents in different bands rank against each other. Kept apart rather than replacing the totals above, because
   // an owner who beat the house still earned that money and should be able to
   // see it - what they did not earn is a place on the ladder for it.
   const rankedOnly = and(played, eq(matches.ranked, true));
