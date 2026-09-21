@@ -131,6 +131,10 @@ export type TickResult = {
   stopped: { agentId: string; reason: AutoplayStop }[];
 };
 
+/** How an agent reads in a log line: its name and enough of its id to find it. */
+const who = (row: AgentRow) => `${row.name} (${row.id.slice(0, 8)})`;
+const minutes = (ms: number) => `${Math.round(ms / 60_000)}m`;
+
 /**
  * One pass: every agent that is due gets one match, or one reason why not.
  *
@@ -145,10 +149,19 @@ export async function tick(
     now?: Date;
     onMatch?: ((matchId: string) => void) | undefined;
     onError?: ((e: unknown) => void) | undefined;
+    /**
+     * One line per thing worth knowing afterwards: a wait starting or ending,
+     * a stop, and a summary of any tick that played or stopped something. A
+     * waiting agent retries on every poll, so each wait is logged once, when
+     * it starts - not on every retry.
+     */
+    onLog?: ((line: string) => void) | undefined;
   } = {},
 ): Promise<TickResult> {
   const intervalMs = options.intervalMs ?? AUTOPLAY_INTERVAL_MS;
   const result: TickResult = { played: [], waiting: [], stopped: [] };
+  const log = options.onLog ?? (() => {});
+  const plays: string[] = [];
 
   for (const row of await dueAgents(db, intervalMs, options.now)) {
     try {
@@ -156,12 +169,18 @@ export async function tick(
       if (!check.play) {
         await stopAgent(db, row.id, check.reason);
         result.stopped.push({ agentId: row.id, reason: check.reason });
+        log(`autoplay: ${who(row)} ${isHold(check.reason) ? "held" : "paused"} (${check.reason}): ${check.detail}`);
         continue;
       }
       const pick = await pickOpponent(db, row.id, { spread: true });
-      const { match } = await runMatch(db, row.id, pick.opponentId);
-      await clearStop(db, row.id, new Date());
+      const { match, settled } = await runMatch(db, row.id, pick.opponentId);
+      const playedAt = new Date();
+      await clearStop(db, row.id, playedAt);
+      if (row.autoplayWaitingSince) {
+        log(`autoplay: ${who(row)} stopped waiting after ${minutes(playedAt.getTime() - row.autoplayWaitingSince.getTime())}`);
+      }
       result.played.push(row.id);
+      plays.push(`${who(row)} ${settled.A >= 0 ? "+" : ""}${settled.A} in band ${match.band}`);
       options.onMatch?.(match.id);
     } catch (error) {
       // No opponent, or a vault with no room left in its window. Neither is a
@@ -172,11 +191,18 @@ export async function tick(
           .update(agents)
           .set({ autoplayWaitingSince: row.autoplayWaitingSince ?? new Date() })
           .where(eq(agents.id, row.id));
+        if (!row.autoplayWaitingSince) log(`autoplay: ${who(row)} waiting: ${error.message}`);
         result.waiting.push(row.id);
         continue;
       }
       options.onError?.(error);
     }
+  }
+  if (result.played.length || result.stopped.length) {
+    log(
+      `autoplay: tick played ${result.played.length}, stopped ${result.stopped.length}, waiting ${result.waiting.length}` +
+        (plays.length ? ` - ${plays.join("; ")}` : ""),
+    );
   }
   return result;
 }
@@ -194,6 +220,7 @@ export function startAutoplay(
     pollMs?: number;
     onMatch?: (matchId: string) => void;
     onError?: (error: unknown) => void;
+    onLog?: (line: string) => void;
   } = {},
 ): { stop: () => void } {
   const intervalMs = options.intervalMs ?? AUTOPLAY_INTERVAL_MS;
@@ -208,7 +235,7 @@ export function startAutoplay(
   };
   const once = async () => {
     try {
-      await tick(db, { intervalMs, onMatch: options.onMatch, onError: options.onError });
+      await tick(db, { intervalMs, onMatch: options.onMatch, onError: options.onError, onLog: options.onLog });
     } catch (error) {
       options.onError?.(error);
     }

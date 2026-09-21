@@ -178,6 +178,42 @@ describe("autoplay: the tick", () => {
     await close();
   });
 
+  it("logs a wait once when it starts, with the reason, and how long it lasted when it ends", async () => {
+    const { db, close } = await fresh();
+    const row = await playerOn(db, { band: "C" });
+    const lines: string[] = [];
+    const onLog = (line: string) => lines.push(line);
+    await tick(db, { intervalMs: 0, onLog });
+    await tick(db, { intervalMs: 0, onLog });
+    // Two retries, one line: a wait is logged when it starts, not on every poll.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(row.id.slice(0, 8));
+    expect(lines[0]).toMatch(/waiting: no opponent in the C band/);
+    // Waiting alone plays and stops nothing, so there is no tick summary.
+    expect(lines.some((l) => l.includes("tick played"))).toBe(false);
+
+    lines.length = 0;
+    await house(db, 4, "C");
+    await tick(db, { intervalMs: 0, onLog });
+    expect(lines[0]).toMatch(/stopped waiting after \d+m/);
+    expect(lines[1]).toMatch(/^autoplay: tick played 1, stopped 0, waiting 0 - .* in band C$/);
+    await close();
+  });
+
+  it("logs a stop with its kind and detail, and summarises the tick", async () => {
+    const { db, close } = await fresh();
+    await house(db, 4);
+    const row = await playerOn(db);
+    await db.update(agents).set({ autoplayFloor: 5_000 }).where(eq(agents.id, row.id));
+    const lines: string[] = [];
+    await tick(db, { intervalMs: 0, onLog: (line) => lines.push(line) });
+    expect(lines).toEqual([
+      expect.stringMatching(/paused \(floor\): balance \d+ is within one match of your floor \(5000\)$/),
+      "autoplay: tick played 0, stopped 1, waiting 0",
+    ]);
+    await close();
+  });
+
   it("stops a due agent that cannot play, and records which kind of stop", async () => {
     const { db, close } = await fresh();
     await house(db, 4);

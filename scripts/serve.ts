@@ -62,6 +62,7 @@ if (autoplayMs > 0) {
   startAutoplay(db, {
     intervalMs: autoplayMs,
     onError: (error) => console.error(`autoplay: ${String(error).slice(0, 160)}`),
+    onLog: (line) => console.log(line),
   });
   const every = autoplayMs < 60_000 ? `${Math.round(autoplayMs / 1000)} seconds` : `${autoplayMs / 60_000} minutes`;
   console.log(`Autoplay: one match per agent every ${every}`);
