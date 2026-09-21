@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { connect, migrate } from "../src/db/client.js";
-import { agents, chainOps, matches, withdrawals, bandByName, outflowBudget } from "../src/db/schema.js";
+import { agentEvents, agents, chainOps, matches, withdrawals, bandByName, outflowBudget } from "../src/db/schema.js";
 import { record } from "../src/db/ledger.js";
-import { createAgent, hasOutflowRoom, pickOpponent } from "../src/db/runner.js";
-import { autoplayStatus, checkAgent, dueAgents, isHold, markSeen, sinceYouLeft, stopAgent, tick } from "../src/db/autoplay.js";
+import { createAgent, hasOutflowRoom, pickOpponent, setBand } from "../src/db/runner.js";
+import { autoplayStatus, checkAgent, dueAgents, isHold, markSeen, setAutoplay, sinceYouLeft, stopAgent, tick } from "../src/db/autoplay.js";
 import { someWallet } from "./helpers.js";
 
 const fresh = async () => {
@@ -438,6 +438,49 @@ describe("since you left", () => {
     await markSeen(db, row.id);
     const summary = await sinceYouLeft(db, (await db.select().from(agents).where(eq(agents.id, row.id)))[0]!);
     expect(summary!.matches).toBe(0);
+    await close();
+  });
+});
+
+describe("agent events", () => {
+  const eventsOf = async (db: Awaited<ReturnType<typeof fresh>>["db"], id: string) =>
+    (await db.select().from(agentEvents).where(eq(agentEvents.agentId, id)).orderBy(agentEvents.createdAt)).map(
+      (e) => `${e.source} ${e.kind} ${e.detail}`,
+    );
+  const reload = async (db: Awaited<ReturnType<typeof fresh>>["db"], id: string) =>
+    (await db.select().from(agents).where(eq(agents.id, id)))[0]!;
+
+  it("records the owner switching autoplay on and off, and a floor change, but not a save that changed nothing", async () => {
+    const { db, close } = await fresh();
+    const row = await createAgent(db, { name: "Owned", presetName: "Anchor", ownerId: someWallet() });
+    await setAutoplay(db, await reload(db, row.id), true, 80);
+    await setAutoplay(db, await reload(db, row.id), true, 80);
+    await setAutoplay(db, await reload(db, row.id), true, 120);
+    await setAutoplay(db, await reload(db, row.id), false, 120);
+    expect(await eventsOf(db, row.id)).toEqual([
+      "owner autoplay-on floor 80",
+      "owner floor floor 120",
+      "owner autoplay-off floor 120",
+    ]);
+    await close();
+  });
+
+  it("records a pause as autoplay switching off on its own, and a hold not at all", async () => {
+    const { db, close } = await fresh();
+    const row = await playerOn(db);
+    await stopAgent(db, row.id, "withdrawal");
+    await stopAgent(db, row.id, "floor");
+    expect(await eventsOf(db, row.id)).toEqual(["autoplay autoplay-off paused: floor"]);
+    await close();
+  });
+
+  it("records a band change with where it moved from, and not a move to the band it is already in", async () => {
+    const { db, close } = await fresh();
+    const owner = someWallet();
+    const row = await createAgent(db, { name: "Mover", presetName: "Anchor", ownerId: owner });
+    await setBand(db, row.id, owner, "A");
+    await setBand(db, row.id, owner, "A");
+    expect(await eventsOf(db, row.id)).toEqual(["owner band B -> A"]);
     await close();
   });
 });

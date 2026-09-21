@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { pickOpponent, runMatch } from "./runner.js";
 import { balanceOf, StakeError } from "./ledger.js";
+import { recordEvent } from "./events.js";
 import { headlineFor } from "../transcript.js";
 import {
   agents,
@@ -89,6 +90,31 @@ export async function stopAgent(db: Db, agentId: string, reason: AutoplayStop): 
       autoplayStoppedAt: new Date(),
     })
     .where(eq(agents.id, agentId));
+  // A pause switches autoplay off, so it is recorded like the owner doing it.
+  // A hold leaves it on and clears itself, so there is nothing to record.
+  if (!isHold(reason)) await recordEvent(db, agentId, "autoplay-off", "autoplay", `paused: ${reason}`);
+}
+
+/**
+ * The owner switches autoplay on or off, or moves the floor. Recorded only
+ * where something changed, so the record reads as what the owner did rather
+ * than how often the panel was saved.
+ */
+export async function setAutoplay(db: Db, row: AgentRow, enabled: boolean, floor: number | null): Promise<void> {
+  await db
+    .update(agents)
+    .set({
+      autoplay: enabled,
+      autoplayFloor: floor,
+      ...(enabled ? { autoplayStoppedReason: null, autoplayStoppedAt: null } : {}),
+    })
+    .where(eq(agents.id, row.id));
+  const floorText = floor === null ? "no floor" : `floor ${floor}`;
+  if (enabled !== row.autoplay) {
+    await recordEvent(db, row.id, enabled ? "autoplay-on" : "autoplay-off", "owner", floorText);
+  } else if (floor !== row.autoplayFloor) {
+    await recordEvent(db, row.id, "floor", "owner", floorText);
+  }
 }
 
 /** Clears a stop once the agent has played again. */

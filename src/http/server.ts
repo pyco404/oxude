@@ -22,7 +22,7 @@ import {
   type LadderTab,
   bandCounts,
 } from "../db/runner.js";
-import { autoplayStatus, markSeen, sinceYouLeft } from "../db/autoplay.js";
+import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
 import {
@@ -433,14 +433,7 @@ export function createApp(options: AppOptions): Server {
       else throw new HttpError(400, "floor must be a whole number of chips, or null");
     }
 
-    await db
-      .update(agents)
-      .set({
-        autoplay: enabled,
-        autoplayFloor: floor,
-        ...(enabled ? { autoplayStoppedReason: null, autoplayStoppedAt: null } : {}),
-      })
-      .where(eq(agents.id, id));
+    await setAutoplay(db, row, enabled, floor);
 
     // Say now whether it can actually play, so turning it on does not look
     // like it worked when the balance says otherwise.

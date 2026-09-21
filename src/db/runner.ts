@@ -36,6 +36,7 @@ import {
   type RulesConfig,
 } from "./schema.js";
 import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, StakeError } from "./ledger.js";
+import { recordEvent } from "./events.js";
 
 export const DEFAULT_RULES: RulesConfig = {
   turnOrder: OXUDE_RULES.turnOrder,
@@ -812,6 +813,7 @@ export async function setBand(db: Db, agentId: string, ownerId: string | null, b
     );
   }
   await db.update(agents).set({ band }).where(eq(agents.id, agentId));
+  if (row.band !== band) await recordEvent(db, agentId, "band", "owner", `${row.band} -> ${band}`);
   return band;
 }
 
