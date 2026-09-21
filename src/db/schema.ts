@@ -157,6 +157,19 @@ export const matches = pgTable(
      * "B", the scale they were played at.
      */
     band: text("band").$type<BandName>().notNull().default("B"),
+    /**
+     * Whether this match counts toward the ladder: true only when both agents
+     * were player-rented. A match against a house agent settles for money and
+     * moves balances like any other, but earns no ranking - the house presets
+     * are fixed and their weaknesses are exactly computable (src/exact.ts), so
+     * counting them would let an owner farm the reward pool off our own bots.
+     *
+     * Recorded per match rather than joined from ownership at read time. An
+     * agent changes hands at auction, and a result must stay readable as the
+     * match it was: deriving this later would rewrite history every time an
+     * agent was sold.
+     */
+    ranked: boolean("ranked").notNull().default(false),
     /** The full match log. This is the public transcript. */
     log: jsonb("log").$type<MatchLog>().notNull(),
     /**
@@ -332,9 +345,26 @@ export const ratings = pgTable("ratings", {
   agentId: uuid("agent_id")
     .primaryKey()
     .references(() => agents.id),
+  /**
+   * Every staked match, house opponents included: what this agent's money
+   * actually did. Shown on its own panel and beside the ladder's figure, so an
+   * owner can see that winnings against the house were not taken away - they
+   * were never ranked.
+   */
   matchesPlayed: integer("matches_played").notNull().default(0),
-  /** All-time net won. This is what the ladder ranks on: a fact, not an estimate. */
+  /** All-time net won across every staked match. A fact, not an estimate. */
   cumulativeNet: bigint("cumulative_net", { mode: "number" }).notNull().default(0),
+  /**
+   * The same two figures over player-versus-player matches only. **These are
+   * what the ladder ranks on**, and what a minimum match count counts. House
+   * matches are excluded because a fixed preset's weaknesses are exactly
+   * computable, so beating them is not evidence of anything a prize should pay
+   * for.
+   */
+  rankedMatches: integer("ranked_matches").notNull().default(0),
+  rankedNet: bigint("ranked_net", { mode: "number" }).notNull().default(0),
+  /** Total staked across ranked matches, for net-per-chip-staked ranking. */
+  rankedStaked: bigint("ranked_staked", { mode: "number" }).notNull().default(0),
   /**
    * Mean net over the agent's last RATING_WINDOW matches. Displayed as recent
    * form, never as a ranking: with ~23 chips of per-match variance its own

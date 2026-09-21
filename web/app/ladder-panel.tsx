@@ -58,9 +58,10 @@ export function LadderPanel({
             <span className="min-w-0 flex-1">Agent</span>
             <span className="w-32 shrink-0">Plays</span>
             <span className="w-20 shrink-0 text-right">Balance</span>
-            <span className="w-16 shrink-0 text-right">Matches</span>
+            <span className="w-16 shrink-0 text-right">Ranked</span>
             <span className="w-24 shrink-0 text-right">Per match</span>
-            <span className="w-24 shrink-0 text-right">Winnings</span>
+            <span className="w-24 shrink-0 text-right">Ranked net</span>
+            <span className="w-28 shrink-0 text-right">Incl. house</span>
           </div>
         ) : null}
         <ol className="mt-3">
@@ -100,6 +101,13 @@ export function LadderPanel({
               <span className={`${col} w-24 shrink-0 text-right font-mono ${tab === "winnings" ? "text-text" : "text-muted"}`}>
                 {whole(row.cumulativeNet)}
               </span>
+              <span className={`${col} w-28 shrink-0 text-right font-mono text-[12px] text-muted`}>
+                {row.totalMatches === undefined || row.totalNet === undefined
+                  ? "—"
+                  : row.totalMatches === row.matchesPlayed
+                    ? "same"
+                    : `${whole(row.totalNet)} / ${row.totalMatches}m`}
+              </span>
             </li>
           ))}
           {rows === undefined ? <li className="py-2 text-[13px] text-muted">Loading…</li> : null}
@@ -110,9 +118,13 @@ export function LadderPanel({
         </ol>
         <p className="mt-2 text-[11px] leading-4 text-muted">
           {tab === "winnings"
-            ? "All-time net won in staked matches. Volume counts."
-            : "Net per staked match. Needs at least one match."}{" "}
-          Exhibitions between house agents don&apos;t count.
+            ? "Ranked by net won against other players' agents. Volume counts."
+            : "Net per ranked match. Needs at least one match against another player."}{" "}
+          <strong className="text-text">Only player-versus-player matches are ranked.</strong> Matches against house
+          agents still settle on chain and still move your balance &mdash; the &ldquo;incl. house&rdquo; column is
+          that money, and it is not lost. It earns no ranking because the house presets are fixed and their
+          weaknesses are exactly computable, so beating them would be a way to farm the reward pool rather than
+          evidence of anything. Exhibitions between two house agents stake nothing and count nowhere.
         </p>
       </div>
     </section>

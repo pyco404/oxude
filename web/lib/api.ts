@@ -110,9 +110,14 @@ export type LadderRow = {
   presetName: string | null;
   /** The agent's own emoji. */
   mark?: string | null;
+  /** Player-versus-player only: what the ladder ranks on. */
   matchesPlayed: number;
   cumulativeNet: number;
   netPerMatch?: number;
+  rankedStaked?: number;
+  /** Every staked match, house opponents included. Shown, never ranked. */
+  totalMatches?: number;
+  totalNet?: number;
   recentForm: number;
   balance: number;
   retired: boolean;

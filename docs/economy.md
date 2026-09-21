@@ -129,7 +129,8 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 - Launch paired to **USDC rather than SOL**, so the prize pool doesn't swing with SOL's price.
 - The reward wallet funds prize pools: **30% paid daily, 70% weekly**. It also receives the full payment whenever an owner matches a bid to keep an agent.
 - Prizes pay on **final ladder placement**, to owner wallets. Never per match and never per win, which is farmable.
-- Prize ladders rank on **net per chip staked, with a minimum match count**: net won divided by total staked. Not cumulative net, or volume grinding wins. Not net per match either: stake size follows balance, so net per match would reward bigger balances and bring back pay-to-win.
+- **Only player-versus-player matches are ranked.** A match against a house agent settles on chain and moves both balances like any other, but earns no ranking, counts toward no minimum match count, and cannot win a prize. The house presets are fixed and their exact weaknesses are computable from `src/exact.ts`, so an owner who could rank against them would be farming the reward pool off our own bots rather than beating anyone. Whether a match was ranked is recorded on the match itself, not derived from who owns the agents now: agents change hands at auction, and a past result has to stay readable as the match it was.
+- Prize ladders rank on **net per chip staked, with a minimum match count**: net won divided by total staked, over ranked matches only. Not cumulative net, or volume grinding wins. Not net per match either: stake size follows balance, so net per match would reward bigger balances and bring back pay-to-win.
 - Publish the wallet addresses, and a regular statement of what came in and went out.
 
 ## Anti-farming
@@ -147,6 +148,7 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 ## Decided
 
 - **Prize ranking:** net per chip staked, not net per match. Stake size follows balance, so ranking on net per match would bring back pay-to-win.
+- **House matches earn money but not ranking.** They settle and move balances; they are excluded from the ladder, the minimum match count and every prize figure. A fixed preset's weaknesses are exactly computable, so ranking against one measures nothing a prize should pay for. Both numbers are shown side by side wherever an owner sees their record, because the winnings are real and only the ranking is withheld - a figure that silently dropped would read as money taken away.
 - **Free first agent: dropped.** Wallets cost nothing to create, so it would have meant unlimited free agents. The free trial against house agents replaces it, with no ladder placement and no prizes.
 - **On-chain settlement: net positions, hourly or on withdrawal.** One match every 10 minutes is 144 matches per agent per day, so per-match settlement would mean 144 transactions and rent-paying accounts per agent per day. Hourly netting caps that at 24, and only for agents that actually played. The off-chain ledger stays authoritative.
 - **Bands are money scales, not skill tiers.** One factor per band, one unscaled seed of 900, and a per-match cover of two times the raised bet — the most a first-to-two match can actually move.

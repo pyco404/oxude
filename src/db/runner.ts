@@ -267,6 +267,9 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
         netB: -settledA,
         stake,
         band,
+        // Both sides player-rented, decided here and stored, so a later sale
+        // cannot change what this match counted for.
+        ranked: rowA.ownerId !== null && rowB.ownerId !== null,
         log,
       })
       .returning();
@@ -370,11 +373,30 @@ export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Reco
     .from(matches)
     .where(played);
 
+  // The ladder's figures: the same arithmetic over player-versus-player
+  // matches only. Kept apart rather than replacing the totals above, because
+  // an owner who beat the house still earned that money and should be able to
+  // see it - what they did not earn is a place on the ladder for it.
+  const rankedOnly = and(played, eq(matches.ranked, true));
+  const ranked = await db
+    .select({
+      n: sql<number>`count(*)::int`,
+      total: sql<number>`coalesce(sum(${mine}), 0)::int`,
+      // Stake is the money at risk, not normalised: it is what the ladder's
+      // net-per-chip-staked figure divides by, and both sides risked the same.
+      staked: sql<number>`coalesce(sum(${matches.stake}), 0)::int`,
+    })
+    .from(matches)
+    .where(rankedOnly);
+
   const window = recent.map((r) => Number(r.net));
   const rolling = window.length ? window.reduce((a, b) => a + b, 0) / window.length : 0;
   const set = {
     matchesPlayed: totals[0]?.n ?? 0,
     cumulativeNet: Number(totals[0]?.total ?? 0),
+    rankedMatches: ranked[0]?.n ?? 0,
+    rankedNet: Number(ranked[0]?.total ?? 0),
+    rankedStaked: Number(ranked[0]?.staked ?? 0),
     rollingNet50: rolling,
     updatedAt: new Date(),
   };
@@ -532,6 +554,7 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
     .select({
       id: agents.id,
       ownerId: agents.ownerId,
+      presetName: agents.presetName,
       rating: agents.trueRating,
       balance: solvent.balance,
       spent: committedOutflow(agents.id),
@@ -581,19 +604,16 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   }
 
   // Fall back to a preset agent in the same band, so a thin queue does not
-  // silently put a cautious agent in with the boldest on the roster. The owner
-  // check matters here as much as above: without it a wallet's own agents could
-  // meet each other whenever the band was thin.
-  const notMine = me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId));
-  const [preset] = await db
-    .select({ id: agents.id })
-    .from(agents)
-    .innerJoin(solvent, eq(solvent.agentId, agents.id))
-    .where(
-      and(ne(agents.id, agentId), isNull(agents.retiredAt), inBand, notMine, sql`${agents.presetName} is not null`),
-    )
-    .orderBy(sql`random()`)
-    .limit(1);
+  // silently put a cautious agent in with the boldest on the roster.
+  //
+  // Drawn from `candidates`, not from a query of its own. An earlier version
+  // ran a separate, looser query here that checked neither a pending
+  // withdrawal nor the vault's window - so the one path meant to guarantee an
+  // opponent was the one path that could pair into a settlement the chain
+  // would refuse. Everything in `candidates` has already passed every check
+  // above, including the owner check, so reusing it cannot reintroduce any.
+  const presets = candidates.filter((c) => c.presetName !== null);
+  const preset = presets.length ? presets[randomInt(presets.length)] : undefined;
   if (!preset) {
     // Nobody here. Point at a band that does have opponents rather than leaving
     // the owner to guess which one to try.
@@ -626,8 +646,11 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
 export type LadderTab = "winnings" | "per-match";
 
 export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings") {
-  const netPerMatch = sql<number>`case when ${ratings.matchesPlayed} = 0 then 0
-    else ${ratings.cumulativeNet}::double precision / ${ratings.matchesPlayed} end`;
+  // Ranked figures only. Every number the ladder sorts by is player-versus-
+  // player; the totals ride along beside them so an owner can see that their
+  // winnings against the house are still there and simply do not count.
+  const netPerMatch = sql<number>`case when ${ratings.rankedMatches} = 0 then 0
+    else ${ratings.rankedNet}::double precision / ${ratings.rankedMatches} end`;
   const balance = sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
   const rows = db
     .select({
@@ -635,9 +658,14 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
       name: agents.name,
       presetName: agents.presetName,
       mark: agents.mark,
-      matchesPlayed: ratings.matchesPlayed,
-      cumulativeNet: ratings.cumulativeNet,
+      // What the ladder ranks on.
+      matchesPlayed: ratings.rankedMatches,
+      cumulativeNet: ratings.rankedNet,
       netPerMatch,
+      rankedStaked: ratings.rankedStaked,
+      // Every staked match, house included: shown, never ranked.
+      totalMatches: ratings.matchesPlayed,
+      totalNet: ratings.cumulativeNet,
       recentForm: ratings.rollingNet50,
       balance,
       // Retired agents stay on the ladder, marked: a record is history, not hidden.
@@ -648,8 +676,8 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
 
   // "Per match" needs a match to divide by; that is arithmetic, not a skill bar.
   return tab === "winnings"
-    ? rows.orderBy(desc(ratings.cumulativeNet)).limit(limit)
-    : rows.where(gt(ratings.matchesPlayed, 0)).orderBy(desc(netPerMatch)).limit(limit);
+    ? rows.orderBy(desc(ratings.rankedNet)).limit(limit)
+    : rows.where(gt(ratings.rankedMatches, 0)).orderBy(desc(netPerMatch)).limit(limit);
 }
 
 /**

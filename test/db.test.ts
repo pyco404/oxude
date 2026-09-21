@@ -237,6 +237,10 @@ describe("ladder", () => {
           winner: net > 0 ? "A" : "B",
           netA: net,
           netB: -net,
+          // Ranked: these stand in for player-versus-player matches, which are
+          // the only ones the ladder orders. Unranked matches are covered in
+          // test/ranked.test.ts.
+          ranked: true,
           log: { rounds: [] } as never,
         });
       }
@@ -429,6 +433,8 @@ describe("ladder tabs", () => {
           winner: net > 0 ? "A" : "B",
           netA: net,
           netB: -net,
+          // As above: the ladder only orders player-versus-player matches.
+          ranked: true,
           log: { rounds: [] } as never,
         });
       }

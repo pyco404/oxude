@@ -241,6 +241,22 @@ describe("autoplay: the popular-opponent budget", () => {
     await close();
   });
 
+  it("the preset fallback respects the window too, rather than pairing into a refusal", async () => {
+    const { db, close } = await fresh();
+    const me = await createAgent(db, { name: "Me", presetName: "Anchor", ownerId: someWallet() });
+    // Two presets - too few for the closest-rating path, so the fallback decides.
+    const spent = await createAgent(db, { name: "SpentPreset", presetName: "Hammer" });
+    const room = await createAgent(db, { name: "RoomPreset", presetName: "Mirage" });
+    await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900) });
+    // Many draws, because the fallback chooses at random: a spent preset must never come up.
+    for (let i = 0; i < 20; i++) {
+      const pick = await pickOpponent(db, me.id);
+      expect(pick.path).toBe("preset-fallback");
+      expect(pick.opponentId).toBe(room.id);
+    }
+    await close();
+  });
+
   it("refuses to play an agent whose own vault has no room left", async () => {
     const { db, close } = await fresh();
     await house(db, 4);

@@ -624,7 +624,14 @@ describe("match feed and agent pages", () => {
     expect(mine.a.name).toBe("Feeder");
     // Playstyle rides along for display: null for a brief, the preset's name otherwise.
     expect(mine.a.presetName).toBeNull();
-    expect(["Anchor", "Hammer", "Mirage", "Bully"]).toContain(mine.b.presetName);
+    // Checked against the opponent actually chosen, not assumed to be a preset.
+    // Matchmaking leaves out any agent whose vault has paid out its window, and
+    // this whole file runs inside one window against a shared roster, so by now
+    // the closest-rated eligible opponent can as easily be another player's
+    // brief as a preset. What matters here is that the feed reports whichever
+    // it was, correctly.
+    const [opponent] = await db.select({ presetName: agents.presetName }).from(agents).where(eq(agents.id, mine.b.id));
+    expect(mine.b.presetName).toBe(opponent!.presetName);
     // Every agent has its own mark.
     expect(typeof mine.a.mark).toBe("string");
     expect(mine.a.mark).not.toBe(mine.b.mark);
