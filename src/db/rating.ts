@@ -1,10 +1,10 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { policyAgent, type Policy } from "../agents/policy.js";
 import { seatAveragedNet } from "../exact.js";
 import { OXUDE_RULES } from "../round.js";
 import type { Agent } from "../types.js";
 import type { Db } from "./client.js";
-import { agents, bandByName, STAKE_BANDS, type BandName } from "./schema.js";
+import { agents, bandByName, matches, STAKE_BANDS, type BandName } from "./schema.js";
 
 /**
  * Exact ratings. A decision table's expected net against the roster is
@@ -20,6 +20,8 @@ export type RosterProfile = {
   /** Changes whenever the mix changes; recompute ratings when it does. */
   fingerprint: string;
   agentCount: number;
+  /** Who was counted, so an agent left out as idle is not also subtracted from it. */
+  members: Set<string>;
 };
 
 const hash = (text: string) => {
@@ -32,27 +34,52 @@ const hash = (text: string) => {
 };
 
 /**
+ * How long a player's agent may go without a staked match and still count as
+ * part of the roster a rating is measured against.
+ */
+export const ROSTER_ACTIVE_DAYS = 7;
+
+/**
  * Groups one band's active roster by distinct table, so a rating costs one
  * evaluation per distinct opponent. One band only: an agent can only ever be
  * matched inside its own band, so agents in the others are not opponents and
  * rating against them describes a roster nobody plays.
+ *
+ * "Active" also leaves out player agents that have sat idle for
+ * ROSTER_ACTIVE_DAYS - rented, never switched on, never played - because a
+ * pile of dormant rentals of one preset would otherwise decide every figure
+ * on the rent screen. They stay matchable; this is only about what a rating
+ * is measured against. House agents always count: they are always in play.
  */
-export async function rosterProfile(db: Db, band: BandName): Promise<RosterProfile> {
+export async function rosterProfile(db: Db, band: BandName, now = new Date()): Promise<RosterProfile> {
+  const since = new Date(now.getTime() - ROSTER_ACTIVE_DAYS * 24 * 60 * 60 * 1000);
+  const active = or(
+    isNull(agents.ownerId),
+    gt(agents.createdAt, since),
+    sql`exists (select 1 from ${matches} where (${matches.agentA} = ${agents.id} or ${matches.agentB} = ${agents.id}) and ${matches.exhibition} = false and ${matches.createdAt} > ${since.toISOString()})`,
+  );
   const rows = await db
-    .select({ table: agents.policyTable, n: sql<number>`count(*)::int` })
+    .select({ id: agents.id, table: agents.policyTable })
     .from(agents)
-    .where(and(isNull(agents.retiredAt), eq(agents.band, band)))
-    .groupBy(agents.policyTable);
+    .where(and(isNull(agents.retiredAt), eq(agents.band, band), active));
 
-  const entries = rows
-    .filter((r): r is { table: Policy; n: number } => r.table !== null)
-    .map((r) => ({ table: r.table, weight: Number(r.n) }))
-    .sort((a, b) => JSON.stringify(a.table).localeCompare(JSON.stringify(b.table)));
+  const members = new Set<string>();
+  const byTable = new Map<string, { table: Policy; weight: number }>();
+  for (const r of rows) {
+    if (r.table === null) continue;
+    members.add(r.id);
+    const key = canonical(r.table);
+    const entry = byTable.get(key);
+    if (entry) entry.weight++;
+    else byTable.set(key, { table: r.table, weight: 1 });
+  }
+  const entries = [...byTable.values()].sort((a, b) => JSON.stringify(a.table).localeCompare(JSON.stringify(b.table)));
   const agentCount = entries.reduce((s, e) => s + e.weight, 0);
   return {
     band,
     entries,
     agentCount,
+    members,
     // The prefix versions how ratings are computed: bump it and every stored rating goes stale.
     fingerprint: hash(`v3-per-band|${band}|${entries.map((e) => `${e.weight}:${JSON.stringify(e.table)}`).join("|")}`),
   };
@@ -148,7 +175,9 @@ export async function refreshTrueRatings(db: Db, options: { force?: boolean } = 
     if (row.table === null) continue;
     const profile = profiles.get(row.band)!;
     if (!options.force && row.roster === profile.fingerprint) continue;
-    const rating = trueRatingAgainst(policyAgent(row.table), rosterWithout(profile, row.table));
+    // Everyone but itself - unless it was left out as idle, in which case it is not there to remove.
+    const opponents = profile.members.has(row.id) ? rosterWithout(profile, row.table) : profile;
+    const rating = trueRatingAgainst(policyAgent(row.table), opponents);
     await db
       .update(agents)
       .set({ trueRating: rating, trueRatingRoster: profile.fingerprint })

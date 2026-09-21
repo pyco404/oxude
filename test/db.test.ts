@@ -384,6 +384,46 @@ describe("true rating", () => {
     await closeFresh();
   });
 
+  it("leaves player agents idle for a week out of the roster it rates against, but keeps them matchable", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    const longAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    // House agents never go idle, however old.
+    for (let i = 0; i < 4; i++) {
+      const h = await createAgent(fresh, { name: `H${i}`, presetName: "Anchor" });
+      await fresh.update(agents).set({ createdAt: longAgo }).where(eq(agents.id, h.id));
+    }
+    // Three rentals of one preset: two dormant for eight days, one that played yesterday.
+    const dormant: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const d = await createAgent(fresh, { name: `Dormant${i}`, presetName: "Mirage", ownerId: someWallet() });
+      await fresh.update(agents).set({ createdAt: longAgo }).where(eq(agents.id, d.id));
+      dormant.push(d.id);
+    }
+    const busy = await createAgent(fresh, { name: "Busy", presetName: "Mirage", ownerId: someWallet() });
+    await fresh.update(agents).set({ createdAt: longAgo }).where(eq(agents.id, busy.id));
+    const [house] = await fresh.select().from(agents).where(eq(agents.name, "H0"));
+    await runMatch(fresh, busy.id, house!.id, { seed: 1 });
+    // And one rented today, which has had no chance to play yet.
+    const fresher = await createAgent(fresh, { name: "New", presetName: "Bully", ownerId: someWallet() });
+
+    const profile = await rosterProfile(fresh, "B");
+    expect(profile.agentCount).toBe(6); // 4 house, Busy, New
+    for (const id of dormant) expect(profile.members.has(id)).toBe(false);
+    expect(profile.members.has(busy.id)).toBe(true);
+    expect(profile.members.has(fresher.id)).toBe(true);
+
+    // A dormant agent is rated against the active roster, with nothing subtracted for itself.
+    await refreshTrueRatings(fresh, { force: true });
+    const [d0] = await fresh.select().from(agents).where(eq(agents.id, dormant[0]!));
+    expect(d0!.trueRating).toBeCloseTo(trueRatingAgainst(policyAgent(snapshotPreset("Mirage")), profile), 12);
+
+    // Still matchable: idle is about ratings, not about who can be played.
+    const pick = await pickOpponent(fresh, fresher.id);
+    expect(pick.candidates).toBe(7); // 4 house, both dormant, and Busy
+    await closeFresh();
+  });
+
   it("is recomputed when the roster changes materially, and skipped when it has not", async () => {
     const { db: fresh, close: closeFresh } = await connect();
     await migrate(fresh);
