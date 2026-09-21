@@ -130,6 +130,31 @@ export const AUTOPLAY_SELF_CLEARING: Record<AutoplayStop, boolean> = {
   retired: false,
 };
 
+/**
+ * What happened to an agent's settings, and when: autoplay switched on or off,
+ * the floor changed, the band changed. Nothing reads this to decide anything -
+ * it is so a question like "why did this agent not play for three hours" has an
+ * answer, which the agent's current row cannot give.
+ */
+export const agentEvents = pgTable(
+  "agent_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    kind: text("kind").$type<AgentEventKind>().notNull(),
+    /** Who did it: the owner, or the scheduler pausing on its own. */
+    source: text("source").$type<"owner" | "autoplay">().notNull(),
+    /** Human-readable: "floor 80", "A -> C", "paused: floor". */
+    detail: text("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("agent_events_agent_idx").on(t.agentId, t.createdAt)],
+);
+
+export type AgentEventKind = "autoplay-on" | "autoplay-off" | "floor" | "band";
+
 export const matches = pgTable(
   "matches",
   {
