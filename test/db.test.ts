@@ -326,7 +326,7 @@ describe("true rating", () => {
     const [row] = await fresh.select().from(agents).where(eq(agents.id, mine.id));
     const half = (a: "Anchor" | "Bully") => seatAveragedNet(policyAgent(snapshotPreset("Mirage")), PRESETS[a], OXUDE_RULES);
     // Roster is 4 Anchors, 4 Bullys and Mirage itself; an agent is rated against everyone but itself.
-    const profile = await rosterProfile(fresh);
+    const profile = await rosterProfile(fresh, "B");
     const expected = (4 * half("Anchor") + 4 * half("Bully")) / 8;
     expect(row!.trueRating).toBeCloseTo(expected, 9);
     expect(trueRatingAgainst(policyAgent(snapshotPreset("Mirage")), rosterWithout(profile, snapshotPreset("Mirage")))).toBeCloseTo(expected, 9);
@@ -347,12 +347,40 @@ describe("true rating", () => {
     }
     // A Mirage already on the roster still counts as an opponent for a new Mirage.
     const table = snapshotPreset("Mirage");
-    const preview = previewPolicy(table, await rosterProfile(fresh));
+    const preview = previewPolicy(table, await rosterProfile(fresh, "B"));
 
     const mine = await createAgent(fresh, { name: "Mine", brief: "bluff", policyTable: table });
     await refreshTrueRatings(fresh);
     const [row] = await fresh.select().from(agents).where(eq(agents.id, mine.id));
     expect(row!.trueRating).toBeCloseTo(preview.trueRating, 12);
+    await closeFresh();
+  });
+
+  it("rates against the agent's own band only, since no match crosses bands", async () => {
+    const { db: fresh, close: closeFresh } = await connect();
+    await migrate(fresh);
+    // Band A holds only Anchors, band C only Bullys: the same table is worth
+    // different amounts in each, and neither band sees the other's agents.
+    for (let i = 0; i < 4; i++) await createAgent(fresh, { name: `A${i}`, presetName: "Anchor", band: "A" });
+    for (let i = 0; i < 4; i++) await createAgent(fresh, { name: `C${i}`, presetName: "Bully", band: "C" });
+    const inA = await createAgent(fresh, { name: "MirageA", presetName: "Mirage", band: "A" });
+    const inC = await createAgent(fresh, { name: "MirageC", presetName: "Mirage", band: "C" });
+    await refreshTrueRatings(fresh);
+
+    const mirage = policyAgent(snapshotPreset("Mirage"));
+    const vs = (a: "Anchor" | "Bully") => seatAveragedNet(mirage, PRESETS[a], OXUDE_RULES);
+    const [a] = await fresh.select().from(agents).where(eq(agents.id, inA.id));
+    const [c] = await fresh.select().from(agents).where(eq(agents.id, inC.id));
+    expect(a!.trueRating).toBeCloseTo(vs("Anchor"), 9);
+    expect(c!.trueRating).toBeCloseTo(vs("Bully"), 9);
+
+    // The preview for band A rates against band A's roster, priced in band A's money.
+    const preview = previewPolicy(snapshotPreset("Mirage"), await rosterProfile(fresh, "A"));
+    expect(preview.band).toBe("A");
+    expect(preview.roster).toBe(5);
+    // A preview rates a table that is not on the roster yet, so it counts MirageA too, which nets 0 against itself.
+    expect(preview.trueRating).toBeCloseTo((4 * vs("Anchor")) / 5, 9);
+    expect(preview.priced.perMatch).toBeCloseTo(preview.trueRating * 0.5, 12);
     await closeFresh();
   });
 

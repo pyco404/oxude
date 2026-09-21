@@ -97,8 +97,9 @@ for (const row of await leaderboard(db, AGENTS)) {
   e.matches += row.matchesPlayed;
   byPreset.set(k, e);
 }
-const profile = await rosterProfile(db);
-console.log(`\nBy preset: what they won, next to what they are worth (exact):`);
+// Rated against band B's roster: a rating is per band, and B is the reference scale.
+const profile = await rosterProfile(db, "B");
+console.log(`\nBy preset: what they won, next to what they are worth against band B (exact):`);
 for (const [preset, { n, sum, matches }] of byPreset) {
   const table = rows.find((r) => r.presetName === preset)!.policyTable!;
   const exact = trueRatingAgainst(policyAgent(table), profile);

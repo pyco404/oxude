@@ -123,7 +123,7 @@ describe("POST /agents", () => {
     expect(created.agent.presetName).toBe("Bully");
     expect(created.agent.ownerId).toBe(walletOf("preset-renter"));
     expect(typeof created.agent.trueRating).toBe("number");
-    expect(created.agent.trueRatingBasis).toBe("against the roster as it stands today");
+    expect(created.agent.trueRatingBasis).toBe("against band B's roster as it stands today");
   });
 
   it("elicits and snapshots a table for a brief", async () => {
@@ -277,7 +277,7 @@ describe("POST /preview", () => {
     const previewed = await readBody(res);
     expect(elicitCalls).toBe(before);
     expect(typeof previewed.preview.trueRating).toBe("number");
-    expect(previewed.preview.basis).toBe("against the roster as it stands today");
+    expect(previewed.preview.basis).toBe("against band B's roster as it stands today");
     expect(previewed.preview.roster).toBeGreaterThan(0);
   });
 

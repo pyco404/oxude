@@ -272,7 +272,7 @@ export function createApp(options: AppOptions): Server {
         ownerId: fresh!.ownerId,
         createdAt: fresh!.createdAt,
         trueRating: fresh!.trueRating,
-        trueRatingBasis: "against the roster as it stands today",
+        trueRatingBasis: `against band ${fresh!.band}'s roster as it stands today`,
         ...bandStatus(view!),
       },
       elicitation: presetName ? null : { free: freeCall, reusedRatedTable: reused },
@@ -324,7 +324,7 @@ export function createApp(options: AppOptions): Server {
           brief: own!.brief,
           policyTable: own!.policyTable,
           trueRating: own!.trueRating,
-          trueRatingBasis: "against the roster as it stands today",
+          trueRatingBasis: `against band ${own!.band}'s roster as it stands today`,
           ...bandStatus(row),
         },
         // Private to the owner: whether it is playing, and what it did while they were away.
@@ -684,7 +684,7 @@ export function createApp(options: AppOptions): Server {
       throw new HttpError(400, `band must be one of ${STAKE_BANDS.map((b) => b.name).join(", ")}`);
     }
     const band = (wanted as BandName | undefined) ?? "B";
-    const preview = previewPolicy(table, await rosterProfile(db), band);
+    const preview = previewPolicy(table, await rosterProfile(db, band));
     return { preview, policyTable: table, elicitation: supplied ? null : { free: freeCall } };
   }
 

@@ -1,10 +1,10 @@
-import { eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { policyAgent, type Policy } from "../agents/policy.js";
 import { seatAveragedNet } from "../exact.js";
 import { OXUDE_RULES } from "../round.js";
 import type { Agent } from "../types.js";
 import type { Db } from "./client.js";
-import { agents, bandByName, type BandName } from "./schema.js";
+import { agents, bandByName, STAKE_BANDS, type BandName } from "./schema.js";
 
 /**
  * Exact ratings. A decision table's expected net against the roster is
@@ -13,6 +13,8 @@ import { agents, bandByName, type BandName } from "./schema.js";
  */
 
 export type RosterProfile = {
+  /** The band this roster is: matchmaking never pairs across bands, so neither does a rating. */
+  band: BandName;
   /** Distinct tables on the roster, with how many agents play each. */
   entries: { table: Policy; weight: number }[];
   /** Changes whenever the mix changes; recompute ratings when it does. */
@@ -29,12 +31,17 @@ const hash = (text: string) => {
   return (h >>> 0).toString(16).padStart(8, "0");
 };
 
-/** Groups the active roster by distinct table, so a rating costs one evaluation per distinct opponent. */
-export async function rosterProfile(db: Db): Promise<RosterProfile> {
+/**
+ * Groups one band's active roster by distinct table, so a rating costs one
+ * evaluation per distinct opponent. One band only: an agent can only ever be
+ * matched inside its own band, so agents in the others are not opponents and
+ * rating against them describes a roster nobody plays.
+ */
+export async function rosterProfile(db: Db, band: BandName): Promise<RosterProfile> {
   const rows = await db
     .select({ table: agents.policyTable, n: sql<number>`count(*)::int` })
     .from(agents)
-    .where(isNull(agents.retiredAt))
+    .where(and(isNull(agents.retiredAt), eq(agents.band, band)))
     .groupBy(agents.policyTable);
 
   const entries = rows
@@ -43,10 +50,11 @@ export async function rosterProfile(db: Db): Promise<RosterProfile> {
     .sort((a, b) => JSON.stringify(a.table).localeCompare(JSON.stringify(b.table)));
   const agentCount = entries.reduce((s, e) => s + e.weight, 0);
   return {
+    band,
     entries,
     agentCount,
     // The prefix versions how ratings are computed: bump it and every stored rating goes stale.
-    fingerprint: hash(`v2-self-excluded|${entries.map((e) => `${e.weight}:${JSON.stringify(e.table)}`).join("|")}`),
+    fingerprint: hash(`v3-per-band|${band}|${entries.map((e) => `${e.weight}:${JSON.stringify(e.table)}`).join("|")}`),
   };
 }
 
@@ -91,23 +99,24 @@ export function rosterWithout(profile: RosterProfile, table: Policy): RosterProf
  * future opponents, who will include agents written after this was computed.
  */
 /**
- * What a table is worth against today's roster, rated on band B's scale and
- * priced in the band the player is actually considering.
+ * What a table is worth against one band's roster today, rated on band B's
+ * scale and priced in that band's money.
  *
- * The rating is deliberately band-neutral: it is always computed at OXUDE_RULES,
- * so two agents are comparable however they play. The money is not - a band C
- * player wants to know what a match is worth to them, not to a band B player -
- * so `priced` scales the same figures by the band's factor. Both come from one
+ * The opponents are the band's; the arithmetic is band-neutral. It is always
+ * computed at OXUDE_RULES, so two agents are comparable whichever band they
+ * play, and `priced` scales the same figures by the band's factor - a band C
+ * player wants to know what a match is worth to them. Both come from one
  * calculation, because a band is only a scale.
  */
-export function previewPolicy(table: Policy, profile: RosterProfile, band: BandName = "B") {
+export function previewPolicy(table: Policy, profile: RosterProfile) {
   const agent = policyAgent(table);
+  const band = profile.band;
   const factor = bandByName(band).factor;
   const rating = trueRatingAgainst(agent, profile);
   return {
     /** Normalised onto band B, and so comparable with every other agent. */
     trueRating: rating,
-    basis: "against the roster as it stands today",
+    basis: `against band ${band}'s roster as it stands today`,
     band,
     /** The same rating in the money this band actually moves. */
     priced: { band, perMatch: rating * factor, worstMatch: bandByName(band).worstMatch },
@@ -122,19 +131,22 @@ export function previewPolicy(table: Policy, profile: RosterProfile, band: BandN
 }
 
 /**
- * Recomputes true ratings for agents whose stored rating predates the current
- * roster. Cheap: one exact evaluation per distinct table on the roster.
+ * Recomputes true ratings for agents whose stored rating predates their band's
+ * current roster. Each agent is rated against its own band, the only opponents
+ * it can meet. Cheap: one exact evaluation per distinct table on the roster.
  */
 export async function refreshTrueRatings(db: Db, options: { force?: boolean } = {}): Promise<number> {
-  const profile = await rosterProfile(db);
+  const profiles = new Map<BandName, RosterProfile>();
+  for (const b of STAKE_BANDS) profiles.set(b.name, await rosterProfile(db, b.name));
   const rows = await db
-    .select({ id: agents.id, table: agents.policyTable, roster: agents.trueRatingRoster })
+    .select({ id: agents.id, band: agents.band, table: agents.policyTable, roster: agents.trueRatingRoster })
     .from(agents)
     .where(isNull(agents.retiredAt));
 
   let updated = 0;
   for (const row of rows) {
     if (row.table === null) continue;
+    const profile = profiles.get(row.band)!;
     if (!options.force && row.roster === profile.fingerprint) continue;
     const rating = trueRatingAgainst(policyAgent(row.table), rosterWithout(profile, row.table));
     await db
