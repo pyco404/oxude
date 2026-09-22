@@ -113,6 +113,13 @@
       "when": 1790078961102,
       "tag": "0015_characters",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790091901393,
+      "tag": "0016_agent_traits",
+      "breakpoints": true
     }
   ]
 }

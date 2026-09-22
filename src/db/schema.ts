@@ -222,6 +222,38 @@ export const characters = pgTable(
 );
 
 /**
+ * Traits measured from an agent's play, as raw counts (src/character/traits.ts):
+ * rates are derived on read. Kept current by a background pass over new
+ * matches, never inside the match transaction. Presentation only - nothing
+ * that plays or pays reads it.
+ */
+export const agentTraits = pgTable("agent_traits", {
+  agentId: uuid("agent_id")
+    .primaryKey()
+    .references(() => agents.id),
+  decisions: integer("decisions").notNull().default(0),
+  folds: integer("folds").notNull().default(0),
+  raiseChances: integer("raise_chances").notNull().default(0),
+  raises: integer("raises").notNull().default(0),
+  weakChances: integer("weak_chances").notNull().default(0),
+  bluffs: integer("bluffs").notNull().default(0),
+  pressured: integer("pressured").notNull().default(0),
+  pressuredFolds: integer("pressured_folds").notNull().default(0),
+  pressuredRaiseChances: integer("pressured_raise_chances").notNull().default(0),
+  pressuredRaises: integer("pressured_raises").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * How far the traits pass has read: the last match seq counted. One row. Moved
+ * in the same transaction as the counts it covers, so a match is counted once.
+ */
+export const traitProgress = pgTable("trait_progress", {
+  id: integer("id").primaryKey(),
+  lastSeq: bigint("last_seq", { mode: "number" }).notNull().default(0),
+});
+
+/**
  * One row per season. The season itself is arithmetic (src/season.ts); this
  * row is its state, and the lock the boundary job takes so that closing a
  * season happens exactly once.

@@ -63,6 +63,14 @@ if (exhibitionMs > 0) {
     onError: (error) => console.error(`season: ${String(error).slice(0, 160)}`),
   });
 }
+// Traits: counted from match logs in the background, never in the match path.
+{
+  const { startTraits } = await import("../src/character/trait-store.js");
+  startTraits(db, {
+    onLog: (line) => console.log(line),
+    onError: (error) => console.error(`traits: ${String(error).slice(0, 160)}`),
+  });
+}
 // Autoplay: rented agents play on a timer, without their owners present. On by
 // default, because an agent only plays once its own owner has switched it on;
 // AUTOPLAY_INTERVAL_MS=0 turns the loop off entirely.
