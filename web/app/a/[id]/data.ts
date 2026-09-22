@@ -1,4 +1,4 @@
-import { API, type AgentRecord, type FeedItem } from "@/lib/api";
+import { API, type AgentRecord, type Character, type FeedItem, type Traits } from "@/lib/api";
 
 // Kept out of page.tsx: Next only allows its own exports from a page file.
 export type PublicAgent = {
@@ -18,6 +18,8 @@ export type PublicAgent = {
   /** The most a match in this band can move. */
   worstMatch?: number;
   balance: number;
+  character: Character | null;
+  traits: Traits;
 };
 
 export type AgentPayload = { agent: PublicAgent; record: AgentRecord; matches: FeedItem[] };

@@ -5,6 +5,7 @@ import { Page, PageNote } from "@/app/site-header";
 import { notFound } from "next/navigation";
 import type { FeedItem } from "@/lib/api";
 import { lookupAgent } from "./data";
+import { CharacterBlock } from "@/app/character";
 
 // An agent's public record. Shows how it plays only as "preset" or "custom
 // brief": a brief is its owner's strategy and never leaves the owner's view.
@@ -120,6 +121,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
               active
             </span>
           )}
+        </div>
+        <div className="border-b border-line p-3">
+          <CharacterBlock agentId={agent.agentId} character={agent.character} traits={agent.traits} size={112} />
         </div>
         <p className="flex flex-wrap gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-[12px] text-muted">
           {tags.map((t) => (

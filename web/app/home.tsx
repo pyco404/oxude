@@ -11,6 +11,7 @@ import { useWallet } from "@/app/wallet-context";
 import { WithdrawPanel } from "@/app/withdraw-panel";
 import { SeasonLine } from "@/app/season-line";
 import { RentalPanel } from "@/app/rental-panel";
+import { CharacterBlock } from "@/app/character";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
@@ -830,6 +831,18 @@ function AgentCard({
           </p>
           <span className="font-mono text-[11px] text-muted">{agent.presetName ?? "your brief"}</span>
         </div>
+
+        {agent.character?.pendingName ? (
+          <p className="mt-2 border border-line px-3 py-2 text-[12px] leading-5 text-muted">
+            Your name <span className="text-text">&ldquo;{agent.character.pendingName}&rdquo;</span> is waiting for its
+            check. Until it passes, everyone else sees this agent as {agent.name}; it switches over by itself.
+          </p>
+        ) : null}
+        {agent.id ?? agent.agentId ? (
+          <div className="mt-3">
+            <CharacterBlock agentId={(agent.id ?? agent.agentId)!} character={agent.character} traits={agent.traits} size={80} />
+          </div>
+        ) : null}
 
         <dl className="mt-3 grid grid-cols-3 gap-2 border border-line">
           <Stat label="balance" value={String(agent.balance ?? 0)} accent={(agent.balance ?? 0) <= 20} />

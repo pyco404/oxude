@@ -71,7 +71,32 @@ export type Preview = {
   roster: number;
   breakdown: PreviewBreakdown[];
 };
+/** An agent's character: presentation only. Mirrors src/character/store.ts. */
+export type Character = {
+  epithet: string;
+  bio: string;
+  /** "fox", "porcelain", "visor": what the character is. */
+  type: string;
+  nameSource: "owner" | "generated";
+  /** Owner's view only: a chosen name still waiting for its check. */
+  pendingName?: string | null;
+};
+
+/** Measured from real play. Mirrors src/character/traits.ts. */
+export type Trait = { rate: number; word: string } | null;
+export type Traits = {
+  decisions: number;
+  bluff: Trait;
+  fold: Trait;
+  aggression: Trait;
+  underPressure: { word: "holds firm" | "backs down" | "pushes back"; foldShift: number; raiseShift: number } | null;
+  note: string | null;
+};
+
 export type AgentView = {
+  /** Portrait, epithet and bio. Null for an agent not yet given one. */
+  character?: Character | null;
+  traits?: Traits;
   agentId?: string;
   id?: string;
   name: string;
