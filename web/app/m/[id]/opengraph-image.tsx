@@ -54,12 +54,11 @@ export default async function Image({ params }: { params: Promise<{ id: string }
             // Lead with whoever came out ahead on money - the number a reader
             // reads first must be the positive one, or a win looks like a loss.
             const aheadSeat = summary.netA > 0 ? "A" : summary.netB > 0 ? "B" : null;
-            // Each name carries its playstyle mark, as everywhere else on the site.
+            // The faces above are the identity here, so the names carry no emoji.
             const side = (seat: "A" | "B") => (seat === "A" ? data?.match.agentA : data?.match.agentB);
-            const marked = (seat: "A" | "B") => `${side(seat)?.mark ? `${side(seat)!.mark} ` : ""}${summary.names[seat]}`;
             const label = (seat: "A" | "B") => presetLabel(side(seat)?.presetName);
-            const ahead = aheadSeat === null ? null : marked(aheadSeat);
-            const behind = aheadSeat === null ? null : marked(aheadSeat === "A" ? "B" : "A");
+            const ahead = aheadSeat === null ? null : summary.names[aheadSeat];
+            const behind = aheadSeat === null ? null : summary.names[aheadSeat === "A" ? "B" : "A"];
             const amount = aheadSeat === "A" ? summary.netA : summary.netB;
             return (
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -79,9 +78,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <div style={{ fontSize: 52, display: "flex", gap: 18, alignItems: "baseline" }}>
-                      <span>{marked("A")}</span>
+                      <span>{summary.names.A}</span>
                       <span style={{ color: "#8a8a93", fontSize: 34 }}>vs</span>
-                      <span>{marked("B")}</span>
+                      <span>{summary.names.B}</span>
                     </div>
                     <div style={{ fontSize: 96, color: "#8a8a93", fontWeight: 700, display: "flex" }}>Level</div>
                   </div>
