@@ -276,7 +276,7 @@ export const seasons = pgTable("seasons", {
   status: text("status").$type<"open" | "closed">().notNull().default("open"),
   closedAt: timestamp("closed_at", { withTimezone: true }),
   /**
-   * $OX base units per chip for this season. Null on devnet, where there is
+   * $OXUDE base units per chip for this season. Null on devnet, where there is
    * no rate; on mainnet the boundary sets it (see onSeasonBoundary).
    */
   chipRate: bigint("chip_rate", { mode: "number" }),

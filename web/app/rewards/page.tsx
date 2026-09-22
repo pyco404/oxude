@@ -57,7 +57,7 @@ function RewardsSection({ r }: { r: Rewards }) {
         <h2 className="text-[11px] uppercase tracking-wider text-muted">Rewards</h2>
       </div>
       <p className="border-b border-red bg-red-dim/20 px-3 py-2.5 text-[13px] leading-5 text-text lg:px-4">
-        Not live yet. $OX has launched on mainnet, but rewards are funded by the creator-fee split and paid at
+        Not live yet. $OXUDE has launched on mainnet, but rewards are funded by the creator-fee split and paid at
         mainnet launch, which has not happened. These figures read from chain and will populate then.
       </p>
       {r.error ? (
