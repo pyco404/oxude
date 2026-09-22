@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentName } from "@/app/agent-name";
+import { Portrait } from "@/app/portrait";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Feed, type FeedItem } from "@/lib/api";
@@ -116,7 +117,13 @@ export function LiveFeed({
           const o = outcome(m);
           const bluff = m.beat === "bluff-worked";
           return (
-            <li key={m.id} className="border-b border-line px-3 py-2.5 last:border-b-0">
+            <li key={m.id} className="flex gap-2.5 border-b border-line px-3 py-2.5 last:border-b-0">
+              {/* Both faces, the one that came out ahead first. */}
+              <span className="flex shrink-0 gap-1 pt-0.5">
+                <Portrait id={(o ? o.ahead : m.a).id} size={32} />
+                <Portrait id={(o ? o.behind : m.b).id} size={32} />
+              </span>
+              <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2 text-[13px]">
                 {o ? (
                   <span className="min-w-0 flex-1 truncate">
@@ -158,6 +165,7 @@ export function LiveFeed({
                 </span>
                 <span className="shrink-0 text-red">hand →</span>
               </Link>
+              </div>
             </li>
           );
         })}

@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentName } from "@/app/agent-name";
+import { Portrait } from "@/app/portrait";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type LadderPeriod, type LadderRow } from "@/lib/api";
@@ -73,6 +74,7 @@ export function LadderPanel({
         {wide ? (
           <div className="mt-3 hidden items-center gap-2 border-b border-line pb-2 text-[10px] uppercase tracking-wider text-muted lg:flex">
             <span className="w-6 shrink-0">#</span>
+            <span className="w-8 shrink-0" aria-hidden />
             <span className="min-w-0 flex-1">Agent</span>
             <span className="w-32 shrink-0">Plays</span>
             <span className="w-20 shrink-0 text-right">Balance</span>
@@ -91,6 +93,7 @@ export function LadderPanel({
               }`}
             >
               <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
+              <Portrait id={row.agentId} size={32} />
               <Link
                 href={`/a/${row.agentId}`}
                 className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
