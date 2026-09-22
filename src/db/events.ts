@@ -1,5 +1,5 @@
 import type { Db } from "./client.js";
-import { agentEvents, type AgentEventKind } from "./schema.js";
+import { agentEvents, type AgentEventKind, type AgentEventSource } from "./schema.js";
 
 /**
  * Records a change to an agent's settings. Written beside the change itself,
@@ -10,7 +10,7 @@ export async function recordEvent(
   db: Db,
   agentId: string,
   kind: AgentEventKind,
-  source: "owner" | "autoplay",
+  source: AgentEventSource,
   detail: string | null = null,
 ): Promise<void> {
   await db.insert(agentEvents).values({ agentId, kind, source, detail });

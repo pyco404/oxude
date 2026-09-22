@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -107,6 +108,16 @@ export const agents = pgTable(
     ownerLastSeenAt: timestamp("owner_last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     retiredAt: timestamp("retired_at", { withTimezone: true }),
+    /** Why it retired: ran out, withdrawn in full, or its rental lapsed. Null while it plays. */
+    retiredReason: text("retired_reason").$type<RetiredReason>(),
+    /**
+     * When this rental ends: always a season boundary (src/season.ts). Checked
+     * where a match is recorded, under the agent's lock, so no match plays past
+     * it however late the boundary job runs. Past it and not yet retired, the
+     * agent is *expired*: it cannot play, and its owner has the grace period to
+     * renew. Null for house agents, which never expire.
+     */
+    rentalEndsAt: timestamp("rental_ends_at", { withTimezone: true }),
   },
   (t) => [
     index("agents_owner_idx").on(t.ownerId),
@@ -144,8 +155,8 @@ export const agentEvents = pgTable(
       .notNull()
       .references(() => agents.id),
     kind: text("kind").$type<AgentEventKind>().notNull(),
-    /** Who did it: the owner, or the scheduler pausing on its own. */
-    source: text("source").$type<"owner" | "autoplay">().notNull(),
+    /** Who did it: the owner, the scheduler pausing on its own, or the season boundary. */
+    source: text("source").$type<AgentEventSource>().notNull(),
     /** Human-readable: "floor 80", "A -> C", "paused: floor". */
     detail: text("detail"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -153,7 +164,67 @@ export const agentEvents = pgTable(
   (t) => [index("agent_events_agent_idx").on(t.agentId, t.createdAt)],
 );
 
-export type AgentEventKind = "autoplay-on" | "autoplay-off" | "floor" | "band";
+export type AgentEventKind =
+  | "autoplay-on"
+  | "autoplay-off"
+  | "floor"
+  | "band"
+  | "renewed"
+  /** Not renewed by the boundary: cannot play, can still be renewed for the grace period. */
+  | "expired"
+  /** The grace period passed: retired, balance still withdrawable. */
+  | "lapsed";
+
+export type AgentEventSource = "owner" | "autoplay" | "season";
+
+export type RetiredReason = "broke" | "withdrawn" | "lapsed";
+
+/**
+ * One row per season. The season itself is arithmetic (src/season.ts); this
+ * row is its state, and the lock the boundary job takes so that closing a
+ * season happens exactly once.
+ */
+export const seasons = pgTable("seasons", {
+  /** The Monday it starts on, YYYY-MM-DD. */
+  key: text("key").primaryKey(),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+  status: text("status").$type<"open" | "closed">().notNull().default("open"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  /**
+   * $OXUDE base units per chip for this season. Null on devnet, where there is
+   * no rate; on mainnet the boundary sets it (see onSeasonBoundary).
+   */
+  chipRate: bigint("chip_rate", { mode: "number" }),
+});
+
+/**
+ * Final placement, frozen when a season closes: what rewards will pay on. The
+ * same figures as the ladder's season view at the boundary, and never
+ * recomputed afterwards - a later change to how ratings count must not move a
+ * placement that has closed.
+ */
+export const seasonStandings = pgTable(
+  "season_standings",
+  {
+    season: text("season")
+      .notNull()
+      .references(() => seasons.key),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    /** 1 is first, by ranked net won. */
+    rank: integer("rank").notNull(),
+    rankedMatches: integer("ranked_matches").notNull(),
+    /** Normalised onto band B's scale, as the ladder ranks. */
+    rankedNet: bigint("ranked_net", { mode: "number" }).notNull(),
+    rankedStaked: bigint("ranked_staked", { mode: "number" }).notNull(),
+    /** Every staked match in the season, house included, in real money. */
+    totalMatches: integer("total_matches").notNull(),
+    totalNet: bigint("total_net", { mode: "number" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.season, t.agentId] })],
+);
 
 export const matches = pgTable(
   "matches",
@@ -203,9 +274,17 @@ export const matches = pgTable(
      * settlement, and no effect on ratings, records or the ladder.
      */
     exhibition: boolean("exhibition").notNull().default(false),
+    /**
+     * The season it was played in, from the moment it was recorded. Null for
+     * matches from before seasons, which count only all-time. Not a foreign
+     * key: a season is arithmetic (src/season.ts), and a match at 00:00:05 on
+     * Monday belongs to the new season before its row has been written.
+     */
+    season: text("season"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    index("matches_season_idx").on(t.season, t.ranked),
     index("matches_agent_a_idx").on(t.agentA, t.createdAt),
     index("matches_agent_b_idx").on(t.agentB, t.createdAt),
     index("matches_created_idx").on(t.createdAt),
