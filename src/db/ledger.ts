@@ -108,7 +108,7 @@ export const settle = (net: number): number => net;
 export async function retireIfBroke(db: Writable, agentId: string): Promise<boolean> {
   const balance = await balanceOf(db, agentId);
   if (affordableBands(balance).length > 0) return false;
-  await db.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, agentId));
+  await db.update(agents).set({ retiredAt: new Date(), retiredReason: "broke" }).where(eq(agents.id, agentId));
   return true;
 }
 

@@ -279,6 +279,7 @@ describe("withdrawals", () => {
     expect(submitted!.body.withdrawal.status).toBe("confirmed");
     const [row] = await db.select().from(agents).where(eq(agents.id, agent.id));
     expect(row!.retiredAt).not.toBeNull();
+    expect(row!.retiredReason).toBe("withdrawn");
     expect(await balanceOf(db, agent.id)).toBe(0);
     expect(chain.vaults.get(agent.id)).toBe(0);
     // Frozen: it can't play, and it can't withdraw again.
@@ -352,7 +353,47 @@ describe("withdrawals", () => {
     expect(pending).toEqual([]);
     expect((await reconcile(db, chain)).mismatches).toEqual([]);
   });
+
+  it("a lapsed agent's balance stays withdrawable, all of it and only all of it", async () => {
+    const agent = await ownedAgent("jack", "Jack's");
+    await lapse(agent.id);
+    const state = await api(`/agents/${agent.id}/withdrawable`, { as: "jack" });
+    expect(state.body.withdrawable).toMatchObject({ withdrawable: STARTING_BALANCE, maxPartial: 0, reason: null });
+    // It can never play again, so there is nothing to leave behind for.
+    const partial = await withdraw(agent.id, "jack", 100);
+    expect(partial.prepared.status).toBe(400);
+    expect(partial.prepared.body.error).toMatch(/lapsed: withdraw the whole balance/);
+
+    const { submitted } = await withdraw(agent.id, "jack", "all");
+    expect(submitted!.body.withdrawal.status).toBe("confirmed");
+    expect(chain.paid.get(walletOf("jack"))).toBe(STARTING_BALANCE);
+    // Still lapsed: the rental ended first, and that stays the reason.
+    const [row] = await db.select().from(agents).where(eq(agents.id, agent.id));
+    expect(row!.retiredReason).toBe("lapsed");
+    expect((await reconcile(db, chain)).mismatches).toEqual([]);
+  });
+
+  it("a withdrawal that never lands does not bring a lapsed agent back", async () => {
+    const agent = await ownedAgent("kate", "Kate's");
+    await lapse(agent.id);
+    chain.down = true;
+    const { submitted } = await withdraw(agent.id, "kate", "all");
+    expect(submitted!.body.withdrawal.status).toBe("submitted");
+    chain.height += 1000;
+    chain.down = false;
+    await drainChainOps(db, chain);
+    // The money is put back; the retirement is not undone, because the withdrawal did not cause it.
+    expect(await balanceOf(db, agent.id)).toBe(STARTING_BALANCE);
+    const [row] = await db.select().from(agents).where(eq(agents.id, agent.id));
+    expect(row!.retiredAt).not.toBeNull();
+    expect(row!.retiredReason).toBe("lapsed");
+  });
 });
+
+/** What the season's grace period ending does to an agent that was not renewed. */
+async function lapse(agentId: string) {
+  await db.update(agents).set({ retiredAt: new Date(), retiredReason: "lapsed", rentalEndsAt: new Date(Date.now() - 25 * 60 * 60 * 1000) }).where(eq(agents.id, agentId));
+}
 
 async function houseAgent() {
   const [row] = await db

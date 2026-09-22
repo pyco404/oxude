@@ -303,6 +303,7 @@ describe("running out", () => {
 
     const [row] = await d.select().from(agents).where(eq(agents.id, doomed.id));
     expect(row!.retiredAt).not.toBeNull();
+    expect(row!.retiredReason).toBe("broke");
 
     // Frozen: it cannot be matched again, in either direction.
     await expect(runMatch(d, doomed.id, rival.id, { seed: 99 })).rejects.toThrow(/retired/);

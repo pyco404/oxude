@@ -107,7 +107,11 @@ export async function withdrawable(db: Db, agentId: string): Promise<Withdrawabl
   const pending = await unsettledOps(db, agentId);
   const locked = pending.filter((op) => op.kind === "settle").reduce((sum, op) => sum + op.amount, 0);
   let reason: string | null = null;
-  if (agent.retiredAt !== null) reason = "this agent is retired";
+  // A lapsed agent retired because its rental ran out, not because its money
+  // did: the balance is still the owner's, and taking all of it is the one
+  // thing left to do with it.
+  const lapsed = agent.retiredReason === "lapsed";
+  if (agent.retiredAt !== null && !lapsed) reason = "this agent is retired";
   else if (!agent.ownerId) reason = "house agents have no owner";
   else if (await openWithdrawal(db, agentId)) reason = "a withdrawal is already on its way";
   else if (pending.some((op) => op.kind === "settle")) reason = "a match is still settling on chain";
@@ -118,7 +122,8 @@ export async function withdrawable(db: Db, agentId: string): Promise<Withdrawabl
     balance,
     withdrawable: available,
     locked,
-    maxPartial: available >= MIN_TO_KEEP_PLAYING ? available - MIN_TO_KEEP_PLAYING : 0,
+    // A lapsed agent cannot play again, so there is nothing to keep playing on: all or nothing.
+    maxPartial: !lapsed && available >= MIN_TO_KEEP_PLAYING ? available - MIN_TO_KEEP_PLAYING : 0,
     minStake: MIN_TO_KEEP_PLAYING,
     reason,
   };
@@ -143,6 +148,9 @@ export async function prepareWithdrawal(
   if (!Number.isSafeInteger(amount) || amount <= 0) throw new WithdrawalError(400, "amount must be a whole number above zero");
   if (amount > state.balance) throw new WithdrawalError(400, `only ${state.balance} to withdraw`);
   const remaining = state.balance - amount;
+  if (remaining !== 0 && agent.retiredReason === "lapsed") {
+    throw new WithdrawalError(400, "this agent's rental has lapsed: withdraw the whole balance");
+  }
   if (remaining !== 0 && remaining < MIN_TO_KEEP_PLAYING) {
     throw new WithdrawalError(
       400,
@@ -221,13 +229,20 @@ export async function submitWithdrawal(
     }
     const pending = await unsettledOps(tx as unknown as Db, w.agentId);
     if (pending.length > 0) throw new WithdrawalError(409, "can't withdraw now: a match is still settling on chain");
-    const [agent] = await tx.select({ retiredAt: agents.retiredAt }).from(agents).where(eq(agents.id, w.agentId));
-    if (agent?.retiredAt) throw new WithdrawalError(409, "this agent is retired");
+    const [agent] = await tx
+      .select({ retiredAt: agents.retiredAt, retiredReason: agents.retiredReason })
+      .from(agents)
+      .where(eq(agents.id, w.agentId));
+    // A lapsed agent may still be emptied; any other retirement is final.
+    if (agent?.retiredAt && agent.retiredReason !== "lapsed") throw new WithdrawalError(409, "this agent is retired");
 
     await record(tx, [{ agentId: w.agentId, amount: -w.amount, reason: "withdrawal", withdrawalId: w.id }]);
     await tx.insert(chainOps).values({ kind: "withdraw", agentId: w.agentId, amount: w.amount, withdrawalId: w.id });
-    // Taking the lot retires it; its record freezes as it stands.
-    if (w.retire) await tx.update(agents).set({ retiredAt: new Date() }).where(eq(agents.id, w.agentId));
+    // Taking the lot retires it, unless it already retired by lapsing, which
+    // stays the reason: the rental ended first, the money followed.
+    if (w.retire && !agent?.retiredAt) {
+      await tx.update(agents).set({ retiredAt: new Date(), retiredReason: "withdrawn" }).where(eq(agents.id, w.agentId));
+    }
   });
 
   // Send now rather than wait for the worker: the transaction only lives for a minute or two.
@@ -265,7 +280,15 @@ export async function expireWithdrawal(db: Db, withdrawalId: string, why: string
     const [w] = await tx.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId)).limit(1);
     if (!w || w.status !== "submitted") return;
     await record(tx, [{ agentId: w.agentId, amount: w.amount, reason: "withdrawal-reversed", withdrawalId: w.id }]);
-    if (w.retire) await tx.update(agents).set({ retiredAt: null }).where(eq(agents.id, w.agentId));
+    // Undo only a retirement this withdrawal caused. If the agent lapsed while
+    // the withdrawal was in flight, it stays lapsed: the money coming back does
+    // not bring the rental back.
+    if (w.retire) {
+      await tx
+        .update(agents)
+        .set({ retiredAt: null, retiredReason: null })
+        .where(and(eq(agents.id, w.agentId), eq(agents.retiredReason, "withdrawn")));
+    }
     await tx
       .update(withdrawals)
       .set({ status: "expired", error: why.slice(0, 2000), updatedAt: new Date() })
