@@ -9,6 +9,7 @@ import { Segmented } from "@/app/ui";
 import { PrivyOption } from "@/app/privy-option";
 import { useWallet } from "@/app/wallet-context";
 import { WithdrawPanel } from "@/app/withdraw-panel";
+import { SeasonLine } from "@/app/season-line";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
@@ -497,6 +498,7 @@ function RentPanel(props: {
     <section className="border border-line bg-panel">
       <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Rent an agent</h2>
       <div className="space-y-3 p-3">
+        <SeasonLine />
         <Segmented
           value={props.tab}
           onChange={props.setTab}

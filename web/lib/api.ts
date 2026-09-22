@@ -182,6 +182,9 @@ export type FeedItem = {
 export type Feed = { matches: FeedItem[]; bluff: FeedItem | null };
 export type AgentRecord = { wins: number; losses: number; level: number };
 
+/** The season in play. Mirrors GET /season. */
+export type SeasonInfo = { key: string; number: number; startsAt: string; endsAt: string };
+
 /** What an owner can take from an agent's vault now, and what's locked while matches settle. */
 export type Withdrawable = {
   balance: number;
@@ -279,6 +282,7 @@ export const api = {
     ),
   feed: (limit = 12, before?: number) =>
     request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
+  season: () => request<{ season: SeasonInfo; graceHours: number; reminderHours: number }>("/season"),
   ladder: (sort: "winnings" | "per-match", limit = 25) =>
     request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=${limit}`),
 };
