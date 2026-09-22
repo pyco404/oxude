@@ -24,7 +24,7 @@ import {
 } from "../db/runner.js";
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
-import { seasonAt, GRACE_MS, RENEWAL_REMINDER_MS } from "../season.js";
+import { dayStart, seasonAt, seasonByKey, GRACE_MS, RENEWAL_REMINDER_MS } from "../season.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
 import {
@@ -654,7 +654,29 @@ export function createApp(options: AppOptions): Server {
       throw new HttpError(400, "sort must be winnings or per-match");
     }
     const limit = Math.min(Number(ctx.query.get("limit") ?? 50) || 50, 200);
-    return { sort, rows: await leaderboard(db, limit, sort) };
+    // All time unless asked: the web release before seasons calls without a period.
+    const period = ctx.query.get("period") ?? "all";
+    const now = new Date();
+    if (period === "all") return { sort, period, rows: await leaderboard(db, limit, sort) };
+    if (period === "day") {
+      const since = dayStart(now);
+      return { sort, period, since, rows: await leaderboard(db, limit, sort, { period: "day", since }) };
+    }
+    if (period === "season") {
+      let season;
+      try {
+        season = ctx.query.get("season") ? seasonByKey(ctx.query.get("season")!) : seasonAt(now);
+      } catch {
+        throw new HttpError(400, "season must be a Monday, as YYYY-MM-DD");
+      }
+      return {
+        sort,
+        period,
+        season: { key: season.key, number: season.number, startsAt: season.start, endsAt: season.end, current: season.key === seasonAt(now).key },
+        rows: await leaderboard(db, limit, sort, { period: "season", season: season.key }),
+      };
+    }
+    throw new HttpError(400, "period must be all, season or day");
   }
 
   /** Public and free: the shipped tables, so the UI can rate them without a model call. */

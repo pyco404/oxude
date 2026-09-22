@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq, isNull } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { agentEvents, agents, ledger, matches, ratings, seasonStandings, seasons } from "../src/db/schema.js";
-import { createAgent, pickOpponent, runMatch } from "../src/db/runner.js";
+import { createAgent, DEFAULT_RULES, leaderboard, pickOpponent, runMatch } from "../src/db/runner.js";
 import { dueAgents } from "../src/db/autoplay.js";
 import { StakeError } from "../src/db/ledger.js";
 import { nextSeason, seasonAt, GRACE_MS, RENEWAL_REMINDER_MS } from "../src/season.js";
@@ -248,6 +248,70 @@ describe("renewal", () => {
     await expect(renewAgent(db, row.id, ownerId, pastGrace)).rejects.toThrow(/grace period is over/);
     await lapseExpired(db, pastGrace);
     await expect(renewAgent(db, row.id, ownerId, pastGrace)).rejects.toThrow(/lapsed/);
+    await close();
+  });
+});
+
+describe("ladder views", () => {
+  const played = async (db: Db) => {
+    await house(db, 4);
+    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const a = await createAgent(db, { name: "A", presetName: "Hammer", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "B", presetName: "Mirage", ownerId: someWallet() });
+    const idle = await createAgent(db, { name: "Idle", presetName: "Anchor", ownerId: someWallet() });
+    for (let seed = 1; seed <= 5; seed++) await runMatch(db, a.id, b.id, { seed });
+    await runMatch(db, a.id, h!.id, { seed: 9 });
+    return { a, b, idle, current: seasonAt(new Date()) };
+  };
+  const strip = (rows: Awaited<ReturnType<typeof leaderboard>>) =>
+    rows.map((r) => ({ agentId: r.agentId, matchesPlayed: r.matchesPlayed, cumulativeNet: r.cumulativeNet, totalMatches: r.totalMatches, totalNet: r.totalNet }));
+
+  it("ranks the same figures in all three views when every match is today and this season", async () => {
+    const { db, close } = await fresh();
+    const { idle, current } = await played(db);
+    const all = (await leaderboard(db, 50, "winnings")).filter((r) => r.agentId !== idle.id);
+    const season = await leaderboard(db, 50, "winnings", { period: "season", season: current.key });
+    const day = await leaderboard(db, 50, "winnings", { period: "day", since: new Date(Date.now() - 60 * 60 * 1000) });
+    expect(strip(season)).toEqual(strip(all));
+    expect(strip(day)).toEqual(strip(all));
+    // All time lists an agent that has not played; a season or a day lists only those that did.
+    expect((await leaderboard(db, 50, "winnings")).map((r) => r.agentId)).toContain(idle.id);
+    expect(season.map((r) => r.agentId)).not.toContain(idle.id);
+    await close();
+  });
+
+  it("counts only its own window", async () => {
+    const { db, close } = await fresh();
+    const { current } = await played(db);
+    expect(await leaderboard(db, 50, "winnings", { period: "day", since: new Date(Date.now() + 60_000) })).toEqual([]);
+    expect(await leaderboard(db, 50, "winnings", { period: "season", season: nextSeason(current).key })).toEqual([]);
+    await close();
+  });
+
+  it("reads a closed season's frozen standings, which a later change cannot move", async () => {
+    const { db, close } = await fresh();
+    const { a, b, current } = await played(db);
+    const live = await leaderboard(db, 50, "winnings", { period: "season", season: current.key });
+    await closeSeason(db, current.key, current.end);
+    // Something lands in the closed season after it closed: final placement must not see it.
+    await db.insert(matches).values({
+      agentA: a.id, agentB: b.id, seed: 99, rulesConfig: DEFAULT_RULES, winner: "B", netA: -40, netB: 40,
+      stake: 40, ranked: true, season: current.key, log: { rounds: [] } as never,
+    });
+    const frozen = await leaderboard(db, 50, "winnings", { period: "season", season: current.key });
+    expect(strip(frozen)).toEqual(strip(live));
+    await close();
+  });
+
+  it("per match needs a ranked match to divide by", async () => {
+    const { db, close } = await fresh();
+    await house(db, 4);
+    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const solo = await createAgent(db, { name: "Solo", presetName: "Hammer", ownerId: someWallet() });
+    await runMatch(db, solo.id, h!.id, { seed: 2 });
+    const current = seasonAt(new Date());
+    expect((await leaderboard(db, 50, "winnings", { period: "season", season: current.key })).map((r) => r.agentId)).toEqual([solo.id]);
+    expect(await leaderboard(db, 50, "per-match", { period: "season", season: current.key })).toEqual([]);
     await close();
   });
 });

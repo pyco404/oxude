@@ -18,6 +18,8 @@ import {
   matches,
   withdrawals,
   ratings,
+  seasons,
+  seasonStandings,
   STAKE_BANDS,
   DEFAULT_BAND,
   affordableBands,
@@ -39,6 +41,7 @@ import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, Sta
 import { recordEvent } from "./events.js";
 import { rentalEndFor, rentalOpen, rentalOpenSql } from "./rental.js";
 import { seasonAt } from "../season.js";
+import { bandFactor, standings, type Standing } from "./standings.js";
 
 export const DEFAULT_RULES: RulesConfig = {
   turnOrder: OXUDE_RULES.turnOrder,
@@ -378,12 +381,8 @@ export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Reco
   // C win of 30 is a band B win of 20, and a band A win of 10 is too. Only what
   // the ladder compares is normalised (the ranked figures and recent form);
   // cumulativeNet is the money the agent actually won, so it sums `raw`.
-  // The factors are inlined rather than bound: a bare parameter in a CASE result
-  // has no type Postgres can infer. They are this module's own constants.
-  const factor = sql<number>`(case ${sql.join(
-    STAKE_BANDS.map((b) => sql`when ${matches.band} = ${b.name} then ${sql.raw(b.factor.toFixed(4))}`),
-    sql` `,
-  )} else 1 end)::double precision`;
+  // The same factor every ranked view divides by (src/db/standings.ts), so they cannot drift.
+  const factor = bandFactor(matches.band);
   const mine = sql<number>`((${raw})::double precision / ${factor})`;
   // Exhibitions stake nothing, so they say nothing about how an agent does for money.
   const played = and(or(eq(matches.agentA, agentId), eq(matches.agentB, agentId)), eq(matches.exhibition, false));
@@ -672,7 +671,15 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
  */
 export type LadderTab = "winnings" | "per-match";
 
-export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings") {
+/**
+ * Which matches a ladder counts. All three rank the same thing - player-versus-
+ * player matches, normalised onto band B - and differ only in the window:
+ * everything (the figures `ratings` keeps), one season, or today in UTC.
+ */
+export type LadderPeriod = { period: "all" } | { period: "season"; season: string } | { period: "day"; since: Date };
+
+export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings", window: LadderPeriod = { period: "all" }) {
+  if (window.period !== "all") return periodLeaderboard(db, limit, tab, window);
   // Ranked figures only. Every number the ladder sorts by is player-versus-
   // player; the totals ride along beside them so an owner can see that their
   // winnings against the house are still there and simply do not count.
@@ -709,6 +716,75 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
   return tab === "winnings"
     ? rows.where(players).orderBy(desc(ratings.rankedNet)).limit(limit)
     : rows.where(and(players, gt(ratings.rankedMatches, 0))).orderBy(desc(netPerMatch)).limit(limit);
+}
+
+/**
+ * A season's or a day's ladder. A closed season reads its frozen standings -
+ * final placement, which nothing may recompute - and anything still running
+ * is counted live from its matches. The rows have the all-time ladder's shape,
+ * so every view renders the same way.
+ */
+async function periodLeaderboard(
+  db: Db,
+  limit: number,
+  tab: LadderTab,
+  window: Exclude<LadderPeriod, { period: "all" }>,
+) {
+  let rows: Standing[];
+  const [closed] =
+    window.period === "season"
+      ? await db.select({ status: seasons.status }).from(seasons).where(eq(seasons.key, window.season)).limit(1)
+      : [];
+  if (window.period === "season" && closed?.status === "closed") {
+    rows = (
+      await db
+        .select({
+          agentId: agents.id,
+          name: agents.name,
+          presetName: agents.presetName,
+          mark: agents.mark,
+          retired: sql<boolean>`${agents.retiredAt} is not null`,
+          rankedMatches: seasonStandings.rankedMatches,
+          rankedNet: seasonStandings.rankedNet,
+          rankedStaked: seasonStandings.rankedStaked,
+          totalMatches: seasonStandings.totalMatches,
+          totalNet: seasonStandings.totalNet,
+        })
+        .from(seasonStandings)
+        .innerJoin(agents, eq(agents.id, seasonStandings.agentId))
+        .where(eq(seasonStandings.season, window.season))
+        .orderBy(seasonStandings.rank)
+    ).map((r) => ({ ...r, rankedNet: Number(r.rankedNet), rankedStaked: Number(r.rankedStaked), totalNet: Number(r.totalNet) }));
+  } else {
+    rows = await standings(db, window.period === "season" ? { season: window.season } : { since: window.since });
+  }
+
+  const perMatch = (r: Standing) => (r.rankedMatches === 0 ? 0 : r.rankedNet / r.rankedMatches);
+  const ranked = tab === "winnings" ? rows : rows.filter((r) => r.rankedMatches > 0).sort((a, b) => perMatch(b) - perMatch(a));
+  const shown = ranked.slice(0, limit);
+  if (shown.length === 0) return [];
+
+  // Balance and recent form are the agent's now, whatever the window.
+  const ids = shown.map((r) => r.agentId);
+  const balances = await balancesOf(db, ids);
+  const forms = new Map(
+    (await db.select({ id: ratings.agentId, form: ratings.rollingNet50 }).from(ratings).where(inArray(ratings.agentId, ids))).map((r) => [r.id, r.form]),
+  );
+  return shown.map((r) => ({
+    agentId: r.agentId,
+    name: r.name,
+    presetName: r.presetName,
+    mark: r.mark,
+    matchesPlayed: r.rankedMatches,
+    cumulativeNet: r.rankedNet,
+    netPerMatch: perMatch(r),
+    rankedStaked: r.rankedStaked,
+    totalMatches: r.totalMatches,
+    totalNet: r.totalNet,
+    recentForm: forms.get(r.agentId) ?? 0,
+    balance: balances.get(r.agentId) ?? 0,
+    retired: r.retired,
+  }));
 }
 
 /**

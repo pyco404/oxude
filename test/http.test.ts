@@ -801,6 +801,19 @@ describe("autoplay over http", () => {
   });
 });
 
+describe("ladder periods over HTTP", () => {
+  it("serves all time by default, and a season or today when asked", async () => {
+    const all = await readBody(await api("/ladder?sort=winnings", { owner: null }));
+    expect(all.period).toBe("all");
+    const season = await readBody(await api("/ladder?sort=winnings&period=season", { owner: null }));
+    expect(season.season).toMatchObject({ key: seasonAt(new Date()).key, current: true });
+    const day = await readBody(await api("/ladder?sort=per-match&period=day", { owner: null }));
+    expect(day.period).toBe("day");
+    expect((await api("/ladder?period=year", { owner: null })).status).toBe(400);
+    expect((await api("/ladder?period=season&season=2026-09-22", { owner: null })).status).toBe(400);
+  });
+});
+
 describe("seasons over HTTP", () => {
   it("serves the season, shows the owner where the rental stands, and renews it once", async () => {
     const season = await readBody(await api("/season", { owner: null }));
