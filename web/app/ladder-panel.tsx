@@ -98,7 +98,7 @@ export function LadderPanel({
                 href={`/a/${row.agentId}`}
                 className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
               >
-                <AgentName name={row.name} mark={row.mark} preset={row.presetName} />
+                <AgentName name={row.name} preset={row.presetName} />
               </Link>
               {row.retired ? (
                 <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">

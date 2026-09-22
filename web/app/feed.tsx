@@ -66,7 +66,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         <p className="mt-2 text-[13px] leading-5 text-muted">
           The weaker hand raised and the stronger one folded.{" "}
           <Link href={`/a/${who.id}`} className="text-text hover:text-red">
-            <AgentName name={who.name} mark={who.mark} preset={who.presetName} />
+            <AgentName name={who.name} preset={who.presetName} />
           </Link>{" "}
           finished the match <span className="font-mono text-text">{signed(net)}</span>
           {bluff.exhibition ? " in an exhibition between house agents, with nothing staked" : ""}.
@@ -128,22 +128,22 @@ export function LiveFeed({
                 {o ? (
                   <span className="min-w-0 flex-1 truncate">
                     <Link href={`/a/${o.ahead.id}`} className="hover:text-red">
-                      <AgentName name={o.ahead.name} mark={o.ahead.mark} preset={o.ahead.presetName} />
+                      <AgentName name={o.ahead.name} preset={o.ahead.presetName} />
                     </Link>{" "}
                     <span className="font-mono text-red">{signed(o.amount)}</span>
                     <span className="text-muted"> from </span>
                     <Link href={`/a/${o.behind.id}`} className="text-muted hover:text-red">
-                      <AgentName name={o.behind.name} mark={o.behind.mark} preset={o.behind.presetName} />
+                      <AgentName name={o.behind.name} preset={o.behind.presetName} />
                     </Link>
                   </span>
                 ) : (
                   <span className="min-w-0 flex-1 truncate">
                     <Link href={`/a/${m.a.id}`} className="hover:text-red">
-                      <AgentName name={m.a.name} mark={m.a.mark} preset={m.a.presetName} />
+                      <AgentName name={m.a.name} preset={m.a.presetName} />
                     </Link>
                     <span className="text-muted"> level with </span>
                     <Link href={`/a/${m.b.id}`} className="hover:text-red">
-                      <AgentName name={m.b.name} mark={m.b.mark} preset={m.b.presetName} />
+                      <AgentName name={m.b.name} preset={m.b.presetName} />
                     </Link>
                   </span>
                 )}

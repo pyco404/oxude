@@ -735,7 +735,7 @@ function RosterPanel({
             {agents.slice(0, 8).map((a) => (
               <li key={a.agentId} className="flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0">
                 <span className="min-w-0 flex-1 truncate">
-                  <AgentName name={a.name} mark={a.mark} preset={a.presetName} />
+                  <AgentName name={a.name} preset={a.presetName} />
                 </span>
                 <span className="w-14 shrink-0 font-mono text-[10px] text-muted">{a.presetName ?? "brief"}</span>
                 <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
@@ -784,7 +784,7 @@ function YourAgents({
                 className={`flex w-full items-center gap-2 px-2 py-2 text-left text-[13px] ${isOpen ? "bg-panel-2 text-text" : "text-muted hover:text-text"}`}
               >
                 <span className="min-w-0 flex-1 truncate">
-                  <AgentName name={a.name} mark={a.mark} preset={a.presetName} />
+                  <AgentName name={a.name} preset={a.presetName} />
                 </span>
                 {a.retired ? (
                   <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted">retired</span>
@@ -830,7 +830,7 @@ function AgentCard({
       <div className="p-3">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-lg font-medium">
-            <AgentName name={agent.name} mark={agent.mark} preset={agent.presetName} />
+            <AgentName name={agent.name} preset={agent.presetName} />
           </p>
           <span className="font-mono text-[11px] text-muted">{agent.presetName ?? "your brief"}</span>
         </div>
@@ -931,7 +931,7 @@ function AgentCard({
         {lastPlay ? (
           <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
             vs{" "}
-            <AgentName name={lastPlay.opponent.name} mark={lastPlay.opponent.mark} preset={lastPlay.opponent.presetName} /> ·{" "}
+            <AgentName name={lastPlay.opponent.name} preset={lastPlay.opponent.presetName} /> ·{" "}
             {lastPlay.result.rounds} rounds · staked {lastPlay.stake} ·{" "}
             <span className={lastPlay.result.net >= 0 ? "text-text" : "text-red"}>{whole(lastPlay.result.net)}</span>
             {lastPlay.result.net !== lastPlay.result.uncappedNet

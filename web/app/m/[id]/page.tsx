@@ -69,11 +69,11 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       <section className="border border-line bg-panel lg:sticky lg:top-8">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
           <Link href={`/a/${match.agentA.id}`} className="hover:text-red">
-            <AgentName name={summary.names.A} mark={match.agentA.mark} preset={match.agentA.presetName} />
+            <AgentName name={summary.names.A} preset={match.agentA.presetName} />
           </Link>{" "}
           <span className="text-muted">vs</span>{" "}
           <Link href={`/a/${match.agentB.id}`} className="hover:text-red">
-            <AgentName name={summary.names.B} mark={match.agentB.mark} preset={match.agentB.presetName} />
+            <AgentName name={summary.names.B} preset={match.agentB.presetName} />
           </Link>
         </h1>
         {/* The two characters, face to face, each with what the match did to it. */}

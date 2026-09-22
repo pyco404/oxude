@@ -50,7 +50,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
         <span className="min-w-0 flex-1 truncate">
           <span className="text-muted">vs </span>
           <Link href={`/a/${opponent.id}`} className="hover:text-red">
-            <AgentName name={opponent.name} mark={opponent.mark} preset={opponent.presetName} />
+            <AgentName name={opponent.name} preset={opponent.presetName} />
           </Link>
         </span>
         {m.exhibition ? (
@@ -111,7 +111,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       <section className="border border-line bg-panel lg:sticky lg:top-8">
         <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
           <h1 className="min-w-0 truncate text-[15px]">
-            <AgentName name={agent.name} mark={agent.mark} preset={agent.presetName} />
+            <AgentName name={agent.name} preset={agent.presetName} />
           </h1>
           {agent.retired ? (
             <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
