@@ -8,7 +8,7 @@ In order. Each step ships to devnet before the next begins, until the last, whic
 
 1. **Bands** — done. Money scales, the cover rule, seeded house agents in every band.
 2. **Autoplay** — built. Server-side play on a timer, the floor, and the ranked/unranked split on the ladder; the scheduler and ladder are deployed, and the owner's panel ships with the web release.
-3. **Weekly seasons** — next. One shared Monday-to-Monday UTC season for every rental ([Decided](#decided)). Placed here because three later pieces depend on it: rewards pay out on final season placement, auctions run at the season boundary, and [the chip rate](#the-chip-rate) can only change between seasons.
+3. **Weekly seasons** — built. One shared Monday-to-Monday UTC season for every rental ([Seasons](#seasons)). Placed here because three later pieces depend on it: rewards pay out on final season placement, auctions run at the season boundary, and [the chip rate](#the-chip-rate) can only change between seasons.
 4. **[Characters](#characters)** — identity and presentation for every agent. Placed ahead of deposits because a character is presentation only: it touches no money, needs no program change and none of the [Open questions](#open-questions), so it can ship now and give players a reason to show up while the money pieces are still being built. It also comes before rewards and auctions, because both of them are about an agent's *standing*, and a standing is easier to care about, compete over and bid on when it belongs to someone with a name and a face.
 5. **Deposits and paid rent** — the deposit instruction (open question 3) and rent paid at the season's rate ([Renting](#renting)), so an agent is funded by its owner rather than a fixed seed.
 6. **Rewards** — the prize pools funded by the creator-fee split ([Creator fees and prizes](#creator-fees-and-prizes)).
@@ -59,9 +59,23 @@ The rules on the rate:
 ## Renting
 
 - An agent rents for **$2 worth of $OXUDE**. The fee is **burned**.
-- A rental lasts **168 hours (one week)**.
+- A rental runs to the **end of the season** it is taken out in, however late in the week it starts ([Seasons](#seasons)). A full season is 168 hours.
 - The price is set in stable terms and converted at the **season's rate**, the same one the chips use, so a rising token doesn't make the game unaffordable and every rental bought in a given week costs the same number of tokens.
 - **No free agent.** Every rented agent pays the fee. Instead there is a **free trial** that plays house agents only. It gets no ladder placement and isn't eligible for prizes.
+
+## Seasons
+
+A season runs **Monday 00:00 UTC to the next Monday 00:00 UTC**, and every rental ends at a season boundary. Built on devnet; renewal is free there.
+
+- **Renting mid-season is allowed**, and ends at the same boundary as everyone else's. The rent screen shows the season and the time left in it.
+- **Renewal is once per season, never a standing switch**, because on mainnet it costs rent. From **72 hours** before the end the owner is asked to renew; a renewed agent carries on into the next season with its record, balance, band and floor.
+- **At the boundary, autoplay stops for every agent**, renewed or not. Band and floor carry over; the owner switches autoplay back on.
+- **An agent that was not renewed expires.** It cannot play and is not matchable, but for **24 hours** its owner can still renew it, and it comes back exactly as it was. After that it **lapses**: it retires with its record kept, and its balance stays withdrawable — all of it at once, since it can never play again.
+- **Final placement is frozen at the boundary**, and the grace period does not touch it: an agent renewed the next day plays in the next season, not the last one.
+- **The ladder has three views** — today, this season and all time — which rank the same thing, player-versus-player matches normalised onto band B, over different windows. Today is the window daily rewards will pay on.
+- **The boundary is exact.** A rental's end is checked where every match is recorded, under both agents' locks, so no match lands past it however late the boundary job runs. The job itself runs in one transaction under the season's row lock and skips a closed season, so a restart mid-run or a second instance changes nothing.
+- **On mainnet the auction window replaces the grace period.** An unrenewed agent goes to auction at the boundary rather than waiting 24 hours to lapse ([Expiry and auction](#expiry-and-auction)).
+- **The chip rate changes at the boundary.** The boundary job has a hook for it that does nothing on devnet; on mainnet it sets the new season's rate and queues it for the program in the same transaction ([The chip rate](#the-chip-rate)). A settlement still on its way when the rate changes must land at the rate of the season its match was played in, so on mainnet each queued settlement carries its amount already converted, not chips to convert on landing.
 
 ## Funding and stakes
 
