@@ -820,6 +820,35 @@ describe("characters over HTTP", () => {
   });
 });
 
+describe("portraits over HTTP", () => {
+  it("serves an agent's face as SVG, large and small, with its character in the agent view", async () => {
+    const created = await readBody(await api("/agents", { method: "POST", owner: "portrait-owner", body: JSON.stringify({ presetName: "Mirage" }) }));
+    const id = created.agent.id as string;
+    const large = await api(`/agents/${id}/portrait.svg`, { owner: null });
+    expect(large.status).toBe(200);
+    expect(large.headers.get("content-type")).toMatch(/^image\/svg\+xml/);
+    expect(large.headers.get("content-security-policy")).toBe("default-src 'none'");
+    const svg = await large.text();
+    expect(svg).toMatch(/^<svg xmlns="http:\/\/www.w3.org\/2000\/svg"/);
+    const small = await (await api(`/agents/${id}/portrait.svg?size=small`, { owner: null })).text();
+    expect(small).not.toBe(svg);
+
+    // Anyone sees the character; the owner sees it too.
+    const seen = await readBody(await api(`/agents/${id}`, { owner: null }));
+    expect(seen.agent.character).toMatchObject({ nameSource: "generated", type: expect.any(String) });
+    expect(seen.agent.character.bio).toContain(seen.agent.name);
+    expect((await readBody(await api(`/agents/${id}`, { owner: "portrait-owner" }))).agent.character).toEqual(seen.agent.character);
+  });
+
+  it("draws a face for an agent with no character yet, and 404s one that does not exist", async () => {
+    const [house] = await db.select().from(agents).where(sql`${agents.ownerId} is null`).limit(1);
+    const res = await api(`/agents/${house!.id}/portrait.svg`, { owner: null });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/^<svg /);
+    expect((await api("/agents/00000000-0000-4000-8000-000000000000/portrait.svg", { owner: null })).status).toBe(404);
+  });
+});
+
 describe("ladder periods over HTTP", () => {
   it("serves all time by default, and a season or today when asked", async () => {
     const all = await readBody(await api("/ladder?sort=winnings", { owner: null }));

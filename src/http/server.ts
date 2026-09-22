@@ -24,7 +24,7 @@ import {
 } from "../db/runner.js";
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
-import { createCharacter, isDefaultName, NO_MODEL, publicCharacter, type CharacterDeps } from "../character/store.js";
+import { characterOf, createCharacter, isDefaultName, NO_MODEL, portraitSvg, publicCharacter, type CharacterDeps } from "../character/store.js";
 import { moderate, type Verdict } from "../character/moderation.js";
 import { dayStart, seasonAt, seasonByKey, GRACE_MS, RENEWAL_REMINDER_MS } from "../season.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
@@ -97,6 +97,15 @@ const defaultElicit: Elicit = async ({ brief }) => {
   return log.policy ? { table: log.policy } : { table: null, reason: log.fallback?.reason ?? "no table returned" };
 };
 
+/** A response that is not JSON: a portrait, served as the image it is. */
+class Raw {
+  constructor(
+    readonly body: string,
+    readonly contentType: string,
+    readonly headers: Record<string, string> = {},
+  ) {}
+}
+
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -150,6 +159,7 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents\/([^/]+)\/seen$/, postSeen],
     ["POST", /^\/agents\/([^/]+)\/renew$/, postRenew],
     ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
+    ["GET", /^\/agents\/([^/]+)\/portrait\.svg$/, getPortrait],
     ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
     ["GET", /^\/agents\/([^/]+)\/matches$/, getAgentMatches],
@@ -341,10 +351,32 @@ export function createApp(options: AppOptions): Server {
     };
   }
 
+  /**
+   * An agent's face, as SVG. `?size=small` is the simplified drawing for 24-32
+   * px. Public: it is on the ladder and in the feed. Cached for a day - a face
+   * is stored once and does not change, but one drawn for an agent that has no
+   * character yet will be replaced by the stored one after the backfill.
+   */
+  async function getPortrait(ctx: Ctx) {
+    const id = requireUuid(ctx.params[0]);
+    const [agent] = await db.select({ id: agents.id, policyTable: agents.policyTable }).from(agents).where(eq(agents.id, id)).limit(1);
+    if (!agent) throw new HttpError(404, "no such agent");
+    const svg = await portraitSvg(db, agent, ctx.query.get("size") === "small");
+    if (!svg) throw new HttpError(404, "this agent has no portrait");
+    return new Raw(svg, "image/svg+xml; charset=utf-8", {
+      "cache-control": "public, max-age=86400",
+      // An SVG opened directly is a document: it may run nothing and load nothing.
+      "content-security-policy": "default-src 'none'",
+      "x-content-type-options": "nosniff",
+    });
+  }
+
   async function getAgent(ctx: Ctx) {
     const id = requireUuid(ctx.params[0]);
     const row = await publicAgent(db, id);
     if (!row) throw new HttpError(404, "no such agent");
+    const found = await characterOf(db, id);
+    const character = found ? publicCharacter(found) : null;
     const [owned] = await db.select({ ownerId: agents.ownerId }).from(agents).where(eq(agents.id, id)).limit(1);
     if (ctx.ownerId && owned?.ownerId === ctx.ownerId) {
       const own = await ownerAgent(db, id, ctx.ownerId);
@@ -357,6 +389,7 @@ export function createApp(options: AppOptions): Server {
           trueRating: own!.trueRating,
           trueRatingBasis: `against band ${own!.band}'s roster as it stands today`,
           ...bandStatus(row),
+          character,
         },
         // Private to the owner: whether it is playing, and what it did while they were away.
         autoplay: await autoplayStatus(db, full!, { intervalMs: autoplayIntervalMs }),
@@ -366,7 +399,7 @@ export function createApp(options: AppOptions): Server {
         view: "owner",
       };
     }
-    return { agent: { ...row, ...bandStatus(row) }, view: "public" };
+    return { agent: { ...row, ...bandStatus(row), character }, view: "public" };
   }
 
   async function postPlay(ctx: Ctx) {
@@ -857,6 +890,11 @@ export function createApp(options: AppOptions): Server {
 
     try {
       const payload = await route[2](ctx);
+      if (payload instanceof Raw) {
+        res.writeHead(200, { ...corsHeaders, "content-type": payload.contentType, ...payload.headers });
+        res.end(payload.body);
+        return;
+      }
       reply(res, req.method === "POST" ? 201 : 200, payload as Record<string, unknown>);
     } catch (error) {
       if (error instanceof HttpError) {
