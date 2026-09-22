@@ -37,6 +37,8 @@ import {
 } from "./schema.js";
 import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, StakeError } from "./ledger.js";
 import { recordEvent } from "./events.js";
+import { rentalEndFor, rentalOpen, rentalOpenSql } from "./rental.js";
+import { seasonAt } from "../season.js";
 
 export const DEFAULT_RULES: RulesConfig = {
   turnOrder: OXUDE_RULES.turnOrder,
@@ -105,6 +107,8 @@ export type CreateAgentInput = {
   band?: BandName;
   /** Balance to seed. Defaults to STARTING_BALANCE. */
   startingBalance?: number;
+  /** When the rental is taken out, which decides the season it ends with. Defaults to now. */
+  now?: Date;
 };
 
 /** The rules a band is played under: the shipped rules at that band's scale. */
@@ -133,6 +137,9 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
       policyTable: table,
       policyStakes: input.policyStakes ?? DEFAULT_RULES.stakes,
       band: input.band ?? DEFAULT_BAND,
+      // A player's rental ends at the season boundary, however far into the
+      // season it starts. House agents are not rented and never end.
+      rentalEndsAt: input.ownerId ? rentalEndFor(input.now) : null,
     })
     .returning();
   await tx.insert(ratings).values({ agentId: row!.id });
@@ -226,6 +233,7 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   assertStakesMatch(rowB, rules.stakes);
   for (const row of [rowA, rowB]) {
     if (row.retiredAt !== null) throw new StakeError(`${row.name} is retired`);
+    if (!rentalOpen(row)) throw new StakeError(`${row.name}'s rental ended with the season; renew it to play`);
   }
 
   // The band's worst match, which both sides must be able to cover outright.
@@ -248,6 +256,16 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
     // Lock both agents, then make sure neither has a withdrawal on its way: while one is
     // in flight the vault is spoken for, and a match would move money the chain isn't expecting.
     await tx.execute(sql`select id from ${agents} where ${agents.id} in (${rowA.id}, ${rowB.id}) for update`);
+    // Checked again under the lock, because the checks above ran before it: the
+    // season may have ended, or the agent retired, while the match was played.
+    // This is what makes the boundary exact - a match recorded after an
+    // agent's rental ended is refused here, whether or not the boundary job
+    // has run yet. `now` is also what decides the match's season.
+    const now = new Date();
+    for (const locked of await tx.select().from(agents).where(inArray(agents.id, [rowA.id, rowB.id]))) {
+      if (locked.retiredAt !== null) throw new StakeError(`${locked.name} is retired`);
+      if (!rentalOpen(locked, now)) throw new StakeError(`${locked.name}'s rental ended with the season; renew it to play`);
+    }
     const busy = await tx
       .select({ agentId: withdrawals.agentId })
       .from(withdrawals)
@@ -271,7 +289,9 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
         // Both sides player-rented, decided here and stored, so a later sale
         // cannot change what this match counted for.
         ranked: rowA.ownerId !== null && rowB.ownerId !== null,
+        season: seasonAt(now).key,
         log,
+        createdAt: now,
       })
       .returning();
     await record(tx, [
@@ -341,6 +361,7 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
       band,
       log,
       exhibition: true,
+      season: seasonAt(new Date()).key,
     })
     .returning();
   return { match: match!, log };
@@ -441,6 +462,7 @@ export async function playableBands(
       and(
         ne(agents.id, agentId),
         isNull(agents.retiredAt),
+        rentalOpenSql(),
         ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, ownerId)),
       ),
     );
@@ -536,6 +558,7 @@ export async function hasOutflowRoom(db: Db, agentId: string, worstMatch: number
 export async function pickOpponent(db: Db, agentId: string, options: PickOpponentOptions = {}): Promise<OpponentPick> {
   const minCandidates = options.minCandidates ?? 4;
   const me = await loadAgent(db, agentId);
+  if (!rentalOpen(me)) throw new StakeError(`${me.name}'s rental ended with the season; renew it to play`);
   const mine = me.trueRating ?? 0;
 
   // Paired on true rating: the only signal here that is not noise. No recency
@@ -567,6 +590,8 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
       and(
         ne(agents.id, agentId),
         isNull(agents.retiredAt),
+        // An expired agent is not matchable: it could not be recorded anyway.
+        rentalOpenSql(),
         inBand,
         // Two agents with no owner are not the same owner.
         me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId)),
@@ -780,7 +805,7 @@ export async function roster(db: Db, options: { band?: BandName; limit?: number 
     })
     .from(agents)
     .innerJoin(ratings, eq(ratings.agentId, agents.id))
-    .where(and(isNull(agents.retiredAt), inBand))
+    .where(and(isNull(agents.retiredAt), rentalOpenSql(), inBand))
     .orderBy(desc(ratings.matchesPlayed))
     .limit(options.limit ?? 24);
 }

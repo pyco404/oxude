@@ -4,6 +4,7 @@ import type { Db } from "./client.js";
 import { pickOpponent, runMatch } from "./runner.js";
 import { balanceOf, StakeError } from "./ledger.js";
 import { recordEvent } from "./events.js";
+import { rentalOpenSql } from "./rental.js";
 import { headlineFor } from "../transcript.js";
 import {
   agents,
@@ -145,6 +146,8 @@ export async function dueAgents(db: Db, intervalMs: number, now = new Date()): P
         eq(agents.autoplay, true),
         isNotNull(agents.ownerId),
         isNull(agents.retiredAt),
+        // Expired: nothing to play until the owner renews, so not due.
+        rentalOpenSql(now),
         or(isNull(agents.autoplayLastMatchAt), lte(agents.autoplayLastMatchAt, due)),
       ),
     )
