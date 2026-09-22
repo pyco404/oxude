@@ -56,7 +56,11 @@ export async function createCharacter(db: Db, agentId: string, options: CreateOp
   // Named by its owner, unless the name is one the rent screen filled in.
   const chosen = agent.ownerId !== null && !isDefaultName(agent.name) && options.nameVerdict !== undefined;
   const name = chosen ? agent.name : characterName(agentId, await takenNames(db));
-  let flagged: string | null = options.nameVerdict && !options.nameVerdict.checked ? "name not checked: the model could not be reached" : null;
+  // A name that failed its check at rent never gets this far - it is refused.
+  // One that fails in the backfill is kept but flagged, for a person to decide:
+  // the backfill does not rename what an owner chose.
+  const v = options.nameVerdict;
+  let flagged: string | null = v && !v.ok ? `name failed its check: ${v.reason ?? "no reason given"}` : v && !v.checked ? "name not checked: the model could not be reached" : null;
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const face = uniquePortrait(agentId, agent.policyTable, await takenLooks(db));

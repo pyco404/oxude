@@ -85,6 +85,15 @@ describe("creating a character", () => {
     await close();
   });
 
+  it("keeps an owner's name that fails its check in the backfill, flagged for a person to decide", async () => {
+    const { db, close } = await fresh();
+    const a = await createAgent(db, { name: "Questionable", presetName: "Anchor", ownerId: someWallet() });
+    const c = await createCharacter(db, a.id, { nameVerdict: { ok: false, reason: "it names a real person", checked: true } });
+    expect(await nameOf(db, a.id)).toBe("Questionable");
+    expect(c).toMatchObject({ nameSource: "owner", moderation: "flagged", moderationNote: "name failed its check: it names a real person" });
+    await close();
+  });
+
   it("serves a portrait for an agent without a character yet, drawn and not stored", async () => {
     const { db, close } = await fresh();
     const a = await createAgent(db, { name: "Late", presetName: "Bully" });
