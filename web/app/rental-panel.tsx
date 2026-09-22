@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type RentalStatus } from "@/lib/api";
-import { duration, utcMoment } from "@/lib/time";
+import { duration, localMoment } from "@/lib/time";
 import { useWallet } from "./wallet-context";
 
 const REFRESH_MS = 60_000;
@@ -105,7 +105,7 @@ export function RentalPanel({
           Expired: renew within {graceLeft > 0 ? duration(graceLeft) : "moments"} to keep it.
         </p>
         <p className="mt-1 text-text">
-          The season ended without a renewal, so it can&apos;t play. Renew by {utcMoment(rental.graceEndsAt!)} and it comes
+          The season ended without a renewal, so it can&apos;t play. Renew by {localMoment(rental.graceEndsAt!)} and it comes
           back with its record, balance, band and floor as they were. After that it retires; its balance stays
           withdrawable.
         </p>
@@ -122,7 +122,7 @@ export function RentalPanel({
   } else if (rental.state === "renewed") {
     body = (
       <p className="text-[13px] leading-5 text-muted">
-        Renewed: it carries on into the next season, until {utcMoment(rental.endsAt!)}. Autoplay stops at the boundary;
+        Renewed: it carries on into the next season, until {localMoment(rental.endsAt!)}. Autoplay stops at the boundary;
         switch it back on then.
       </p>
     );
@@ -130,7 +130,9 @@ export function RentalPanel({
     const endLeft = left(rental.endsAt);
     body = rental.remind ? (
       <div className="border border-red/60 px-3 py-3 text-[13px] leading-5">
-        <p className="text-red">Season {rental.season.number} ends in {duration(endLeft)}.</p>
+        <p className="text-red">
+          Season {rental.season.number} ends in {duration(endLeft)}: {localMoment(rental.endsAt!)}.
+        </p>
         <p className="mt-1 text-muted">
           Renew now to carry on into the next season. Free on devnet. If you don&apos;t, it stops at the boundary and you
           have 24 hours to renew before it retires.
@@ -140,7 +142,7 @@ export function RentalPanel({
     ) : (
       <>
         <p className="text-[13px] leading-5 text-muted">
-          Rented through season {rental.season.number}: ends {utcMoment(rental.endsAt!)}, in {duration(endLeft)}.
+          Rented through season {rental.season.number}: ends {localMoment(rental.endsAt!)}, in {duration(endLeft)}.
         </p>
         {button("Renew for next season", false)}
       </>

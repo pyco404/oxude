@@ -13,10 +13,21 @@ export function duration(ms: number): string {
   return h ? `${d} d ${h} h` : `${d} d`;
 }
 
-/** "Mon 28 Sep, 00:00 UTC": seasons are UTC, so their boundaries are shown in UTC. */
-export function utcMoment(iso: string | Date): string {
+/**
+ * A moment in the viewer's own time, with UTC beside it: seasons turn over at
+ * 00:00 UTC, which is rarely anyone's midnight. "Mon 28 Sep, 1:00 AM your time
+ * (00:00 UTC)", with the UTC day named too when it isn't the same day locally
+ * ("Sun 27 Sep, 8:00 PM your time (Mon 00:00 UTC)"). A viewer on UTC gets it once.
+ *
+ * Uses the browser's zone and locale, so call it only in the browser: a server
+ * render would show the server's time.
+ */
+export function localMoment(iso: string | Date): string {
   const d = new Date(iso);
-  const day = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
-  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
-  return `${day}, ${time} UTC`;
+  const local = d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  const utcTime = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+  const utcDay = d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+  const localDay = d.toLocaleDateString("en-GB", { weekday: "short" });
+  if (d.getTimezoneOffset() === 0) return `${d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}, ${utcTime} UTC`;
+  return `${local} your time (${utcDay === localDay ? "" : `${utcDay} `}${utcTime} UTC)`;
 }

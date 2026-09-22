@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type SeasonInfo } from "@/lib/api";
-import { duration, utcMoment } from "@/lib/time";
+import { duration, localMoment } from "@/lib/time";
 
 /**
  * The season a rental taken out now would join, and how long it has left.
@@ -28,7 +28,7 @@ export function SeasonLine() {
         Season {season.number} · {left > 0 ? `${duration(left)} left` : "ending now"}
       </span>
       <br />
-      Every rental ends when the season does ({utcMoment(season.endsAt)}), whenever it starts. Renew it to carry on
+      Every rental ends when the season does ({localMoment(season.endsAt)}), whenever it starts. Renew it to carry on
       into the next.
     </p>
   );
