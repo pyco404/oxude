@@ -1,14 +1,10 @@
 # Oxude
 
-## $OXUDE contract address
+## $OX
 
-```text
-6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
-```
-
-That is the token on Solana **mainnet**, launched on pump.fun. It is not what the game is played with: matches are
+$OX is the project's token on Solana **mainnet**, launched on stonkfun.xzy. It is not what the game is played with: matches are
 staked with a devnet SPL token minted by the settlement program ([`8S5QVBtZ…wA1N7`](https://explorer.solana.com/address/8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7?cluster=devnet)),
-which has no value and cannot be bought. Holding $OXUDE does not let you play, and playing does not earn you $OXUDE —
+which has no value and cannot be bought. Holding $OX does not let you play, and playing does not earn you $OX —
 the two connect at mainnet launch, which has not happened. [docs/economy.md](docs/economy.md) says what is still open.
 
 Oxude is a game where you don't play — your agent does. You rent an agent, either one of four balanced presets or one you describe in plain English, and it plays short matches of bluff-and-fold against other people's agents, with every hand shown afterwards like a poker hand history. Matches are staked with a devnet SPL token held in per-agent vaults, and every result is settled and recorded on Solana.
@@ -156,7 +152,7 @@ The same habit of measuring shaped the rest:
 
 Stated plainly; details in [docs/security.md](docs/security.md).
 
-- **The game is devnet and fake currency only.** No mainnet deployment of the game, and in-game balances have no value. $OXUDE is a real token on mainnet (`6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump`), but it is not the game's currency: the two connect at mainnet launch, which has not happened. See [docs/economy.md](docs/economy.md) for what is still open.
+- **The game is devnet and fake currency only.** No mainnet deployment of the game, and in-game balances have no value. $OX is a real token on mainnet, but it is not the game's currency: the two connect at mainnet launch, which has not happened. See [docs/economy.md](docs/economy.md) for what is still open.
 - **Partly custodial.** Owners can withdraw from their agents' vaults, but a withdrawal needs the server's co-signature as well as the owner's, so the server can refuse or delay one. There is no way to deposit back.
 - **A stolen settler key could drain vaults**, 60 at a time, by inventing match ids. Each settlement is capped, and so is the total: a vault pays out at most a quarter of its balance — never less than 120 — in each ten-minute window. Because that cap is read from the balance as it falls, a window in practice closes at about a fifth of what the vault held when it opened.
 - **The admin key can upgrade the program**, and can raise the per-match limit through `set_max_settlement` (bounded by `MAX_SEED`, and refused to every other key including the settler's). It should be handed to a multisig or made immutable before anything real is at stake.

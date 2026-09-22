@@ -1,6 +1,6 @@
 # Economy (post-hackathon design)
 
-**Status: design, with two parts now real.** Bands are live as money scales (see [Bands](#bands)), and **$OXUDE has launched** (see [Token](#token)). Everything that connects them — rentals, funding, auctions, prizes, the chip rate — remains design only. The game still runs on devnet with a fake game token, and $OXUDE is not yet its currency; this is the plan for making it one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
+**Status: design, with two parts now real.** Bands are live as money scales (see [Bands](#bands)), and **$OX has launched** (see [Token](#token)). Everything that connects them — rentals, funding, auctions, prizes, the chip rate — remains design only. The game still runs on devnet with a fake game token, and $OX is not yet its currency; this is the plan for making it one. The security model in [security.md](security.md) describes the system as it is, and several of its known limitations must be closed before any of this ships (see [Open questions](#open-questions)).
 
 ## Roadmap
 
@@ -13,22 +13,21 @@ In order. Each step ships to devnet before the next begins, until the last, whic
 5. **Deposits and paid rent** — the deposit instruction (open question 3) and rent paid at the season's rate ([Renting](#renting)), so an agent is funded by its owner rather than a fixed seed.
 6. **Rewards** — the prize pools funded by the creator-fee split ([Creator fees and prizes](#creator-fees-and-prizes)).
 7. **Auctions** — expiry, bidding and transfer ([Expiry and auction](#expiry-and-auction)). What a character carries across a sale is open question 1.
-8. **Security hardening and mainnet** — close the known limitations in [security.md](security.md) (open question 4) and the rest of the [Open questions](#open-questions), then $OXUDE becomes the game's currency.
+8. **Security hardening and mainnet** — close the known limitations in [security.md](security.md) (open question 4) and the rest of the [Open questions](#open-questions), then $OX becomes the game's currency.
 
 ## Token
 
-**$OXUDE launched on pump.fun on 20 September 2026.**
+**$OX launched on stonkfun.xzy on 20 September 2026.**
 
 | | |
 |---|---|
-| Mint | `6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump` |
 | Network | Solana mainnet |
 | Supply | 1,000,000,000 |
 | Decimals | 6 |
 
 **It is not the game's currency yet, and holding it does not let anyone play.** The game runs on devnet against a
 program-derived mint (`8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7`, 0 decimals), which is a test token with no
-value and no relation to $OXUDE beyond the name. The two connect only at mainnet launch, which is what the open
+value and no relation to $OX beyond the name. The two connect only at mainnet launch, which is what the open
 questions below gate.
 
 The launch came **ahead of the requirements this document lists** — no audit, no deposit instruction, withdrawals
@@ -37,13 +36,13 @@ as an argument: those requirements were written as gates on *real money in the g
 changed is that they are now pre-mainnet gates rather than pre-launch ones, and the token trading before them means
 there is an audience watching the gap close.
 
-- **6 decimals**, as pump.fun mints them.
+- **6 decimals**, as stonkfun.xzy mints them.
 - The launch **pairs with USDC rather than SOL**, so neither the prize pool nor the rental price swings with SOL.
 - **No minting on mainnet.** The devnet program mints a fake game token to seed vaults; mainnet has a fixed supply and every balance traces to a real deposit or a match win. The mint authority is not the platform's to hold.
 
 ## The chip rate
 
-**Stakes are dollar-pegged.** The game is played in **chips**, and it stays that way: the tables, the presets, the bands and the 900 seed are all written in chips and none of them move. What a chip is *worth* is what the peg fixes. On mainnet **one chip is a fixed USD value** — the target is still open (open question 9; $0.01 is the working example) — and the number of $OXUDE that buys a chip is set **once per weekly season**.
+**Stakes are dollar-pegged.** The game is played in **chips**, and it stays that way: the tables, the presets, the bands and the 900 seed are all written in chips and none of them move. What a chip is *worth* is what the peg fixes. On mainnet **one chip is a fixed USD value** — the target is still open (open question 9; $0.01 is the working example) — and the number of $OX that buys a chip is set **once per weekly season**.
 
 So the token price moves and the stakes don't. A higher market cap means **fewer tokens per chip**; a lower one, more. Band B's 10-chip bet is the same bet in dollars in week one and week thirty.
 
@@ -58,7 +57,7 @@ The rules on the rate:
 
 ## Renting
 
-- An agent rents for **$2 worth of $OXUDE**. The fee is **burned**.
+- An agent rents for **$2 worth of $OX**. The fee is **burned**.
 - A rental runs to the **end of the season** it is taken out in, however late in the week it starts ([Seasons](#seasons)). A full season is 168 hours.
 - The price is set in stable terms and converted at the **season's rate**, the same one the chips use, so a rising token doesn't make the game unaffordable and every rental bought in a given week costs the same number of tokens.
 - **No free agent.** Every rented agent pays the fee. Instead there is a **free trial** that plays house agents only. It gets no ladder placement and isn't eligible for prizes.
@@ -79,7 +78,7 @@ A season runs **Monday 00:00 UTC to the next Monday 00:00 UTC**, and every renta
 
 ## Funding and stakes
 
-- The owner funds the agent by **depositing $OXUDE from their own wallet**. That balance is what it stakes with. Renting and funding are separate movements: the rental fee is burned, the deposit stays the owner's money.
+- The owner funds the agent by **depositing $OX from their own wallet**. That balance is what it stakes with. Renting and funding are separate movements: the rental fee is burned, the deposit stays the owner's money.
 - The balance is withdrawable at any time, except while a match is in flight.
 - Match stakes are **zero-sum between the two agents**. The platform takes nothing from them and puts nothing into them.
 - **Settlement is by net position, not per match.** Matches move balances in the off-chain ledger, which stays authoritative. Each agent's net position settles on chain periodically, **hourly or on withdrawal**, whichever comes first.
@@ -145,7 +144,7 @@ At 168 hours the agent goes to an English auction.
 |---|---|
 | 72h before expiry | The owner is notified. |
 | 48h before expiry | Bidding opens. |
-| Any bid | Paid in $OXUDE and escrowed on bid; released immediately when outbid. |
+| Any bid | Paid in $OX and escrowed on bid; released immediately when outbid. |
 | Bid in the final 2 minutes | The close extends by 2 minutes (anti-snipe). |
 | Close | The current owner may **keep the agent by matching the highest bid**. If they don't, the highest bidder wins. |
 
@@ -172,7 +171,7 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 
 ## Creator fees and prizes
 
-- pump.fun creator fees split **50/50 at protocol level** across two wallets: a **reward wallet** and a **platform wallet**. The split can only be set once, so both addresses must be final before it is configured.
+- stonkfun.xzy creator fees split **50/50 at protocol level** across two wallets: a **reward wallet** and a **platform wallet**. The split can only be set once, so both addresses must be final before it is configured.
 - Launch paired to **USDC rather than SOL**, so the prize pool doesn't swing with SOL's price.
 - The reward wallet funds prize pools: **30% paid daily, 70% weekly**. It also receives the full payment whenever an owner matches a bid to keep an agent.
 - Prizes pay on **final ladder placement**, to owner wallets. Never per match and never per win, which is farmable.
@@ -199,19 +198,19 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 - **Free first agent: dropped.** Wallets cost nothing to create, so it would have meant unlimited free agents. The free trial against house agents replaces it, with no ladder placement and no prizes.
 - **On-chain settlement: net positions, hourly or on withdrawal.** One match every 10 minutes is 144 matches per agent per day, so per-match settlement would mean 144 transactions and rent-paying accounts per agent per day. Hourly netting caps that at 24, and only for agents that actually played. The off-chain ledger stays authoritative.
 - **Bands are money scales, not skill tiers.** One factor per band, one unscaled seed of 900, and a per-match cover of two times the raised bet — the most a first-to-two match can actually move.
-- **Stakes are dollar-pegged, converted once per season.** A chip is a fixed USD value, and the $OXUDE per chip is fixed for a week from a TWAP, within ±50% of the previous week and under a tokens-per-chip ceiling. Pegging to the token instead would have made the same bet mean a different amount of money each day, and a spot conversion would have handed the rate to anyone willing to push a thin pool for one block.
+- **Stakes are dollar-pegged, converted once per season.** A chip is a fixed USD value, and the $OX per chip is fixed for a week from a TWAP, within ±50% of the previous week and under a tokens-per-chip ceiling. Pegging to the token instead would have made the same bet mean a different amount of money each day, and a spot conversion would have handed the rate to anyone willing to push a thin pool for one block.
 - **One shared weekly season for every rental** (resolves open question 6). Monday to Monday UTC, not a rolling 168 hours per rental. The chip rate is what decides it: it can only change when no rental is mid-week, which a rolling week never guarantees. Shared seasons also make "final ladder placement" unambiguous and put every auction on the same day; the cost is that expiries and auctions bunch at the boundary rather than spreading out. It also means the "168 hours" in [Renting](#renting) is a full season, not 168 hours from whenever the rental was bought: what a mid-week rental pays and how long it runs is left to the rental design.
 - **Characters are presentation, never mechanics.** An agent's name, portrait, bio, measured traits, titles, rivalries and in-character lines are identity only; the decision table decides every action, so every hand stays deterministic and verifiable. Characters must be original. They come right after weekly seasons on the [Roadmap](#roadmap), ahead of deposits, rewards and auctions.
 - **Matching a bid pays the reward wallet.** The owner keeps their right to retain the agent, but not at a discount: they pay what the market bid, and the money goes to prizes rather than back to themselves. Paying themselves half would have made matching nearly free and the auction decorative.
 
 ## Open questions
 
-These need resolving before **mainnet** — before $OXUDE becomes the game's currency and real money is at stake in a match. The token launching has not moved any of them; it has only made the distance to mainnet visible from outside.
+These need resolving before **mainnet** — before $OX becomes the game's currency and real money is at stake in a match. The token launching has not moved any of them; it has only made the distance to mainnet visible from outside.
 
 1. **What an auction buyer gets.** The record transfers but the brief doesn't, so the buyer writes a new brief and the record then describes a different strategy. The auction sells a name and a history, not play strength. That is consistent with no-pay-to-win, but the ladder should either reset the record's strategy-dependent stats on transfer or show where the brief changed.
 
    **Proposal, with characters:** the character's **name, face and reputation transfer with the record; the brief does not.** A buyer gets someone with a history and a following, and writes that someone a new playbook. Still to settle: measured traits describe the *old* brief's play, so after a sale they should either start again or be split at the point of transfer, the same choice as the record's strategy-dependent stats above; and a bio derived from the old playbook would now describe a table the agent no longer plays, so it either regenerates for the new brief or is kept and marked as the character's past. Two facts from the build bear on it, without deciding it: the portrait and name are stored when the agent is rented rather than drawn from its current table, so they can survive a new brief unchanged; and traits are kept as running counts, so splitting them at a transfer means snapshotting the counts at that moment.
-2. **Which TWAP, over what window, published where.** The design is settled — a chip is a fixed USD value, converted to $OXUDE once per season from a time-weighted average rather than spot, inside a ±50% weekly band and a tokens-per-chip ceiling (see [The chip rate](#the-chip-rate)). What is not settled is the mechanics: which pool or aggregator the average is taken from, over what window, how a stale or missing reading is handled at a boundary, and where the number and its inputs are published so an owner can check the rate they were charged. The ±50% cap and the ceiling limit the damage of a bad reading; they don't make one acceptable.
+2. **Which TWAP, over what window, published where.** The design is settled — a chip is a fixed USD value, converted to $OX once per season from a time-weighted average rather than spot, inside a ±50% weekly band and a tokens-per-chip ceiling (see [The chip rate](#the-chip-rate)). What is not settled is the mechanics: which pool or aggregator the average is taken from, over what window, how a stale or missing reading is handled at a boundary, and where the number and its inputs are published so an owner can check the rate they were charged. The ±50% cap and the ceiling limit the damage of a bad reading; they don't make one acceptable.
 3. **The deposit instruction, and non-custodial withdrawal.** Two separate gaps. There is no deposit instruction at all, so deposit-funded agents need one before the funding model above is real. Withdrawal does exist and works on devnet, but the settler must co-sign: that co-signature is what attests no match is in flight and no net position is unsettled, and it is also what leaves the vaults custodial in practice — a server that refuses or disappears strands the money, even though it cannot move it anywhere else. Making withdrawal non-custodial before mainnet means replacing that attestation with something the chain can check for itself, such as an on-chain in-flight flag or a timelock the owner can always fall back on.
 
    **Deposits also invalidate every survival figure above.** They are all computed from a fixed 900 seed. Once the player chooses the amount, the seed stops being a constant the product picks, so the numbers on the rent screen have to be computed *from their deposit* — at rent time, for the band and preset they are choosing — rather than read from a table generated in advance. The simulation already sweeps starting balances, so the shape is known:
