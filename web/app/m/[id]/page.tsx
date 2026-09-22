@@ -1,4 +1,5 @@
 import { AgentName } from "@/app/agent-name";
+import { Portrait } from "@/app/portrait";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Page, PageNote } from "@/app/site-header";
@@ -75,6 +76,24 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             <AgentName name={summary.names.B} mark={match.agentB.mark} preset={match.agentB.presetName} />
           </Link>
         </h1>
+        {/* The two characters, face to face, each with what the match did to it. */}
+        <div className="grid grid-cols-2 border-b border-line">
+          {(["A", "B"] as const).map((seat) => {
+            const who = seat === "A" ? match.agentA : match.agentB;
+            const net = seat === "A" ? match.netA : match.netB;
+            return (
+              <Link
+                key={seat}
+                href={`/a/${who.id}`}
+                className="flex flex-col items-center gap-1.5 px-3 py-3 first:border-r first:border-line hover:text-red"
+              >
+                <Portrait id={who.id} size={96} />
+                <span className="max-w-full truncate text-[13px]">{summary.names[seat]}</span>
+                <span className={`font-mono text-[12px] ${net > 0 ? "text-red" : "text-muted"}`}>{signed(net)}</span>
+              </Link>
+            );
+          })}
+        </div>
         <div className="p-3">
           <p className="font-mono text-2xl">
             <span className={match.netA >= 0 ? "text-red" : "text-text"}>{signed(match.netA)}</span>
