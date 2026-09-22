@@ -24,11 +24,14 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export function WithdrawPanel({
   agentId,
   agentName,
+  retired = false,
   refreshKey,
   onChanged,
 }: {
   agentId: string;
   agentName: string;
+  /** Retired, but with a balance that can still be taken: its rental lapsed. */
+  retired?: boolean;
   /** Anything that changes when the balance might have (matches played, balance). */
   refreshKey: string;
   onChanged: () => void;
@@ -97,6 +100,8 @@ export function WithdrawPanel({
   }
   const n = Number(amount);
   const amountOk = Number.isInteger(n) && n >= 1 && n <= info.maxPartial;
+  // A lapsed agent is already retired and can never play again: all of it, no partial, nothing to confirm away.
+  const lapsed = retired && info.reason === null;
 
   return (
     <div className="mt-4 border-t border-line pt-3">
@@ -111,7 +116,20 @@ export function WithdrawPanel({
       </p>
       {info.reason ? <p className="mt-1 text-[12px] text-muted">Not right now: {info.reason}.</p> : null}
 
-      {info.withdrawable > 0 ? (
+      {info.withdrawable > 0 && lapsed ? (
+        <>
+          <p className="mt-1 text-[11px] leading-4 text-muted">
+            Its rental lapsed, so the whole balance comes out at once.
+          </p>
+          <button
+            onClick={() => void withdraw("all")}
+            disabled={busy}
+            className="mt-2 w-full bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+          >
+            Withdraw all {info.withdrawable}
+          </button>
+        </>
+      ) : info.withdrawable > 0 ? (
         <>
           <div className="mt-3 flex gap-2">
             <input

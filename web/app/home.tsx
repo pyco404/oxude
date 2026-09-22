@@ -10,6 +10,7 @@ import { PrivyOption } from "@/app/privy-option";
 import { useWallet } from "@/app/wallet-context";
 import { WithdrawPanel } from "@/app/withdraw-panel";
 import { SeasonLine } from "@/app/season-line";
+import { RentalPanel } from "@/app/rental-panel";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
@@ -815,6 +816,8 @@ function AgentCard({
   onWithdrawn: () => void;
 }) {
   const retired = agent.retired === true;
+  // Expired: the season ended without a renewal. It cannot play until renewed.
+  const [expired, setExpired] = useState(false);
   return (
     <section className="border border-line bg-panel">
       <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
@@ -903,10 +906,10 @@ function AgentCard({
 
         <button
           onClick={onPlay}
-          disabled={busy || retired}
+          disabled={busy || retired || expired}
           className="mt-3 w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
-          {retired ? "Retired" : busy ? "Playing…" : "Play a match"}
+          {retired ? "Retired" : expired ? "Expired: renew to play" : busy ? "Playing…" : "Play a match"}
         </button>
 
         {lastPlay ? (
@@ -928,6 +931,18 @@ function AgentCard({
         ) : null}
 
         {!(agent.id ?? agent.agentId) ? null : (
+          <RentalPanel
+            agentId={(agent.id ?? agent.agentId)!}
+            refreshKey={`${agent.balance ?? ""}-${agent.matchesPlayed ?? ""}`}
+            onChanged={(state) => {
+              setExpired(state === "expired");
+              // Lapsing retires it: the card has to say so.
+              if (state === "lapsed" && !retired) onWithdrawn();
+            }}
+          />
+        )}
+
+        {!(agent.id ?? agent.agentId) ? null : (
           <AutoplayPanel
             agentId={(agent.id ?? agent.agentId)!}
             retired={retired}
@@ -941,6 +956,7 @@ function AgentCard({
           <WithdrawPanel
             agentId={(agent.id ?? agent.agentId)!}
             agentName={agent.name}
+            retired={retired}
             refreshKey={`${agent.balance ?? ""}-${agent.matchesPlayed ?? ""}`}
             onChanged={onWithdrawn}
           />

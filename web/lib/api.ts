@@ -185,6 +185,16 @@ export type AgentRecord = { wins: number; losses: number; level: number };
 /** The season in play. Mirrors GET /season. */
 export type SeasonInfo = { key: string; number: number; startsAt: string; endsAt: string };
 
+/** Where an agent's rental stands. Mirrors src/db/seasons.ts. */
+export type RentalStatus = {
+  state: "active" | "renewed" | "expired" | "lapsed" | "retired" | "house";
+  season: { key: string; number: number; endsAt: string };
+  endsAt: string | null;
+  graceEndsAt: string | null;
+  canRenew: boolean;
+  remind: boolean;
+};
+
 /** What an owner can take from an agent's vault now, and what's locked while matches settle. */
 export type Withdrawable = {
   balance: number;
@@ -248,12 +258,13 @@ export const api = {
   setBand: (token: string | null, id: string, band: BandName) =>
     request<{ band: BandName }>(`/agents/${id}/band`, { method: "POST", token, body: JSON.stringify({ band }) }),
   agent: (token: string | null, id: string) =>
-    request<{ agent: AgentView; view: string; autoplay?: AutoplayStatus; sinceYouLeft?: SinceYouLeft | null }>(
+    request<{ agent: AgentView; view: string; autoplay?: AutoplayStatus; sinceYouLeft?: SinceYouLeft | null; rental?: RentalStatus }>(
       `/agents/${id}`,
       { token },
     ),
   setAutoplay: (token: string | null, id: string, input: { enabled: boolean; floor?: number | null }) =>
     request<{ autoplay: AutoplayStatus }>(`/agents/${id}/autoplay`, { method: "POST", token, body: JSON.stringify(input) }),
+  renew: (token: string | null, id: string) => request<{ rental: RentalStatus }>(`/agents/${id}/renew`, { method: "POST", token }),
   markSeen: (token: string | null, id: string) => request<{ ok: true }>(`/agents/${id}/seen`, { method: "POST", token }),
   play: (token: string | null, id: string) => request<PlayResult>(`/agents/${id}/play`, { method: "POST", token }),
   match: (id: string) => request<{ transcript: string }>(`/matches/${id}`),
