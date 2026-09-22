@@ -19,6 +19,7 @@
     "seed-roster": "tsx scripts/seed-roster.ts",
     "seed-bands": "tsx scripts/seed-bands.ts",
     "refresh-ratings": "tsx scripts/refresh-ratings.ts",
+    "portrait-gallery": "tsx scripts/portrait-gallery.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "serve": "tsx scripts/serve.ts",
