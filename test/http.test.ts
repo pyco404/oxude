@@ -838,6 +838,8 @@ describe("portraits over HTTP", () => {
     expect(seen.agent.character).toMatchObject({ nameSource: "generated", type: expect.any(String) });
     expect(seen.agent.character.bio).toContain(seen.agent.name);
     expect((await readBody(await api(`/agents/${id}`, { owner: "portrait-owner" }))).agent.character).toEqual(seen.agent.character);
+    // A fresh agent has no measured traits yet, and says so.
+    expect(seen.agent.traits).toMatchObject({ decisions: 0, bluff: null, note: "not enough hands yet" });
   });
 
   it("draws a face for an agent with no character yet, and 404s one that does not exist", async () => {
