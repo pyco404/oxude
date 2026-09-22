@@ -277,7 +277,7 @@ export const api = {
       token,
       body: JSON.stringify({ brief, band }),
     }),
-  rent: (token: string | null, input: { name: string; presetName?: string; brief?: string; band?: BandName }) =>
+  rent: (token: string | null, input: { name?: string; presetName?: string; brief?: string; band?: BandName }) =>
     request<{ agent: AgentView; elicitation: { free: boolean } | null }>("/agents", {
       method: "POST",
       token,

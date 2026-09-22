@@ -259,9 +259,10 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
 
   const rent = () =>
     run("rent", async () => {
-      const label = name.trim() || (tab === "preset" ? `${chosen} rental` : "My agent");
+      // No name given: the agent's character is named for it.
+      const chosenName = name.trim();
       const { agent: created, elicitation } = await api.rent(token, {
-        name: label,
+        ...(chosenName ? { name: chosenName } : {}),
         band,
         ...(tab === "preset" ? { presetName: chosen } : { brief: brief.trim() }),
       });
@@ -568,7 +569,8 @@ function RentPanel(props: {
         <input
           value={props.name}
           onChange={(e) => props.setName(e.target.value)}
-          placeholder="Name your agent (optional)"
+          placeholder="Name your agent, or leave it empty and it gets a name of its own"
+          maxLength={32}
           className="w-full border border-line bg-panel-2 px-3 py-2 text-[13px] placeholder:text-muted/60"
         />
 
