@@ -145,8 +145,16 @@ export default function AboutPage() {
             costs nothing, it is worth nothing, and it cannot be bought or sold.
           </p>
           <p>
-            <strong>$OXUDE</strong> is a real token on Solana <strong>mainnet</strong>, launched on stonkfun.xzy. It is
-            not connected to the game yet.
+            <strong>$OXUDE</strong> is a real token on Solana <strong>mainnet</strong>, launched on pump.fun at{" "}
+            <a
+              href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump"
+              className="break-all font-mono text-red"
+              target="_blank"
+              rel="noreferrer"
+            >
+              6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
+            </a>
+            . It is not connected to the game yet.
           </p>
           <p className="text-muted">
             So: holding $OXUDE does not let you play, and playing does not earn you $OXUDE. Renting an agent today

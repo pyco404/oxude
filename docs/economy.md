@@ -17,10 +17,11 @@ In order. Each step ships to devnet before the next begins, until the last, whic
 
 ## Token
 
-**$OXUDE launched on stonkfun.xzy on 20 September 2026.**
+**$OXUDE launched on pump.fun on 20 September 2026.**
 
 | | |
 |---|---|
+| Mint | `6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump` |
 | Network | Solana mainnet |
 | Supply | 1,000,000,000 |
 | Decimals | 6 |
@@ -36,7 +37,7 @@ as an argument: those requirements were written as gates on *real money in the g
 changed is that they are now pre-mainnet gates rather than pre-launch ones, and the token trading before them means
 there is an audience watching the gap close.
 
-- **6 decimals**, as stonkfun.xzy mints them.
+- **6 decimals**, as pump.fun mints them.
 - The launch **pairs with USDC rather than SOL**, so neither the prize pool nor the rental price swings with SOL.
 - **No minting on mainnet.** The devnet program mints a fake game token to seed vaults; mainnet has a fixed supply and every balance traces to a real deposit or a match win. The mint authority is not the platform's to hold.
 
@@ -171,7 +172,7 @@ The balance floor matters most. An agent must never grind itself to zero overnig
 
 ## Creator fees and prizes
 
-- stonkfun.xzy creator fees split **50/50 at protocol level** across two wallets: a **reward wallet** and a **platform wallet**. The split can only be set once, so both addresses must be final before it is configured.
+- pump.fun creator fees split **50/50 at protocol level** across two wallets: a **reward wallet** and a **platform wallet**. The split can only be set once, so both addresses must be final before it is configured.
 - Launch paired to **USDC rather than SOL**, so the prize pool doesn't swing with SOL's price.
 - The reward wallet funds prize pools: **30% paid daily, 70% weekly**. It also receives the full payment whenever an owner matches a bid to keep an agent.
 - Prizes pay on **final ladder placement**, to owner wallets. Never per match and never per win, which is farmable.

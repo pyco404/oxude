@@ -36,6 +36,14 @@ export function SiteFooter() {
         <a href="https://github.com/pyco404/oxude/blob/main/docs/security.md" className="hover:text-text" target="_blank" rel="noreferrer">
           Security model
         </a>
+        <a
+          href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump"
+          className="font-mono hover:text-text"
+          target="_blank"
+          rel="noreferrer"
+        >
+          $OXUDE CA: 6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
+        </a>
         <span>$OXUDE is live on Solana mainnet. The game runs on devnet, where balances are test tokens.</span>
       </p>
     </footer>
