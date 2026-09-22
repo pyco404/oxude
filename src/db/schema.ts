@@ -182,6 +182,46 @@ export type AgentEventSource = "owner" | "autoplay" | "season";
 export type RetiredReason = "broke" | "withdrawn" | "lapsed";
 
 /**
+ * An agent's character: its portrait, its name's origin, its bio. Kept in a
+ * table of its own, apart from `agents`, on purpose - everything that plays or
+ * pays reads `agents`, `matches`, `ledger` and `ratings`, and none of it reads
+ * this. A character is identity and presentation only; it cannot reach a match.
+ *
+ * The portrait is stored, not re-rendered: a later change to the generator does
+ * not change an existing face, and a face drawn from the table at rent time
+ * survives a new brief.
+ */
+export const characters = pgTable(
+  "characters",
+  {
+    agentId: uuid("agent_id")
+      .primaryKey()
+      .references(() => agents.id),
+    /** Whether the owner chose the name or it was generated for them. */
+    nameSource: text("name_source").$type<"owner" | "generated">().notNull(),
+    /** "the Quiet Anvil": shown with the name on the agent page, not in a ladder row. */
+    epithet: text("epithet").notNull(),
+    bio: text("bio").notNull(),
+    bioSource: text("bio_source").$type<"template" | "model">().notNull(),
+    portraitVersion: integer("portrait_version").notNull(),
+    portraitSvg: text("portrait_svg").notNull(),
+    /** The simplified drawing for 24-32 px. */
+    portraitSmallSvg: text("portrait_small_svg").notNull(),
+    /** Every choice that made the face: unique, so no two agents share one. */
+    fingerprint: text("fingerprint").notNull().unique(),
+    /** Character type and colour scheme, kept distinct between agents where possible. */
+    lookKey: text("look_key").notNull(),
+    /** "fox", "porcelain", "visor": what the character is. */
+    characterType: text("character_type").notNull(),
+    /** `flagged` when a name or bio failed the check and waits for a person to decide. */
+    moderation: text("moderation").$type<"ok" | "flagged">().notNull().default("ok"),
+    moderationNote: text("moderation_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("characters_look_idx").on(t.lookKey)],
+);
+
+/**
  * One row per season. The season itself is arithmetic (src/season.ts); this
  * row is its state, and the lock the boundary job takes so that closing a
  * season happens exactly once.
