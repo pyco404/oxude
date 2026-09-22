@@ -3,8 +3,8 @@ import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { recordEvent } from "./events.js";
 import { standings } from "./standings.js";
-import { GRACE_MS, nextSeason, seasonAt, seasonByKey, type Season } from "../season.js";
-import { agents, seasonStandings, seasons } from "./schema.js";
+import { GRACE_MS, nextSeason, RENEWAL_REMINDER_MS, seasonAt, seasonByKey, type Season } from "../season.js";
+import { agents, seasonStandings, seasons, type AgentRow } from "./schema.js";
 
 /**
  * The season boundary: closing one season and lapsing the agents nobody
@@ -193,4 +193,104 @@ export function startSeasons(
       if (timer) clearTimeout(timer);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Renewal.
+// ---------------------------------------------------------------------------
+
+export type RentalState =
+  /** Rented for the current season, not yet renewed. */
+  | "active"
+  /** Renewed: it carries on into the next season. */
+  | "renewed"
+  /** The season ended without a renewal: cannot play, can still be renewed until `graceEndsAt`. */
+  | "expired"
+  /** Retired because the grace period passed. Record kept, balance withdrawable. */
+  | "lapsed"
+  /** Retired for another reason: it ran out, or was withdrawn in full. */
+  | "retired"
+  /** A house agent: not rented, never ends. */
+  | "house";
+
+export type RentalStatus = {
+  state: RentalState;
+  /** The season in play now. */
+  season: { key: string; number: number; endsAt: Date };
+  /** When this agent's rental ends. Null for a house agent. */
+  endsAt: Date | null;
+  /** While expired: the last moment it can be renewed. */
+  graceEndsAt: Date | null;
+  canRenew: boolean;
+  /** Within 72 hours of the end and not renewed: time to ask the owner. */
+  remind: boolean;
+};
+
+/** Where an agent's rental stands, for its owner. */
+export function rentalStatus(row: Pick<AgentRow, "ownerId" | "retiredAt" | "retiredReason" | "rentalEndsAt">, now = new Date()): RentalStatus {
+  const current = seasonAt(now);
+  const season = { key: current.key, number: current.number, endsAt: current.end };
+  const base = { season, endsAt: row.rentalEndsAt, graceEndsAt: null, canRenew: false, remind: false };
+  if (row.ownerId === null || row.rentalEndsAt === null) return { ...base, state: "house" };
+  if (row.retiredAt !== null) return { ...base, state: row.retiredReason === "lapsed" ? "lapsed" : "retired" };
+  const end = row.rentalEndsAt.getTime();
+  if (end > current.end.getTime()) return { ...base, state: "renewed" };
+  if (end > now.getTime()) {
+    return { ...base, state: "active", canRenew: true, remind: end - now.getTime() <= RENEWAL_REMINDER_MS };
+  }
+  // Past its end and not retired: expired. Renewable while the grace lasts; after
+  // that it is waiting for the lapse pass, which retires it within a minute.
+  const graceEndsAt = new Date(end + GRACE_MS);
+  return { ...base, state: "expired", graceEndsAt, canRenew: now.getTime() < graceEndsAt.getTime() };
+}
+
+export class RenewError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Renews a rental, once per season: an active one into the next season, or an
+ * expired one, within its grace period, into the season now running - with its
+ * record, balance, band and floor exactly as they were. Autoplay is left off:
+ * the owner switches it back on.
+ *
+ * Free on devnet. On mainnet renewal costs rent, which is why it is once per
+ * season and never a standing switch.
+ */
+export async function renewAgent(db: Db, agentId: string, ownerId: string, now = new Date()): Promise<RentalStatus> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(agents).where(eq(agents.id, agentId)).for("update");
+    if (!row) throw new RenewError(404, "no such agent");
+    if (row.ownerId !== ownerId) throw new RenewError(403, "that agent belongs to someone else");
+    const status = rentalStatus(row, now);
+    if (!status.canRenew) {
+      const why: Record<RentalState, string> = {
+        renewed: "it is already renewed for the next season",
+        lapsed: "its rental lapsed after the grace period; rent a new agent",
+        retired: "it is retired",
+        house: "house agents are not rented",
+        expired: "the 24-hour grace period is over",
+        active: "it cannot be renewed right now",
+      };
+      throw new RenewError(409, `can't renew: ${why[status.state]}`);
+    }
+    const current = seasonAt(now);
+    // Active: through the end of next season. Expired: through the end of this one.
+    const through = status.state === "active" ? nextSeason(current) : current;
+    await tx.update(agents).set({ rentalEndsAt: through.end }).where(eq(agents.id, agentId));
+    await recordEvent(
+      tx as unknown as Db,
+      agentId,
+      "renewed",
+      "owner",
+      `${status.state === "expired" ? "from expiry, " : ""}through season ${through.key}`,
+    );
+    const [after] = await tx.select().from(agents).where(eq(agents.id, agentId));
+    return rentalStatus(after!, now);
+  });
 }

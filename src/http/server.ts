@@ -23,6 +23,8 @@ import {
   bandCounts,
 } from "../db/runner.js";
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
+import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
+import { seasonAt, GRACE_MS, RENEWAL_REMINDER_MS } from "../season.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
 import {
@@ -136,6 +138,7 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents\/([^/]+)\/band$/, postBand],
     ["POST", /^\/agents\/([^/]+)\/autoplay$/, postAutoplay],
     ["POST", /^\/agents\/([^/]+)\/seen$/, postSeen],
+    ["POST", /^\/agents\/([^/]+)\/renew$/, postRenew],
     ["GET", /^\/agents\/([^/]+)\/ledger$/, getLedger],
     ["GET", /^\/matches$/, getFeed],
     ["GET", /^\/matches\/([^/]+)$/, getMatch],
@@ -148,6 +151,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/stats$/, getStats],
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
+    ["GET", /^\/season$/, getSeason],
     ["POST", /^\/preview$/, postPreview],
   ];
 
@@ -248,7 +252,7 @@ export function createApp(options: AppOptions): Server {
       const active = await activeAgentsOf(tx as unknown as Db, ownerId);
       if (active.length > 0) {
         const held = active.map((a) => a.name).join(", ");
-        throw new HttpError(409, `you already have an agent in play: ${held}. An agent retires when its balance is withdrawn in full, and then you can rent another.`, {
+        throw new HttpError(409, `you already have an agent in play: ${held}. An agent retires when its balance is withdrawn in full or its rental lapses at the end of a season, and then you can rent another.`, {
           agents: active.map((a) => ({ id: a.id, name: a.name })),
         });
       }
@@ -329,6 +333,8 @@ export function createApp(options: AppOptions): Server {
         },
         // Private to the owner: whether it is playing, and what it did while they were away.
         autoplay: await autoplayStatus(db, full!, { intervalMs: autoplayIntervalMs }),
+        // Where its rental stands: active, renewed, expired and renewable, or lapsed.
+        rental: rentalStatus(full!),
         sinceYouLeft: await sinceYouLeft(db, full!),
         view: "owner",
       };
@@ -444,6 +450,28 @@ export function createApp(options: AppOptions): Server {
   }
 
   /** The owner has read "since you left": the next summary starts from now. */
+  /** Renews the rental into the next season, or out of expiry within the grace period. */
+  async function postRenew(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    try {
+      return { rental: await renewAgent(db, id, ownerId) };
+    } catch (error) {
+      if (error instanceof RenewError) throw new HttpError(error.status, error.message);
+      throw error;
+    }
+  }
+
+  /** The season in play: what the rent screen counts down to. Public. */
+  async function getSeason() {
+    const season = seasonAt(new Date());
+    return {
+      season: { key: season.key, number: season.number, startsAt: season.start, endsAt: season.end },
+      graceHours: GRACE_MS / 3_600_000,
+      reminderHours: RENEWAL_REMINDER_MS / 3_600_000,
+    };
+  }
+
   async function postSeen(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
     const id = requireUuid(ctx.params[0]);

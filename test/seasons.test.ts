@@ -5,8 +5,8 @@ import { agentEvents, agents, ledger, matches, ratings, seasonStandings, seasons
 import { createAgent, pickOpponent, runMatch } from "../src/db/runner.js";
 import { dueAgents } from "../src/db/autoplay.js";
 import { StakeError } from "../src/db/ledger.js";
-import { nextSeason, seasonAt, GRACE_MS } from "../src/season.js";
-import { closeSeason, lapseExpired, seasonTick } from "../src/db/seasons.js";
+import { nextSeason, seasonAt, GRACE_MS, RENEWAL_REMINDER_MS } from "../src/season.js";
+import { closeSeason, lapseExpired, renewAgent, rentalStatus, seasonTick } from "../src/db/seasons.js";
 import { standings } from "../src/db/standings.js";
 import { someWallet } from "./helpers.js";
 
@@ -189,6 +189,65 @@ describe("the season boundary", () => {
     const { current } = await season(db);
     expect((await standings(db, { season: current.key })).length).toBe(2);
     expect(await standings(db, { season: nextSeason(current).key })).toEqual([]);
+    await close();
+  });
+});
+
+describe("renewal", () => {
+  const owned = async (db: Db) => {
+    const ownerId = someWallet();
+    const row = await createAgent(db, { name: "R", presetName: "Anchor", ownerId });
+    return { row, ownerId, current: seasonAt(new Date()) };
+  };
+
+  it("renews an active rental into the next season, once, and reminds in the last 72 hours", async () => {
+    const { db, close } = await fresh();
+    const { row, ownerId, current } = await owned(db);
+    const early = new Date(current.end.getTime() - RENEWAL_REMINDER_MS - 60_000);
+    const late = new Date(current.end.getTime() - RENEWAL_REMINDER_MS + 60_000);
+    expect(rentalStatus(row, early)).toMatchObject({ state: "active", remind: false, canRenew: true });
+    expect(rentalStatus(row, late)).toMatchObject({ state: "active", remind: true });
+
+    const after = await renewAgent(db, row.id, ownerId, late);
+    expect(after.state).toBe("renewed");
+    expect(after.endsAt?.getTime()).toBe(nextSeason(current).end.getTime());
+    await expect(renewAgent(db, row.id, ownerId, late)).rejects.toThrow(/already renewed/);
+    await expect(renewAgent(db, row.id, someWallet(), late)).rejects.toThrow(/someone else/);
+    await close();
+  });
+
+  it("restores an expired agent within 24 hours, record and settings intact, with autoplay left off", async () => {
+    const { db, close } = await fresh();
+    await house(db, 4);
+    const { row, ownerId, current } = await owned(db);
+    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    await runMatch(db, row.id, h!.id, { seed: 5 });
+    const [record] = await db.select().from(ratings).where(eq(ratings.agentId, row.id));
+    // It expired at the start of this season: the boundary passed without a renewal.
+    await db.update(agents).set({ rentalEndsAt: current.start, autoplayFloor: 250, band: "A" }).where(eq(agents.id, row.id));
+    const inGrace = new Date(current.start.getTime() + GRACE_MS - 60_000);
+    const [expiredRow] = await db.select().from(agents).where(eq(agents.id, row.id));
+    expect(rentalStatus(expiredRow!, inGrace)).toMatchObject({ state: "expired", canRenew: true });
+    expect(rentalStatus(expiredRow!, inGrace).graceEndsAt?.getTime()).toBe(current.start.getTime() + GRACE_MS);
+
+    const after = await renewAgent(db, row.id, ownerId, inGrace);
+    // Back for the season now running, not the next one.
+    expect(after).toMatchObject({ state: "active" });
+    expect(after.endsAt?.getTime()).toBe(current.end.getTime());
+    const [restored] = await db.select().from(agents).where(eq(agents.id, row.id));
+    expect(restored!).toMatchObject({ autoplay: false, autoplayFloor: 250, band: "A", retiredAt: null });
+    expect((await db.select().from(ratings).where(eq(ratings.agentId, row.id)))[0]).toEqual(record);
+    await close();
+  });
+
+  it("refuses once the grace period is over, and after the agent has lapsed", async () => {
+    const { db, close } = await fresh();
+    const { row, ownerId, current } = await owned(db);
+    await db.update(agents).set({ rentalEndsAt: current.start }).where(eq(agents.id, row.id));
+    const pastGrace = new Date(current.start.getTime() + GRACE_MS + 60_000);
+    await expect(renewAgent(db, row.id, ownerId, pastGrace)).rejects.toThrow(/grace period is over/);
+    await lapseExpired(db, pastGrace);
+    await expect(renewAgent(db, row.id, ownerId, pastGrace)).rejects.toThrow(/lapsed/);
     await close();
   });
 });
