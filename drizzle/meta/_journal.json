@@ -120,6 +120,13 @@
       "when": 1790091901393,
       "tag": "0016_agent_traits",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790092968585,
+      "tag": "0017_pending_names",
+      "breakpoints": true
     }
   ]
 }

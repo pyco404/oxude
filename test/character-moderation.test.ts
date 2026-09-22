@@ -50,12 +50,13 @@ describe("moderation", () => {
     expect(asked).toBe(0);
   });
 
-  it("lets a name through marked unchecked when the model can't be reached, rather than block a rental", async () => {
+  it("lets a name through marked unchecked when the model can't be reached, and counts the local rules as the check when there is no model", async () => {
     const down: TextCheck = async () => {
       throw new Error("fetch failed");
     };
     expect(await moderate("Vessarin", "name", down)).toEqual({ ok: true, reason: null, checked: false });
-    expect(await moderate("Vessarin", "name", null)).toEqual({ ok: true, reason: null, checked: false });
+    // No model configured at all: the local rules are the whole check.
+    expect(await moderate("Vessarin", "name", null)).toEqual({ ok: true, reason: null, checked: true });
   });
 
   it("maps the model's verdict to a reason an owner can act on, on Haiku", async () => {

@@ -8,6 +8,7 @@
  * model.ts), which understands a slur spelled sideways or a name that belongs
  * to a real person in a way no word list can. When the model cannot be
  * reached, the text is let through marked unchecked - never passed silently.
+ * With no model configured at all, the local rule is the whole check.
  */
 
 export type Verdict = {
@@ -65,7 +66,10 @@ export async function moderate(text: string, kind: "name" | "bio", check: TextCh
   if (shape) return { ok: false, reason: shape, checked: true };
   const reserved = reservedWord(text);
   if (reserved) return { ok: false, reason: reserved, checked: true };
-  if (!check) return { ok: true, reason: null, checked: false };
+  // No model configured at all (local runs, tests): the local rules are the whole
+  // check, and a name that passes them has been checked as far as it can be.
+  // "Not checked" means a model exists and could not be reached.
+  if (!check) return { ok: true, reason: null, checked: true };
   try {
     const verdict = await check(text, kind);
     return { ...verdict, checked: true };

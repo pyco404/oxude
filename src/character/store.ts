@@ -53,14 +53,19 @@ export async function createCharacter(db: Db, agentId: string, options: CreateOp
   if (!agent) throw new Error(`no agent ${agentId}`);
   if (!agent.policyTable) throw new Error(`agent ${agentId} has no table to draw a face from`);
 
-  // Named by its owner, unless the name is one the rent screen filled in.
-  const chosen = agent.ownerId !== null && !isDefaultName(agent.name) && options.nameVerdict !== undefined;
+  const v = options.nameVerdict;
+  const ownerGaveOne = agent.ownerId !== null && !isDefaultName(agent.name) && v !== undefined;
+  // A chosen name that could not be checked is not shown in public yet: the
+  // agent goes by a generated name, its owner sees the chosen one as pending,
+  // and recheckNames switches it over once it passes.
+  const pending = ownerGaveOne && v.ok && !v.checked ? agent.name : null;
+  // Named by its owner, unless the name is one the rent screen filled in or is still waiting.
+  const chosen = ownerGaveOne && pending === null;
   const name = chosen ? agent.name : characterName(agentId, await takenNames(db));
   // A name that failed its check at rent never gets this far - it is refused.
   // One that fails in the backfill is kept but flagged, for a person to decide:
   // the backfill does not rename what an owner chose.
-  const v = options.nameVerdict;
-  let flagged: string | null = v && !v.ok ? `name failed its check: ${v.reason ?? "no reason given"}` : v && !v.checked ? "name not checked: the model could not be reached" : null;
+  let flagged: string | null = v && !v.ok ? `name failed its check: ${v.reason ?? "no reason given"}` : null;
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const face = uniquePortrait(agentId, agent.policyTable, await takenLooks(db));
@@ -98,8 +103,9 @@ export async function createCharacter(db: Db, agentId: string, options: CreateOp
             fingerprint: face.fingerprint,
             lookKey: face.lookKey,
             characterType: face.features.type,
-            moderation: flagged ? "flagged" : "ok",
-            moderationNote: flagged,
+            moderation: flagged ? "flagged" : pending ? "pending" : "ok",
+            moderationNote: flagged ?? (pending ? "chosen name waiting for its check" : null),
+            pendingName: pending,
           })
           .returning();
         return row!;
@@ -120,6 +126,53 @@ export async function characterOf(db: Db, agentId: string): Promise<CharacterRow
   const [row] = await db.select().from(characters).where(eq(characters.agentId, agentId));
   return row;
 }
+
+/**
+ * Checks every chosen name still waiting, now that the check may be reachable
+ * again. A name that passes becomes the agent's name; one that fails stays off
+ * the agent and is flagged with the reason. A check that still cannot be made
+ * leaves it waiting for the next pass.
+ */
+export async function recheckNames(db: Db, check: TextCheck | null): Promise<{ switched: string[]; refused: string[] }> {
+  const waiting = await db.select().from(characters).where(sql`${characters.pendingName} is not null`);
+  const switched: string[] = [];
+  const refused: string[] = [];
+  for (const c of waiting) {
+    const verdict = await moderate(c.pendingName!, "name", check);
+    if (!verdict.checked) continue;
+    await db.transaction(async (tx) => {
+      if (verdict.ok) {
+        await tx.update(agents).set({ name: c.pendingName! }).where(eq(agents.id, c.agentId));
+        await tx
+          .update(characters)
+          .set({ nameSource: "owner", pendingName: null, moderation: "ok", moderationNote: null })
+          .where(eq(characters.agentId, c.agentId));
+      } else {
+        await tx
+          .update(characters)
+          .set({ pendingName: null, moderation: "flagged", moderationNote: `chosen name "${c.pendingName}" failed its check: ${verdict.reason ?? "no reason given"}` })
+          .where(eq(characters.agentId, c.agentId));
+      }
+    });
+    (verdict.ok ? switched : refused).push(c.agentId);
+  }
+  return { switched, refused };
+}
+
+/** Keeps re-checking waiting names, every five minutes. */
+export function startNameChecks(db: Db, check: TextCheck, options: { onLog?: (line: string) => void; onError?: (e: unknown) => void } = {}): { stop: () => void } {
+  const timer = setInterval(() => {
+    recheckNames(db, check)
+      .then((r) => {
+        if (r.switched.length || r.refused.length) options.onLog?.(`names: ${r.switched.length} chosen names passed their check, ${r.refused.length} refused`);
+      })
+      .catch((e: unknown) => options.onError?.(e));
+  }, 5 * 60_000);
+  return { stop: () => clearInterval(timer) };
+}
+
+/** What the owner sees and no one else: a chosen name still waiting for its check. */
+export const ownerCharacter = (c: CharacterRow) => ({ ...publicCharacter(c), pendingName: c.pendingName });
 
 /** What anyone may see of a character. */
 export const publicCharacter = (c: CharacterRow) => ({

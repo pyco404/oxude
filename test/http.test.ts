@@ -837,7 +837,9 @@ describe("portraits over HTTP", () => {
     const seen = await readBody(await api(`/agents/${id}`, { owner: null }));
     expect(seen.agent.character).toMatchObject({ nameSource: "generated", type: expect.any(String) });
     expect(seen.agent.character.bio).toContain(seen.agent.name);
-    expect((await readBody(await api(`/agents/${id}`, { owner: "portrait-owner" }))).agent.character).toEqual(seen.agent.character);
+    // The owner sees the same character, and whether a chosen name is still waiting for its check.
+    expect((await readBody(await api(`/agents/${id}`, { owner: "portrait-owner" }))).agent.character).toEqual({ ...seen.agent.character, pendingName: null });
+    expect(seen.agent.character).not.toHaveProperty("pendingName");
     // A fresh agent has no measured traits yet, and says so.
     expect(seen.agent.traits).toMatchObject({ decisions: 0, bluff: null, note: "not enough hands yet" });
   });

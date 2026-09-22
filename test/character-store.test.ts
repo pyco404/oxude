@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { agents, characters } from "../src/db/schema.js";
 import { createAgent, snapshotPreset } from "../src/db/runner.js";
-import { agentsWithoutCharacter, createCharacter, isDefaultName, portraitSvg, type CharacterDeps } from "../src/character/store.js";
+import { agentsWithoutCharacter, characterOf, createCharacter, isDefaultName, ownerCharacter, portraitSvg, publicCharacter, recheckNames, type CharacterDeps } from "../src/character/store.js";
+import type { TextCheck } from "../src/character/moderation.js";
 import { someWallet } from "./helpers.js";
 
 const fresh = async () => {
@@ -77,11 +78,42 @@ describe("creating a character", () => {
     await close();
   });
 
-  it("marks a character whose chosen name could not be checked, rather than passing it silently", async () => {
+  it("shows a generated name in public while a chosen name waits for its check", async () => {
     const { db, close } = await fresh();
     const a = await createAgent(db, { name: "Unverified", presetName: "Hammer", ownerId: someWallet() });
     const c = await createCharacter(db, a.id, { nameVerdict: { ok: true, reason: null, checked: false } });
-    expect(c).toMatchObject({ moderation: "flagged", moderationNote: "name not checked: the model could not be reached" });
+    expect(await nameOf(db, a.id)).not.toBe("Unverified");
+    expect(c).toMatchObject({ nameSource: "generated", pendingName: "Unverified", moderation: "pending" });
+    // The owner sees it waiting; the public view does not carry it at all.
+    expect(ownerCharacter(c).pendingName).toBe("Unverified");
+    expect(Object.keys(publicCharacter(c))).not.toContain("pendingName");
+    await close();
+  });
+
+  it("switches to the chosen name once it passes, flags it if it fails, and waits while the check is down", async () => {
+    const { db, close } = await fresh();
+    const mk = async (name: string) => {
+      const a = await createAgent(db, { name, presetName: "Anchor", ownerId: someWallet() });
+      await createCharacter(db, a.id, { nameVerdict: { ok: true, reason: null, checked: false } });
+      return a.id;
+    };
+    const good = await mk("Lanternjaw");
+    const bad = await mk("Realperson");
+    const down: TextCheck = async () => {
+      throw new Error("fetch failed");
+    };
+    expect(await recheckNames(db, down)).toEqual({ switched: [], refused: [] });
+    expect((await characterOf(db, good))!.pendingName).toBe("Lanternjaw");
+
+    const check: TextCheck = async (text) => (text === "Realperson" ? { ok: false, reason: "can't use that name: it names a real person" } : { ok: true, reason: null });
+    expect(await recheckNames(db, check)).toEqual({ switched: [good], refused: [bad] });
+    expect(await nameOf(db, good)).toBe("Lanternjaw");
+    expect(await characterOf(db, good)).toMatchObject({ nameSource: "owner", pendingName: null, moderation: "ok" });
+    expect(await nameOf(db, bad)).not.toBe("Realperson");
+    expect(await characterOf(db, bad)).toMatchObject({ pendingName: null, moderation: "flagged" });
+    expect((await characterOf(db, bad))!.moderationNote).toMatch(/names a real person/);
+    // Nothing left waiting.
+    expect(await recheckNames(db, check)).toEqual({ switched: [], refused: [] });
     await close();
   });
 

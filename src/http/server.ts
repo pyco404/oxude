@@ -24,7 +24,7 @@ import {
 } from "../db/runner.js";
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
-import { characterOf, createCharacter, isDefaultName, NO_MODEL, portraitSvg, publicCharacter, type CharacterDeps } from "../character/store.js";
+import { characterOf, createCharacter, isDefaultName, NO_MODEL, ownerCharacter, portraitSvg, publicCharacter, type CharacterDeps } from "../character/store.js";
 import { moderate, type Verdict } from "../character/moderation.js";
 import { traitsOf } from "../character/trait-store.js";
 import { dayStart, seasonAt, seasonByKey, GRACE_MS, RENEWAL_REMINDER_MS } from "../season.js";
@@ -308,7 +308,7 @@ export function createApp(options: AppOptions): Server {
     return {
       agent: {
         ...view,
-        character: character ? publicCharacter(character) : null,
+        character: character ? ownerCharacter(character) : null,
         id: fresh!.id,
         brief: fresh!.brief,
         ownerId: fresh!.ownerId,
@@ -378,6 +378,8 @@ export function createApp(options: AppOptions): Server {
     if (!row) throw new HttpError(404, "no such agent");
     const found = await characterOf(db, id);
     const character = found ? publicCharacter(found) : null;
+    // A chosen name still waiting for its check is its owner's to see, and no one else's.
+    const ownCharacter = found ? ownerCharacter(found) : null;
     // Measured from its play; "not enough hands yet" until there are.
     const traits = await traitsOf(db, id);
     const [owned] = await db.select({ ownerId: agents.ownerId }).from(agents).where(eq(agents.id, id)).limit(1);
@@ -392,7 +394,7 @@ export function createApp(options: AppOptions): Server {
           trueRating: own!.trueRating,
           trueRatingBasis: `against band ${own!.band}'s roster as it stands today`,
           ...bandStatus(row),
-          character,
+          character: ownCharacter,
           traits,
         },
         // Private to the owner: whether it is playing, and what it did while they were away.

@@ -116,6 +116,14 @@ const { url } = await listen({
   ...(chain ? { chain } : {}),
   ...(characterModel ? { character: characterModel } : {}),
 });
+// Chosen names that could not be checked at rent: checked again until the model answers.
+if (characterModel) {
+  const { startNameChecks } = await import("../src/character/store.js");
+  startNameChecks(db, characterModel.check, {
+    onLog: (line) => console.log(line),
+    onError: (error) => console.error(`names: ${String(error).slice(0, 160)}`),
+  });
+}
 
 if (chain && rpc) {
   const { startChainWorker } = await import("../src/chain/worker.js");

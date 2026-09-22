@@ -213,9 +213,19 @@ export const characters = pgTable(
     lookKey: text("look_key").notNull(),
     /** "fox", "porcelain", "visor": what the character is. */
     characterType: text("character_type").notNull(),
-    /** `flagged` when a name or bio failed the check and waits for a person to decide. */
-    moderation: text("moderation").$type<"ok" | "flagged">().notNull().default("ok"),
+    /**
+     * `flagged` when a name or bio failed the check and waits for a person to
+     * decide; `pending` while a chosen name waits for a check that could not
+     * be made when it was given.
+     */
+    moderation: text("moderation").$type<"ok" | "flagged" | "pending">().notNull().default("ok"),
     moderationNote: text("moderation_note"),
+    /**
+     * A name the owner chose that has not been checked yet, because the check
+     * could not be reached. Until it passes, the agent goes by its generated
+     * name in public and only its owner sees this one.
+     */
+    pendingName: text("pending_name"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("characters_look_idx").on(t.lookKey)],
