@@ -3,8 +3,9 @@ import { ImageResponse } from "next/og";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getMatch } from "./data";
+import { portraitDataUri } from "@/lib/og";
 
-// Generated per match: the two names, the final net, and the headline beat.
+// Generated per match: both faces, the two names, the final net, and the headline beat.
 export const runtime = "nodejs";
 export const alt = "An Oxude match";
 export const size = { width: 1200, height: 630 };
@@ -16,6 +17,10 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const { id } = await params;
   const data = await getMatch(id);
   const summary = data?.summary;
+  // Both faces, the one that came out ahead first.
+  const first = summary && summary.netB > 0 ? data?.match.agentB : data?.match.agentA;
+  const second = first === data?.match.agentA ? data?.match.agentB : data?.match.agentA;
+  const faces = await Promise.all([first, second].map((a) => (a ? portraitDataUri(a.id) : Promise.resolve(null))));
   // The mark, inlined: the renderer cannot fetch it from the site it is rendering for.
   const mark = `data:image/png;base64,${(await readFile(join(process.cwd(), "public", "oxude-tb.png"))).toString("base64")}`;
 
@@ -34,9 +39,14 @@ export default async function Image({ params }: { params: Promise<{ id: string }
           fontFamily: "monospace",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <img src={mark} width={64} height={64} alt="" />
-          <div style={{ fontSize: 34, letterSpacing: 10, color: "#ff2d2d", fontWeight: 700 }}>OXUDE</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <img src={mark} width={64} height={64} alt="" />
+            <div style={{ fontSize: 34, letterSpacing: 10, color: "#ff2d2d", fontWeight: 700 }}>OXUDE</div>
+          </div>
+          <div style={{ display: "flex", gap: 16 }}>
+            {faces.map((f, i) => (f ? <img key={i} src={f} width={170} height={170} alt="" /> : null))}
+          </div>
         </div>
 
         {summary ? (

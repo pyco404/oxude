@@ -28,7 +28,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     description,
     alternates: { canonical: `/a/${id}` },
     openGraph: { title, description, url: `/a/${id}` },
-    twitter: { card: "summary", title, description },
+    // The generated image carries the agent's face: large, so it is seen.
+    twitter: { card: "summary_large_image", title, description },
   };
 }
 
