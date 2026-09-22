@@ -2,14 +2,16 @@ import { writeFileSync } from "node:fs";
 import { EDGE_KEYS, SITUATIONS, type Policy, type Situation } from "../src/agents/policy.js";
 import { snapshotPreset } from "../src/db/runner.js";
 import { PRESET_DESCRIPTIONS, PRESET_NAMES } from "../src/presets.js";
-import { portrait, type Portrait } from "../src/character/portrait.js";
+import { uniquePortrait, type Portrait } from "../src/character/portrait.js";
 import type { Action } from "../src/types.js";
 
 /**
  * A review sheet for the portrait generator: ten faces for each preset and a
  * handful of brief-written tables, each at the sizes the site uses - 24 and
  * 32 px in ladder rows and the feed, 64 on the owner's card, 256 on the agent
- * page. Written to a standalone HTML file, never served by the site.
+ * page. The 24 and 32 px sizes use the simplified small drawing, as the site
+ * will. Every face is made unique against the rest, as they will be in
+ * production. Written to a standalone HTML file, never served by the site.
  *
  *   npx tsx scripts/portrait-gallery.ts [out.html]
  */
@@ -65,15 +67,24 @@ const BRIEFS: { label: string; note: string; table: Policy }[] = [
 ];
 
 const style = (p: Portrait) =>
-  `aggr ${p.style.aggression.toFixed(2)} · bluff ${p.style.bluff.toFixed(2)} · pressure ${p.style.pressure >= 0 ? "+" : ""}${p.style.pressure.toFixed(2)} · backs down ${p.style.backsDown.toFixed(2)}`;
+  `${p.features.type} · ${p.features.palette} · ${p.expression.mood}${p.expression.wary ? ", wary" : ""}`;
+
+const taken = new Set<string>();
+/** A face no other in the gallery has, as production will give them. */
+function face(id: string, policy: Policy): Portrait {
+  const p = uniquePortrait(id, policy, taken);
+  taken.add(p.lookKey);
+  taken.add(p.fingerprint);
+  return p;
+}
 
 const tile = (p: Portrait, caption: string) => `
   <figure class="tile">
     <div class="large">${p.svg}</div>
     <div class="sizes">
       <span style="width:64px;height:64px">${p.svg}</span>
-      <span style="width:32px;height:32px">${p.svg}</span>
-      <span style="width:24px;height:24px">${p.svg}</span>
+      <span style="width:32px;height:32px">${p.svgSmall}</span>
+      <span style="width:24px;height:24px">${p.svgSmall}</span>
     </div>
     <figcaption><b>${caption}</b><br>${style(p)}<br><code>${p.fingerprint}</code></figcaption>
   </figure>`;
@@ -88,13 +99,13 @@ const IDS = [
 let sections = "";
 let strip = "";
 for (const name of PRESET_NAMES) {
-  const faces = IDS.map((id) => portrait(`${name}:${id}`, snapshotPreset(name)));
+  const faces = IDS.map((id) => face(`${name}:${id}`, snapshotPreset(name)));
   sections += `<section><h2>${name}</h2><p class="note">${PRESET_DESCRIPTIONS[name]}</p><div class="grid">${faces.map((p, i) => tile(p, `${name} #${i + 1}`)).join("")}</div></section>`;
-  strip += faces.map((p, i) => `<li><span class="face">${p.svg}</span><span>${name} #${i + 1}</span><span class="num">${(i * 7 - 20) >= 0 ? "+" : "−"}${Math.abs(i * 7 - 20)}</span></li>`).join("");
+  strip += faces.map((p, i) => `<li><span class="face">${p.svgSmall}</span><span>${name} #${i + 1}</span><span class="num">${(i * 7 - 20) >= 0 ? "+" : "−"}${Math.abs(i * 7 - 20)}</span></li>`).join("");
 }
-const briefFaces = BRIEFS.map((b, i) => ({ b, p: portrait(`brief:${IDS[i]}`, b.table) }));
+const briefFaces = BRIEFS.map((b, i) => ({ b, p: face(`brief:${IDS[i]}`, b.table) }));
 sections += `<section><h2>Brief-written tables</h2><p class="note">A face comes from what the table does, not a preset name. Each of these is a table a brief could produce.</p><div class="grid">${briefFaces.map(({ b, p }) => tile(p, `${b.label} — ${b.note}`)).join("")}</div></section>`;
-strip += briefFaces.map(({ b, p }) => `<li><span class="face">${p.svg}</span><span>${b.label}</span><span class="num">+0</span></li>`).join("");
+strip += briefFaces.map(({ b, p }) => `<li><span class="face">${p.svgSmall}</span><span>${b.label}</span><span class="num">+0</span></li>`).join("");
 
 const html = `<title>Oxude Portrait Review</title>
 <style>
@@ -122,10 +133,10 @@ const html = `<title>Oxude Portrait Review</title>
 <main>
   <header>
     <h1>OXUDE PORTRAITS</h1>
-    <p>Generator v1, for review. Every face is drawn from the agent's decision table (how it carries itself) and its id (horns, ears, crest, markings, split side). The same agent always gets the same face.</p>
-    <p>What to look for: Anchor calm and heavy, Hammer and Bully sharp and forward, Mirage two-faced, and every face still readable at 24 px.</p>
+    <p>Generator v2, for review. The agent's id chooses the character &mdash; one of 19 types of masked player, android or creature &mdash; its colour scheme, plate, head shape and accessories. Its decision table chooses the expression it wears: steady for a calm player, fierce for an aggressor, sly for a bluffer, wary for one that backs down. The same agent always gets the same face.</p>
+    <p>What to look for: any two neighbours look nothing alike, the mood reads in every character type, and every face still reads at 24&ndash;32 px, which use the simplified drawing.</p>
   </header>
-  <section><h2>At ladder size</h2><p class="note">24 px, as a ladder row or feed line would show them. The numbers are placeholders.</p><ul class="strip">${strip}</ul></section>
+  <section><h2>At ladder size</h2><p class="note">The simplified drawing at 24 px, as a ladder row or feed line would show them. The numbers are placeholders.</p><ul class="strip">${strip}</ul></section>
   ${sections}
 </main>`;
 
