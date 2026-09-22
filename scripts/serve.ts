@@ -53,6 +53,16 @@ if (exhibitionMs > 0) {
   });
   console.log(`House exhibitions: about one every ${Math.round(exhibitionMs / 1000)}s, off-chain`);
 }
+// Seasons: close each one at its boundary and lapse agents whose grace is
+// over. Runs now, before anything plays, so a boundary missed while the api was
+// down is closed first; then once a minute.
+{
+  const { startSeasons } = await import("../src/db/seasons.js");
+  startSeasons(db, {
+    onLog: (line) => console.log(line),
+    onError: (error) => console.error(`season: ${String(error).slice(0, 160)}`),
+  });
+}
 // Autoplay: rented agents play on a timer, without their owners present. On by
 // default, because an agent only plays once its own owner has switched it on;
 // AUTOPLAY_INTERVAL_MS=0 turns the loop off entirely.

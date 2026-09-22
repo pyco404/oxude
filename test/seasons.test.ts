@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { eq, isNull } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { agents, ledger, matches } from "../src/db/schema.js";
+import { agentEvents, agents, ledger, matches, ratings, seasonStandings, seasons } from "../src/db/schema.js";
 import { createAgent, pickOpponent, runMatch } from "../src/db/runner.js";
 import { dueAgents } from "../src/db/autoplay.js";
 import { StakeError } from "../src/db/ledger.js";
-import { seasonAt } from "../src/season.js";
+import { nextSeason, seasonAt, GRACE_MS } from "../src/season.js";
+import { closeSeason, lapseExpired, seasonTick } from "../src/db/seasons.js";
+import { standings } from "../src/db/standings.js";
 import { someWallet } from "./helpers.js";
 
 const fresh = async () => {
@@ -72,6 +74,121 @@ describe("rentals end at the season boundary", () => {
     expect((await pickOpponent(db, me.id)).candidates).toBe(4);
     expect(await dueAgents(db, 0)).toHaveLength(0);
     await expect(pickOpponent(db, gone.id)).rejects.toThrow(/renew it to play/);
+    await close();
+  });
+});
+
+describe("the season boundary", () => {
+  /** Two players who have played each other, and a house agent they have both played. */
+  const season = async (db: Db) => {
+    await house(db, 4);
+    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const a = await createAgent(db, { name: "A", presetName: "Hammer", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "B", presetName: "Mirage", ownerId: someWallet() });
+    for (let seed = 1; seed <= 6; seed++) await runMatch(db, a.id, b.id, { seed });
+    await runMatch(db, a.id, h!.id, { seed: 7 });
+    await runMatch(db, b.id, h!.id, { seed: 8 });
+    return { a, b, current: seasonAt(new Date()) };
+  };
+  const eventsOf = async (db: Db, id: string) =>
+    // Sorted: events written in one transaction share a timestamp, so their order is not the point.
+    (await db.select().from(agentEvents).where(eq(agentEvents.agentId, id))).map((e) => `${e.source} ${e.kind}`).sort();
+
+  it("freezes standings with the same figures the all-time ladder keeps, when every match is in one season", async () => {
+    const { db, close } = await fresh();
+    const { a, b, current } = await season(db);
+    const result = await closeSeason(db, current.key, current.end);
+    expect(result).toMatchObject({ closed: true, standings: 2 });
+    const frozen = await db.select().from(seasonStandings).where(eq(seasonStandings.season, current.key)).orderBy(seasonStandings.rank);
+    expect(frozen.map((r) => r.rank)).toEqual([1, 2]);
+    for (const row of frozen) {
+      const [r] = await db.select().from(ratings).where(eq(ratings.agentId, row.agentId));
+      expect(row.rankedMatches).toBe(r!.rankedMatches);
+      expect(row.rankedNet).toBe(r!.rankedNet);
+      expect(row.totalMatches).toBe(r!.matchesPlayed);
+      expect(row.totalNet).toBe(r!.cumulativeNet);
+    }
+    // Ranked excludes the house match each played; the totals include it.
+    expect(frozen.every((r) => r.totalMatches === r.rankedMatches + 1)).toBe(true);
+    expect(new Set(frozen.map((r) => r.agentId))).toEqual(new Set([a.id, b.id]));
+    // The next season exists, and this one is closed.
+    const [row] = await db.select().from(seasons).where(eq(seasons.key, current.key));
+    expect(row!.status).toBe("closed");
+    expect((await db.select().from(seasons).where(eq(seasons.key, nextSeason(current).key)))).toHaveLength(1);
+    await close();
+  });
+
+  it("closes exactly once: a second run, as after a restart, changes nothing", async () => {
+    const { db, close } = await fresh();
+    const { a, current } = await season(db);
+    await db.update(agents).set({ autoplay: true }).where(eq(agents.id, a.id));
+    await closeSeason(db, current.key, current.end);
+    const before = { standings: await db.select().from(seasonStandings), events: await db.select().from(agentEvents) };
+    const again = await closeSeason(db, current.key, new Date(current.end.getTime() + 60_000));
+    expect(again.closed).toBe(false);
+    expect(await db.select().from(seasonStandings)).toEqual(before.standings);
+    expect(await db.select().from(agentEvents)).toEqual(before.events);
+    // And a season that has not ended cannot be closed early.
+    await expect(closeSeason(db, nextSeason(current).key, current.end)).rejects.toThrow(/has not ended/);
+    await close();
+  });
+
+  it("expires whoever was not renewed, and stops autoplay for everyone, keeping band and floor", async () => {
+    const { db, close } = await fresh();
+    const { a, b, current } = await season(db);
+    // B's owner renewed; A's did not. Both were on autoplay.
+    await db.update(agents).set({ rentalEndsAt: nextSeason(current).end }).where(eq(agents.id, b.id));
+    await db.update(agents).set({ autoplay: true, autoplayFloor: 300 });
+    await closeSeason(db, current.key, current.end);
+
+    expect(await eventsOf(db, a.id)).toEqual(["season autoplay-off", "season expired"]);
+    expect(await eventsOf(db, b.id)).toEqual(["season autoplay-off"]);
+    for (const id of [a.id, b.id]) {
+      const [row] = await db.select().from(agents).where(eq(agents.id, id));
+      expect(row!.autoplay).toBe(false);
+      expect(row!.autoplayStoppedReason).toBe("season");
+      expect(row!.autoplayFloor).toBe(300);
+      expect(row!.band).toBe("B");
+      expect(row!.retiredAt).toBeNull();
+    }
+    await close();
+  });
+
+  it("lapses an expired agent once its 24 hours are up, and only once", async () => {
+    const { db, close } = await fresh();
+    const { a, b, current } = await season(db);
+    await db.update(agents).set({ rentalEndsAt: nextSeason(current).end }).where(eq(agents.id, b.id));
+    await closeSeason(db, current.key, current.end);
+
+    expect(await lapseExpired(db, new Date(current.end.getTime() + GRACE_MS - 1))).toEqual([]);
+    expect(await lapseExpired(db, new Date(current.end.getTime() + GRACE_MS))).toEqual([a.id]);
+    expect(await lapseExpired(db, new Date(current.end.getTime() + GRACE_MS + 60_000))).toEqual([]);
+    const [row] = await db.select().from(agents).where(eq(agents.id, a.id));
+    expect(row!.retiredReason).toBe("lapsed");
+    expect(await eventsOf(db, a.id)).toContain("season lapsed");
+    // The standings were frozen at the boundary and the grace period did not touch them.
+    expect(await db.select().from(seasonStandings).where(eq(seasonStandings.agentId, a.id))).toHaveLength(1);
+    await close();
+  });
+
+  it("catches up after downtime: one pass closes every ended season, opens the current one and lapses", async () => {
+    const { db, close } = await fresh();
+    const { a, current } = await season(db);
+    // The api was down from before the boundary until two days after it.
+    const later = new Date(current.end.getTime() + 2 * GRACE_MS);
+    const tick = await seasonTick(db, later);
+    expect(tick.closed.map((c) => c.key)).toEqual([current.key]);
+    expect(tick.lapsed).toContain(a.id);
+    expect((await db.select().from(seasons).where(eq(seasons.key, seasonAt(later).key)))[0]!.status).toBe("open");
+    expect((await seasonTick(db, later)).closed).toEqual([]);
+    await close();
+  });
+
+  it("counts a season's matches only, so a later season starts from nothing", async () => {
+    const { db, close } = await fresh();
+    const { current } = await season(db);
+    expect((await standings(db, { season: current.key })).length).toBe(2);
+    expect(await standings(db, { season: nextSeason(current).key })).toEqual([]);
     await close();
   });
 });

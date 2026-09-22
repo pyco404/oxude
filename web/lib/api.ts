@@ -145,7 +145,7 @@ export type AutoplayStatus = {
   state: AutoplayState;
   message: string | null;
   action: string | null;
-  stop: { reason: "floor" | "insolvent" | "retired" | "withdrawal"; hold: boolean } | null;
+  stop: { reason: "floor" | "insolvent" | "retired" | "withdrawal" | "season"; hold: boolean } | null;
   lastMatchAt: string | null;
   nextMatchAt: string | null;
   waitingSince: string | null;

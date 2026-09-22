@@ -4,7 +4,7 @@ import type { Db } from "./client.js";
 import { pickOpponent, runMatch } from "./runner.js";
 import { balanceOf, StakeError } from "./ledger.js";
 import { recordEvent } from "./events.js";
-import { rentalOpenSql } from "./rental.js";
+import { rentalOpen, rentalOpenSql } from "./rental.js";
 import { headlineFor } from "../transcript.js";
 import {
   agents,
@@ -343,6 +343,16 @@ function describeStop(
         message: "Paused: this agent is retired.",
         action: "A retired agent can't play again.",
       };
+    case "season":
+      return rentalOpen(row)
+        ? {
+            message: "Paused: a new season started.",
+            action: "Autoplay stops at every season boundary. Switch it back on to play this season - band and floor are as you left them.",
+          }
+        : {
+            message: "Paused: the season ended and this rental wasn't renewed.",
+            action: "Renew it within 24 hours of the boundary to keep it and its record; after that it retires, and its balance stays withdrawable.",
+          };
   }
 }
 

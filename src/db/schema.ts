@@ -129,9 +129,10 @@ export const agents = pgTable(
 
 /**
  * Why autoplay stopped. `withdrawal` is a hold and clears itself; the rest are
- * pauses and need the owner.
+ * pauses and need the owner. `season` is the boundary: every player agent's
+ * autoplay stops when a season ends, renewed or not.
  */
-export type AutoplayStop = "floor" | "insolvent" | "retired" | "withdrawal";
+export type AutoplayStop = "floor" | "insolvent" | "retired" | "withdrawal" | "season";
 
 /** Whether a stop clears itself, or waits for the owner to switch autoplay back on. */
 export const AUTOPLAY_SELF_CLEARING: Record<AutoplayStop, boolean> = {
@@ -139,6 +140,7 @@ export const AUTOPLAY_SELF_CLEARING: Record<AutoplayStop, boolean> = {
   floor: false,
   insolvent: false,
   retired: false,
+  season: false,
 };
 
 /**
