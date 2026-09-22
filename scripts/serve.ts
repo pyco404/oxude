@@ -96,11 +96,17 @@ if (rpc) {
 }
 
 // A host sets PORT and needs every interface; locally, loopback only.
+// Characters check chosen names and write bios for brief-written agents with
+// a small model, when there is a key to call one with.
+const characterModel = process.env["ANTHROPIC_API_KEY"]
+  ? await import("../src/character/model.js").then(({ textCheck, bioWriter }) => ({ check: textCheck(), writeBio: bioWriter() }))
+  : undefined;
 const { url } = await listen({
   db,
   port: Number(process.env["PORT"] ?? arg("--port", 8787)),
   host: process.env["HOST"],
   ...(chain ? { chain } : {}),
+  ...(characterModel ? { character: characterModel } : {}),
 });
 
 if (chain && rpc) {

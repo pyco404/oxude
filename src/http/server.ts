@@ -24,6 +24,8 @@ import {
 } from "../db/runner.js";
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
+import { createCharacter, isDefaultName, NO_MODEL, publicCharacter, type CharacterDeps } from "../character/store.js";
+import { moderate, type Verdict } from "../character/moderation.js";
 import { dayStart, seasonAt, seasonByKey, GRACE_MS, RENEWAL_REMINDER_MS } from "../season.js";
 import { previewPolicy, refreshTrueRatings, rosterProfile } from "../db/rating.js";
 import { agentRecord, latestBluff, matchActivity, recentMatches } from "../db/feed.js";
@@ -79,6 +81,12 @@ export type AppOptions = {
    * environment, which is what scripts/serve.ts starts the loop with.
    */
   autoplayIntervalMs?: number;
+  /**
+   * The model calls characters use: checking a chosen name, writing a bio for
+   * a brief-written agent. Without them, templates and the local rules only -
+   * which is the default, so tests never reach a model.
+   */
+  character?: CharacterDeps;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -104,6 +112,8 @@ export function createApp(options: AppOptions): Server {
   const autoplayIntervalMs =
     options.autoplayIntervalMs ?? (Number(process.env["AUTOPLAY_INTERVAL_MS"]) || AUTOPLAY_INTERVAL_MS);
   const elicit = options.elicit ?? defaultElicit;
+  // No model unless one is given: scripts/serve.ts passes Haiku when a key is set.
+  const characterDeps = options.character ?? NO_MODEL;
   const limiter = new RateLimiter(options.rateLimit ?? { limit: 5, windowMs: 60_000 }, options.now);
   // Playing costs no money but writes a match row and rewrites two ratings;
   // unbounded, it is a cheap way to bloat the transcript table.
@@ -216,14 +226,23 @@ export function createApp(options: AppOptions): Server {
 
   async function postAgent(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
-    const name = String(ctx.body["name"] ?? "").trim();
-    if (!name) throw new HttpError(400, "name is required");
     const presetName = ctx.body["presetName"] as PresetName | undefined;
     const brief = typeof ctx.body["brief"] === "string" ? ctx.body["brief"].trim() : "";
     if (!presetName && !brief) throw new HttpError(400, "presetName or brief is required");
     if (presetName && !PRESET_NAMES.includes(presetName)) {
       throw new HttpError(400, `unknown preset ${presetName}`, { known: PRESET_NAMES });
     }
+    // A name is optional: without one - or with one the rent screen filled in -
+    // the agent's character is named for it. A name the owner chose is checked
+    // before anything is spent on a model call for the brief.
+    const given = String(ctx.body["name"] ?? "").trim();
+    const chosenName = given && !isDefaultName(given) ? given : null;
+    let nameVerdict: Verdict | undefined;
+    if (chosenName) {
+      nameVerdict = await moderate(chosenName, "name", characterDeps.check);
+      if (!nameVerdict.ok) throw new HttpError(400, nameVerdict.reason ?? "that name can't be used");
+    }
+    const name = chosenName ?? "New agent";
 
     let table: Policy | undefined;
     let freeCall = false;
@@ -266,11 +285,19 @@ export function createApp(options: AppOptions): Server {
       });
     });
     await refreshTrueRatings(db);
+    // Its character: a face, a name unless the owner gave one, an epithet and a
+    // bio. A failure here leaves a working agent without one, which the
+    // portrait endpoint and the backfill both cover.
+    const character = await createCharacter(db, row.id, { deps: characterDeps, ...(nameVerdict ? { nameVerdict } : {}) }).catch((error: unknown) => {
+      console.error(`character: could not create one for ${row.id}: ${String(error).slice(0, 160)}`);
+      return null;
+    });
     const view = await publicAgent(db, row.id);
     const [fresh] = await db.select().from(agents).where(eq(agents.id, row.id)).limit(1);
     return {
       agent: {
         ...view,
+        character: character ? publicCharacter(character) : null,
         id: fresh!.id,
         brief: fresh!.brief,
         ownerId: fresh!.ownerId,

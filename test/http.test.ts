@@ -151,8 +151,9 @@ describe("POST /agents", () => {
     expect(bad.status).toBe(400);
     expect((await readBody(bad)).known).toEqual(PRESET_NAMES);
 
-    const nameless = await api("/agents", { method: "POST", body: JSON.stringify({ presetName: "Bully" }) });
-    expect(nameless.status).toBe(400);
+    const badName = await api("/agents", { method: "POST", owner: "impostor", body: JSON.stringify({ name: "Oxude Admin", presetName: "Bully" }) });
+    expect(badName.status).toBe(400);
+    expect((await readBody(badName)).error).toMatch(/speaking for Oxude/);
 
     // A token nobody issued is simply signed out.
     const forged = await fetch(`${url}/agents`, {
@@ -798,6 +799,24 @@ describe("autoplay over http", () => {
       const res = await api(`/agents/${agent.id}/autoplay`, { method: "POST", owner, body: JSON.stringify({ enabled: true, floor }) });
       expect(res.status).toBe(400);
     }
+  });
+});
+
+describe("characters over HTTP", () => {
+  it("names an agent rented without a name, and keeps a name the owner chose", async () => {
+    const nameless = await readBody(await api("/agents", { method: "POST", owner: "nameless", body: JSON.stringify({ presetName: "Bully" }) }));
+    expect(nameless.agent.name).toMatch(/^[A-Z][a-z]{3,10}$/);
+    expect(nameless.agent.character).toMatchObject({ nameSource: "generated" });
+    expect(nameless.agent.character.bio).toContain(nameless.agent.name);
+
+    // What the rent screen fills in when the box is empty was never chosen: it is replaced too.
+    const defaulted = await readBody(await api("/agents", { method: "POST", owner: "defaulted", body: JSON.stringify({ name: "Mirage rental", presetName: "Mirage" }) }));
+    expect(defaulted.agent.name).not.toBe("Mirage rental");
+    expect(defaulted.agent.character.nameSource).toBe("generated");
+
+    const chosen = await readBody(await api("/agents", { method: "POST", owner: "chooser", body: JSON.stringify({ name: "Lanternjaw", presetName: "Anchor" }) }));
+    expect(chosen.agent.name).toBe("Lanternjaw");
+    expect(chosen.agent.character).toMatchObject({ nameSource: "owner" });
   });
 });
 
