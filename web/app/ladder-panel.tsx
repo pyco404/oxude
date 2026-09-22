@@ -3,7 +3,7 @@
 import { AgentName } from "@/app/agent-name";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, type LadderRow } from "@/lib/api";
+import { api, type LadderPeriod, type LadderRow } from "@/lib/api";
 import { Segmented } from "@/app/ui";
 
 const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
@@ -28,30 +28,48 @@ export function LadderPanel({
 }) {
   const col = wide ? "hidden lg:block" : "hidden";
   const [tab, setTab] = useState<"winnings" | "per-match">("winnings");
+  // This season by default: it is what final placement, and later prizes, are decided on.
+  const [period, setPeriod] = useState<LadderPeriod>("season");
+  const [seasonNumber, setSeasonNumber] = useState<number | null>(null);
   const [rows, setRows] = useState<LadderRow[] | null | undefined>(undefined);
   useEffect(() => {
     let current = true;
     api
-      .ladder(tab, limit)
-      .then((r) => current && setRows(r.rows))
+      .ladder(tab, limit, period)
+      .then((r) => {
+        if (!current) return;
+        setRows(r.rows);
+        if (r.season) setSeasonNumber(r.season.number);
+      })
       .catch(() => current && setRows(null));
     return () => {
       current = false;
     };
-  }, [tab, limit, refreshKey]);
+  }, [tab, limit, period, refreshKey]);
 
   return (
     <section id="ladder" className="scroll-mt-4 border border-line bg-panel">
       <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Ladder</h2>
       <div className="p-3">
         <Segmented
-          value={tab}
-          onChange={setTab}
+          value={period}
+          onChange={setPeriod}
           options={[
-            { value: "winnings", label: "Winnings, scaled to band B" },
-            { value: "per-match", label: "Per match" },
+            { value: "day", label: "Today" },
+            { value: "season", label: seasonNumber ? `Season ${seasonNumber}` : "This season" },
+            { value: "all", label: "All time" },
           ]}
         />
+        <div className="mt-2">
+          <Segmented
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "winnings", label: "Winnings, scaled to band B" },
+              { value: "per-match", label: "Per match" },
+            ]}
+          />
+        </div>
         {wide ? (
           <div className="mt-3 hidden items-center gap-2 border-b border-line pb-2 text-[10px] uppercase tracking-wider text-muted lg:flex">
             <span className="w-6 shrink-0">#</span>
@@ -114,9 +132,18 @@ export function LadderPanel({
           {rows === null ? (
             <li className="py-2 text-[13px] text-muted">Couldn&apos;t reach the server. Try again in a moment.</li>
           ) : null}
-          {rows && rows.length === 0 ? <li className="py-2 text-[13px] text-muted">No agents yet.</li> : null}
+          {rows && rows.length === 0 ? (
+            <li className="py-2 text-[13px] text-muted">
+              {period === "all" ? "No agents yet." : period === "day" ? "No staked matches yet today." : "No staked matches yet this season."}
+            </li>
+          ) : null}
         </ol>
         <p className="mt-2 text-[11px] leading-4 text-muted">
+          {period === "season"
+            ? "This season: every match since Monday 00:00 UTC. Final placement is frozen when the season ends. "
+            : period === "day"
+              ? "Today: every match since 00:00 UTC. "
+              : "All time: every match ever played. "}
           {tab === "winnings"
             ? "Ranked by net won against other players' agents. Volume counts."
             : "Net per ranked match. Needs at least one match against another player."}{" "}

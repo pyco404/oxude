@@ -182,6 +182,9 @@ export type FeedItem = {
 export type Feed = { matches: FeedItem[]; bluff: FeedItem | null };
 export type AgentRecord = { wins: number; losses: number; level: number };
 
+/** Which matches a ladder counts: today in UTC, the season in play, or everything. */
+export type LadderPeriod = "day" | "season" | "all";
+
 /** The season in play. Mirrors GET /season. */
 export type SeasonInfo = { key: string; number: number; startsAt: string; endsAt: string };
 
@@ -294,6 +297,6 @@ export const api = {
   feed: (limit = 12, before?: number) =>
     request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
   season: () => request<{ season: SeasonInfo; graceHours: number; reminderHours: number }>("/season"),
-  ladder: (sort: "winnings" | "per-match", limit = 25) =>
-    request<{ rows: LadderRow[] }>(`/ladder?sort=${sort}&limit=${limit}`),
+  ladder: (sort: "winnings" | "per-match", limit = 25, period: LadderPeriod = "season") =>
+    request<{ rows: LadderRow[]; season?: SeasonInfo & { current: boolean } }>(`/ladder?sort=${sort}&limit=${limit}&period=${period}`),
 };
