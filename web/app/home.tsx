@@ -396,7 +396,8 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
           {session ? null : agentOrRent}
           {session ? null : <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />}
           <RosterPanel
-            band={band}
+            // The band the list was fetched for: the agent's own once it has one, not the rent form's choice.
+            band={shownBand}
             agents={roster ? roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId)) : roster}
             fromAgent={Boolean(agent)}
           />
