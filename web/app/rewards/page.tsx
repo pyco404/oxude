@@ -77,7 +77,8 @@ function RewardsSection({ r }: { r: Rewards }) {
           value={n(claimed)}
           sub={
             <>
-              Reward wallet {n(r.reward.inflow)} · platform wallet {n(r.platform.inflow)}
+              Reward wallet <span className="font-mono text-gold">{n(r.reward.inflow)}</span> · platform wallet{" "}
+              <span className="font-mono text-gold">{n(r.platform.inflow)}</span>
               <br />
               Platform: <Address address={r.platform.address} cluster={r.cluster} />
             </>
@@ -160,7 +161,16 @@ function ActivitySection({ a }: { a: Activity | null }) {
       ) : (
         <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-3 lg:p-4">
           <Tile label="Total staked" value={n(a.totalStaked)} sub="Chips put at risk across all staked matches, both sides counted." />
-          <Tile label="Matches played" value={n(a.stakedMatches)} sub={`Staked. Plus ${n(a.exhibitions)} exhibitions, where nothing is staked.`} />
+          <Tile
+            label="Matches played"
+            value={n(a.stakedMatches)}
+            sub={
+              <>
+                Staked. Plus <span className="font-mono">{n(a.exhibitions)}</span> exhibitions, where nothing is
+                staked.
+              </>
+            }
+          />
           <Tile label="Largest single pot" value={n(a.largestPot)} sub="The most chips that changed hands in one match." />
         </div>
       )}

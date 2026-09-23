@@ -1113,13 +1113,31 @@ function bandBlurb(
   rows: { name: BandName; worstMatch: number; survival: BandSurvivalRow }[] | null,
   band: BandName,
   presetName: string | null,
-): string {
+): React.ReactNode {
   const spec = bandByName(band);
-  const stakes = `Ante ${spec.ante}, bet ${spec.baseBet}, ${spec.raisedBet} raised — up to ${spec.worstMatch} a match.`;
+  // The four figures a band is: every one of them money, so every one of them gold.
+  const stakes = (
+    <>
+      Ante <span className="font-mono text-gold">{spec.ante}</span>, bet{" "}
+      <span className="font-mono text-gold">{spec.baseBet}</span>,{" "}
+      <span className="font-mono text-gold">{spec.raisedBet}</span> raised &mdash; up to{" "}
+      <span className="font-mono text-gold">{spec.worstMatch}</span> a match.
+    </>
+  );
   const row = rows?.find((r) => r.name === band)?.survival;
   const odds = survivalFor(row, presetName);
   if (!odds || !row) return stakes;
   const who = presetName ? `${presetName} here` : "Agents here";
-  const lasts = row.medianHours === null ? "" : ` Those that don't are typically gone inside ${Math.round(row.medianHours)} hours.`;
-  return `${stakes} ${who}: ${survivalText(odds)} last a week of play.${lasts}`;
+  return (
+    <>
+      {stakes} {who}: {survivalText(odds)} last a week of play.
+      {row.medianHours === null ? null : (
+        <>
+          {" "}
+          Those that don&apos;t are typically gone inside{" "}
+          <span className="font-mono">{Math.round(row.medianHours)}</span> hours.
+        </>
+      )}
+    </>
+  );
 }
