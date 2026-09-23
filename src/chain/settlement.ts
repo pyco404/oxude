@@ -42,6 +42,8 @@ export const pdas = {
     PublicKey.findProgramAddressSync([Buffer.from("withdrawal"), Buffer.from(uuidBytes(withdrawalId))], PROGRAM_ID)[0],
   outflow: (agentId: string) =>
     PublicKey.findProgramAddressSync([Buffer.from("outflow"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
+  rental: (rentalId: string) =>
+    PublicKey.findProgramAddressSync([Buffer.from("rental"), Buffer.from(uuidBytes(rentalId))], PROGRAM_ID)[0],
 };
 
 /** What opening a vault needs: the id, and the owner and salt it was derived from (src/agent-id.ts). */
@@ -78,9 +80,9 @@ export class ChainClient {
    * One-time: the config, pointed at the stake token. Signed by the admin,
    * naming the settler. The program refuses a mint that can still be minted.
    */
-  async initialize(settler: PublicKey, maxSettlement: number): Promise<string> {
+  async initialize(settler: PublicKey, maxSettlement: number, rent: number): Promise<string> {
     return this.program.methods
-      .initialize(settler, new BN(maxSettlement))
+      .initialize(settler, new BN(maxSettlement), new BN(rent))
       .accountsPartial({
         admin: this.signer.publicKey,
         config: pdas.config(),
@@ -100,6 +102,48 @@ export class ChainClient {
       .setMaxSettlement(new BN(maxSettlement))
       .accountsPartial({ admin: this.signer.publicKey, config: pdas.config() })
       .rpc();
+  }
+
+  /**
+   * Sets what renting costs, in base units. The signer must be the admin
+   * recorded on the config. On mainnet this is called once per season
+   * boundary, in the same transaction as the rate it was computed from.
+   */
+  async setRent(rent: number): Promise<string> {
+    return this.program.methods
+      .setRent(new BN(rent))
+      .accountsPartial({ admin: this.signer.publicKey, config: pdas.config() })
+      .rpc();
+  }
+
+  /**
+   * The instruction that burns a rental's fee out of the renter's own tokens.
+   * Built, not sent: it is the first of the three the owner signs at rent time,
+   * so the fee and the agent it paid for can never come apart.
+   *
+   * `amount` must be the price the config carries. A price that moves while the
+   * owner is signing makes this fail rather than charging them more.
+   */
+  async payRentInstruction(input: { rentalId: string; renter: string | PublicKey; amount: number }): Promise<TransactionInstruction> {
+    const renter = typeof input.renter === "string" ? new PublicKey(input.renter) : input.renter;
+    return this.program.methods
+      .payRent(uuidBytes(input.rentalId), new BN(input.amount))
+      .accountsPartial({
+        renter,
+        settler: this.signer.publicKey,
+        config: pdas.config(),
+        mint: this.mint,
+        source: this.tokenAccount(renter),
+        rental: pdas.rental(input.rentalId),
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .instruction();
+  }
+
+  /** Whether this rental's fee has been paid. Its record exists at most once. */
+  async isRentPaid(rentalId: string): Promise<boolean> {
+    return (await this.connection.getAccountInfo(pdas.rental(rentalId), "confirmed")) !== null;
   }
 
   /**

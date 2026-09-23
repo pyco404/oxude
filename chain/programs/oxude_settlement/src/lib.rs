@@ -21,8 +21,13 @@
 //!   a salt, checked as the vault opens, and the owner is recorded in that same
 //!   instruction. No key - the settler's included - can record anyone else as
 //!   the owner of that agent;
-//! - each match settles at most once, because its record is a PDA seeded by the
-//!   match id and cannot be created twice;
+//! - each match settles at most once, and each rental is paid for at most once,
+//!   because each has a record that is a PDA seeded by its id and cannot be
+//!   created twice;
+//! - renting costs a fee, burned out of the renter's own tokens, at the price
+//!   the config carries. The price is checked against the amount in the
+//!   instruction, so a price that moves while a player is signing makes their
+//!   transaction fail rather than charging them something they did not see;
 //! - vaults are PDAs whose authority is the config PDA, so no private key -
 //!   the server's included - can move vault funds except through `settle`
 //!   and `withdraw`;
@@ -40,7 +45,7 @@
 
 use anchor_lang::prelude::*;
 use solana_sha256_hasher::hashv;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy");
 
@@ -50,6 +55,7 @@ pub const SETTLEMENT_SEED: &[u8] = b"settlement";
 pub const OWNER_SEED: &[u8] = b"owner";
 pub const WITHDRAWAL_SEED: &[u8] = b"withdrawal";
 pub const OUTFLOW_SEED: &[u8] = b"outflow";
+pub const RENTAL_SEED: &[u8] = b"rental";
 /// Mixed into every agent id, so an id can't be confused with any other hash.
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
@@ -76,16 +82,70 @@ pub mod oxude_settlement {
     /// its mint authority is already `None`. That is the whole of the supply
     /// guarantee: this program holds no authority to mint, and neither does
     /// anyone else, so the currency cannot be inflated after this call.
-    pub fn initialize(ctx: Context<Initialize>, settler: Pubkey, max_settlement: u64) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, settler: Pubkey, max_settlement: u64, rent: u64) -> Result<()> {
         require!(max_settlement > 0, OxudeError::InvalidLimit);
         require!(max_settlement <= MAX_SETTLEMENT_CEILING, OxudeError::InvalidLimit);
+        require!(rent > 0, OxudeError::InvalidLimit);
         require!(ctx.accounts.mint.mint_authority.is_none(), OxudeError::MintableStakeToken);
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
         config.settler = settler;
         config.mint = ctx.accounts.mint.key();
         config.max_settlement = max_settlement;
+        config.rent = rent;
         config.bump = ctx.bumps.config;
+        Ok(())
+    }
+
+    /// Sets what renting an agent costs, in base units. The admin recorded at
+    /// initialize is the only key that can call it.
+    ///
+    /// On mainnet a season's rent is a fixed value in dollars converted at that
+    /// season's rate, so this is called once per boundary, in the same
+    /// transaction as the rate it was computed from.
+    ///
+    /// Nobody can be overcharged by a change landing at the wrong moment: the
+    /// amount is an argument to `pay_rent`, so a player whose price moved while
+    /// they were signing gets a failed transaction, not a bigger bill.
+    pub fn set_rent(ctx: Context<SetRent>, rent: u64) -> Result<()> {
+        require!(rent > 0, OxudeError::InvalidLimit);
+        let config = &mut ctx.accounts.config;
+        let previous = config.rent;
+        config.rent = rent;
+        emit!(RentChanged { previous, rent });
+        Ok(())
+    }
+
+    /// Pays for a rental by burning the fee out of the renter's own tokens.
+    ///
+    /// Burned, not collected: the fee leaves the supply rather than moving to
+    /// the platform, so renting takes tokens off the market instead of funding
+    /// a wallet. The record makes a rental id unrepeatable, so a retried
+    /// transaction cannot charge twice.
+    ///
+    /// At rent time this is the first of three instructions the owner signs in
+    /// one transaction - the fee, the vault, the deposit - so a paid fee can
+    /// never be left behind by a rental that did not happen.
+    pub fn pay_rent(ctx: Context<PayRent>, rental_id: [u8; 16], amount: u64) -> Result<()> {
+        require!(amount == ctx.accounts.config.rent, OxudeError::WrongRent);
+        token::burn(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.mint.to_account_info(),
+                    from: ctx.accounts.source.to_account_info(),
+                    authority: ctx.accounts.renter.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+        let record = &mut ctx.accounts.rental;
+        record.rental_id = rental_id;
+        record.renter = ctx.accounts.renter.key();
+        record.amount = amount;
+        record.slot = Clock::get()?.slot;
+        record.bump = ctx.bumps.rental;
+        emit!(RentPaid { rental_id, renter: record.renter, amount });
         Ok(())
     }
 
@@ -327,6 +387,8 @@ pub struct Config {
     pub mint: Pubkey,
     /// The most a single settlement can move.
     pub max_settlement: u64,
+    /// What renting an agent costs, in base units. Burned, not collected.
+    pub rent: u64,
     pub bump: u8,
 }
 
@@ -337,6 +399,18 @@ pub struct Settlement {
     pub match_id: [u8; 16],
     pub from_agent: [u8; 16],
     pub to_agent: [u8; 16],
+    pub amount: u64,
+    pub slot: u64,
+    pub bump: u8,
+}
+
+/// One per rental paid for: its existence is what stops a fee being charged
+/// twice for the same rental.
+#[account]
+#[derive(InitSpace)]
+pub struct Rental {
+    pub rental_id: [u8; 16],
+    pub renter: Pubkey,
     pub amount: u64,
     pub slot: u64,
     pub bump: u8,
@@ -379,6 +453,46 @@ pub struct SetSettler<'info> {
     pub admin: Signer<'info>,
     #[account(mut, seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
     pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
+pub struct SetRent<'info> {
+    /// The admin recorded on the config, and nobody else.
+    pub admin: Signer<'info>,
+    #[account(mut, seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
+    pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
+#[instruction(rental_id: [u8; 16])]
+pub struct PayRent<'info> {
+    /// Pays the fee out of their own tokens, and signs for the burn.
+    pub renter: Signer<'info>,
+    /// Co-signs and pays this record's account rent, as it does for every other
+    /// account this program opens.
+    #[account(mut)]
+    pub settler: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler, has_one = mint)]
+    pub config: Account<'info, Config>,
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    /// The renter's own token account, and nobody else's.
+    #[account(
+        mut,
+        token::mint = config.mint,
+        constraint = source.owner == renter.key() @ OxudeError::NotRentersAccount
+    )]
+    pub source: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = settler,
+        space = 8 + Rental::INIT_SPACE,
+        seeds = [RENTAL_SEED, rental_id.as_ref()],
+        bump
+    )]
+    pub rental: Account<'info, Rental>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -567,6 +681,19 @@ pub struct SettlerChanged {
 }
 
 #[event]
+pub struct RentPaid {
+    pub rental_id: [u8; 16],
+    pub renter: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct RentChanged {
+    pub previous: u64,
+    pub rent: u64,
+}
+
+#[event]
 pub struct MaxSettlementChanged {
     pub previous: u64,
     pub max_settlement: u64,
@@ -604,6 +731,10 @@ pub enum OxudeError {
     NotOwnersAccount,
     #[msg("A deposit comes only from the depositor's own token account")]
     NotDepositorsAccount,
+    #[msg("The rent paid is not the price the config carries")]
+    WrongRent,
+    #[msg("Rent is paid only from the renter's own token account")]
+    NotRentersAccount,
     #[msg("The vault doesn't match the ledger: a settlement is still in flight")]
     LedgerMismatch,
     #[msg("A withdrawal must leave the vault empty or with at least the minimum stake")]

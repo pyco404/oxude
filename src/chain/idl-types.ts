@@ -185,6 +185,10 @@ export type OxudeSettlement = {
         {
           "name": "maxSettlement",
           "type": "u64"
+        },
+        {
+          "name": "rent",
+          "type": "u64"
         }
       ]
     },
@@ -422,6 +426,130 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "payRent",
+      "docs": [
+        "Pays for a rental by burning the fee out of the renter's own tokens.",
+        "",
+        "Burned, not collected: the fee leaves the supply rather than moving to",
+        "the platform, so renting takes tokens off the market instead of funding",
+        "a wallet. The record makes a rental id unrepeatable, so a retried",
+        "transaction cannot charge twice.",
+        "",
+        "At rent time this is the first of three instructions the owner signs in",
+        "one transaction - the fee, the vault, the deposit - so a paid fee can",
+        "never be left behind by a rental that did not happen."
+      ],
+      "discriminator": [
+        69,
+        155,
+        112,
+        183,
+        178,
+        234,
+        94,
+        100
+      ],
+      "accounts": [
+        {
+          "name": "renter",
+          "docs": [
+            "Pays the fee out of their own tokens, and signs for the burn."
+          ],
+          "signer": true
+        },
+        {
+          "name": "settler",
+          "docs": [
+            "Co-signs and pays this record's account rent, as it does for every other",
+            "account this program opens."
+          ],
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "source",
+          "docs": [
+            "The renter's own token account, and nobody else's."
+          ],
+          "writable": true
+        },
+        {
+          "name": "rental",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  110,
+                  116,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "rentalId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "rentalId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "setMaxSettlement",
       "docs": [
         "Raises or lowers the most a single settlement can move. The admin",
@@ -475,6 +603,68 @@ export type OxudeSettlement = {
       "args": [
         {
           "name": "maxSettlement",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "setRent",
+      "docs": [
+        "Sets what renting an agent costs, in base units. The admin recorded at",
+        "initialize is the only key that can call it.",
+        "",
+        "On mainnet a season's rent is a fixed value in dollars converted at that",
+        "season's rate, so this is called once per boundary, in the same",
+        "transaction as the rate it was computed from.",
+        "",
+        "Nobody can be overcharged by a change landing at the wrong moment: the",
+        "amount is an argument to `pay_rent`, so a player whose price moved while",
+        "they were signing gets a failed transaction, not a bigger bill."
+      ],
+      "discriminator": [
+        25,
+        182,
+        51,
+        145,
+        96,
+        33,
+        58,
+        115
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "rent",
           "type": "u64"
         }
       ]
@@ -941,6 +1131,19 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "rental",
+      "discriminator": [
+        121,
+        83,
+        229,
+        235,
+        73,
+        50,
+        143,
+        184
+      ]
+    },
+    {
       "name": "settlement",
       "discriminator": [
         55,
@@ -992,6 +1195,32 @@ export type OxudeSettlement = {
         238,
         14,
         95
+      ]
+    },
+    {
+      "name": "rentChanged",
+      "discriminator": [
+        128,
+        187,
+        190,
+        107,
+        49,
+        218,
+        246,
+        239
+      ]
+    },
+    {
+      "name": "rentPaid",
+      "discriminator": [
+        140,
+        29,
+        172,
+        69,
+        152,
+        38,
+        73,
+        241
       ]
     },
     {
@@ -1105,26 +1334,36 @@ export type OxudeSettlement = {
     },
     {
       "code": 6011,
+      "name": "wrongRent",
+      "msg": "The rent paid is not the price the config carries"
+    },
+    {
+      "code": 6012,
+      "name": "notRentersAccount",
+      "msg": "Rent is paid only from the renter's own token account"
+    },
+    {
+      "code": 6013,
       "name": "ledgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6012,
+      "code": 6014,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6013,
+      "code": 6015,
       "name": "agentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6014,
+      "code": 6016,
       "name": "outflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6015,
+      "code": 6017,
       "name": "mintableStakeToken",
       "msg": "The stake token still has a mint authority: its supply is not fixed"
     }
@@ -1182,6 +1421,13 @@ export type OxudeSettlement = {
             "name": "maxSettlement",
             "docs": [
               "The most a single settlement can move."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rent",
+            "docs": [
+              "What renting an agent costs, in base units. Burned, not collected."
             ],
             "type": "u64"
           },
@@ -1247,6 +1493,84 @@ export type OxudeSettlement = {
           },
           {
             "name": "spent",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rentChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "u64"
+          },
+          {
+            "name": "rent",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rentPaid",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "rentalId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "renter",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rental",
+      "docs": [
+        "One per rental paid for: its existence is what stops a fee being charged",
+        "twice for the same rental."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "rentalId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "renter",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
             "type": "u64"
           },
           {

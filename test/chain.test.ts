@@ -4,10 +4,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction } from "@solana/web3.js";
 import {
   AuthorityType,
   createMint,
+  getMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
   setAuthority,
@@ -37,6 +38,8 @@ let stakeMint: PublicKey;
 /** Holds the whole supply, and is where every vault in this file is funded from. */
 let treasury: PublicKey;
 const MAX = 60;
+/** What a rental costs, burned. */
+const RENT = 200;
 /** Must match the program's constants. */
 const OUTFLOW_FLOOR = 120;
 const MAX_SETTLEMENT_CEILING = 900;
@@ -109,7 +112,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     await mintTo(connection, admin, stakeMint, treasury, admin, 1_000_000_000);
     await setAuthority(connection, admin, stakeMint, admin, AuthorityType.MintTokens, null);
 
-    await new ChainClient(connection, admin, stakeMint).initialize(settler.publicKey, MAX);
+    await new ChainClient(connection, admin, stakeMint).initialize(settler.publicKey, MAX, RENT);
     chain = new ChainClient(connection, settler, stakeMint);
   }, 60_000);
 
@@ -118,12 +121,100 @@ describe.skipIf(!RUN)("settlement program", () => {
     if (ledger) rmSync(ledger, { recursive: true, force: true });
   });
 
-  it("is configured with the settler, the mint and the limit", async () => {
+  it("is configured with the settler, the mint, the limit and the rent", async () => {
     const config = await chain.config();
     expect(config.settler.toBase58()).toBe(settler.publicKey.toBase58());
     expect(config.admin.toBase58()).toBe(admin.publicKey.toBase58());
     expect(config.mint.toBase58()).toBe(stakeMint.toBase58());
     expect(config.maxSettlement.toNumber()).toBe(MAX);
+    expect(config.rent.toNumber()).toBe(RENT);
+  });
+
+  describe("rent", () => {
+    /** A wallet holding tokens out of the treasury, ready to pay for a rental. */
+    async function renter(holding: number): Promise<Keypair> {
+      const key = Keypair.generate();
+      await airdrop(key, 1);
+      const ata = (await getOrCreateAssociatedTokenAccount(connection, admin, stakeMint, key.publicKey)).address;
+      await transfer(connection, admin, treasury, ata, admin, holding);
+      return key;
+    }
+
+    /** Builds the fee instruction, adds the renter's signature to the settler's, sends. */
+    async function payRent(who: Keypair, rentalId: string, amount = RENT, signAs: Keypair = who) {
+      const ix = await chain.payRentInstruction({ rentalId, renter: who.publicKey, amount });
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+      const tx = new Transaction({ feePayer: settler.publicKey, blockhash, lastValidBlockHeight }).add(ix);
+      tx.partialSign(settler, signAs);
+      const signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+      return signature;
+    }
+
+    it("burns the fee out of the renter's own tokens, and takes it off the supply", async () => {
+      const who = await renter(500);
+      const supply = Number((await getMint(connection, stakeMint)).supply);
+      const rentalId = randomUUID();
+
+      const signature = await payRent(who, rentalId);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(300);
+      // Burned, not collected: the supply itself falls by the fee.
+      expect(Number((await getMint(connection, stakeMint)).supply)).toBe(supply - RENT);
+      expect(await chain.isRentPaid(rentalId)).toBe(true);
+
+      const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+      const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
+      const paid = events.find((e) => e.name === "rentPaid")!;
+      expect(Array.from(paid.data.rentalId as number[])).toEqual(uuidBytes(rentalId));
+      expect((paid.data.renter as { toBase58(): string }).toBase58()).toBe(who.publicKey.toBase58());
+      expect(Number(paid.data.amount)).toBe(RENT);
+    });
+
+    it("charges the price the config carries, and nothing else", async () => {
+      const who = await renter(500);
+      // Under the price, and over it: both refused. The amount is in the
+      // transaction the renter signs, so a price that moved while they were
+      // signing fails here instead of quietly costing them more.
+      await expect(payRent(who, randomUUID(), RENT - 1)).rejects.toThrow(/WrongRent/);
+      await expect(payRent(who, randomUUID(), RENT + 1)).rejects.toThrow(/WrongRent/);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(500);
+    });
+
+    it("pays for a rental once", async () => {
+      const who = await renter(500);
+      const rentalId = randomUUID();
+      await payRent(who, rentalId);
+      await expect(payRent(who, rentalId)).rejects.toThrow(/already in use/);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(300);
+    });
+
+    it("needs the renter's own signature and the settler's", async () => {
+      const who = await renter(500);
+      const stranger = Keypair.generate();
+      // Somebody else signing in the renter's place: the burn has no authority.
+      await expect(payRent(who, randomUUID(), RENT, stranger)).rejects.toThrow();
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(500);
+    });
+
+    it("lets only the admin change the price", async () => {
+      const asAdmin = new ChainClient(connection, admin, stakeMint);
+      await expect(chain.setRent(RENT * 2)).rejects.toThrow(/NotAdmin/);
+      await expect(asAdmin.setRent(0)).rejects.toThrow(/InvalidLimit/);
+      expect((await chain.config()).rent.toNumber()).toBe(RENT);
+
+      await asAdmin.setRent(RENT * 2);
+      expect((await chain.config()).rent.toNumber()).toBe(RENT * 2);
+      // The old price now fails, which is the protection: nobody is charged a
+      // price they did not see.
+      const who = await renter(500);
+      await expect(payRent(who, randomUUID(), RENT)).rejects.toThrow(/WrongRent/);
+      await payRent(who, randomUUID(), RENT * 2);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(100);
+
+      // Put it back: the rest of this file assumes the price it was opened with.
+      await asAdmin.setRent(RENT);
+      expect((await chain.config()).rent.toNumber()).toBe(RENT);
+    });
   });
 
   it("lets only the config's admin change the per-match limit", async () => {
@@ -268,7 +359,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     const payer = Keypair.generate();
     await airdrop(payer, 2);
     await expect(
-      new ChainClient(connection, payer, inflatable).initialize(settler.publicKey, MAX),
+      new ChainClient(connection, payer, inflatable).initialize(settler.publicKey, MAX, RENT),
     ).rejects.toThrow(/MintableStakeToken|already in use/);
   });
 
