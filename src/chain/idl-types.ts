@@ -14,6 +14,113 @@ export type OxudeSettlement = {
   },
   "instructions": [
     {
+      "name": "deposit",
+      "docs": [
+        "Moves tokens from a wallet into an agent's vault. This is how every",
+        "vault is funded: by its owner at rent time and whenever they top it up,",
+        "and for a house agent by whoever runs the roster.",
+        "",
+        "The depositor signs and the tokens are their own. The program does not",
+        "check that they are the agent's owner, and could not usefully: a vault",
+        "is an ordinary token account, so a plain SPL transfer reaches it without",
+        "coming through here at all. What this instruction adds is the event - a",
+        "credit that names the agent and the wallet it came from, so the ledger",
+        "can attribute it instead of finding a surplus it cannot explain.",
+        "",
+        "Depositing into someone else's agent is therefore allowed. It gives that",
+        "agent money, which is nobody's loss but the depositor's."
+      ],
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "depositor",
+          "docs": [
+            "Whoever is paying. Signs for the transfer out of their own account."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "source",
+          "docs": [
+            "The depositor's own token account for the stake token, and nobody else's."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Seeded by the agent id, so the event cannot name one agent while the",
+            "money goes to another."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "agentId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "docs": [
         "One-time setup: the config, pointed at the stake token.",
@@ -862,6 +969,19 @@ export type OxudeSettlement = {
   ],
   "events": [
     {
+      "name": "deposited",
+      "discriminator": [
+        111,
+        141,
+        26,
+        45,
+        161,
+        35,
+        100,
+        57
+      ]
+    },
+    {
       "name": "maxSettlementChanged",
       "discriminator": [
         29,
@@ -980,26 +1100,31 @@ export type OxudeSettlement = {
     },
     {
       "code": 6010,
+      "name": "notDepositorsAccount",
+      "msg": "A deposit comes only from the depositor's own token account"
+    },
+    {
+      "code": 6011,
       "name": "ledgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "agentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "outflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6014,
+      "code": 6015,
       "name": "mintableStakeToken",
       "msg": "The stake token still has a mint authority: its supply is not fixed"
     }
@@ -1063,6 +1188,31 @@ export type OxudeSettlement = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "deposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agentId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }

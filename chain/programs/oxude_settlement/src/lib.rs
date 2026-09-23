@@ -156,6 +156,36 @@ pub mod oxude_settlement {
         Ok(())
     }
 
+    /// Moves tokens from a wallet into an agent's vault. This is how every
+    /// vault is funded: by its owner at rent time and whenever they top it up,
+    /// and for a house agent by whoever runs the roster.
+    ///
+    /// The depositor signs and the tokens are their own. The program does not
+    /// check that they are the agent's owner, and could not usefully: a vault
+    /// is an ordinary token account, so a plain SPL transfer reaches it without
+    /// coming through here at all. What this instruction adds is the event - a
+    /// credit that names the agent and the wallet it came from, so the ledger
+    /// can attribute it instead of finding a surplus it cannot explain.
+    ///
+    /// Depositing into someone else's agent is therefore allowed. It gives that
+    /// agent money, which is nobody's loss but the depositor's.
+    pub fn deposit(ctx: Context<Deposit>, agent_id: [u8; 16], amount: u64) -> Result<()> {
+        require!(amount > 0, OxudeError::ZeroAmount);
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.source.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                    authority: ctx.accounts.depositor.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+        emit!(Deposited { agent_id, depositor: ctx.accounts.depositor.key(), amount });
+        Ok(())
+    }
+
     /// Moves a match's settled net from the loser's vault to the winner's, and
     /// records it. The amount was decided and validated off chain; this checks
     /// the bounds again and refuses to settle the same match twice.
@@ -422,6 +452,27 @@ pub struct OpenOwnedVault<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(agent_id: [u8; 16])]
+pub struct Deposit<'info> {
+    /// Whoever is paying. Signs for the transfer out of their own account.
+    pub depositor: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    /// The depositor's own token account for the stake token, and nobody else's.
+    #[account(
+        mut,
+        token::mint = config.mint,
+        constraint = source.owner == depositor.key() @ OxudeError::NotDepositorsAccount
+    )]
+    pub source: Account<'info, TokenAccount>,
+    /// Seeded by the agent id, so the event cannot name one agent while the
+    /// money goes to another.
+    #[account(mut, seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
+    pub vault: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
 #[instruction(match_id: [u8; 16], from_agent: [u8; 16], to_agent: [u8; 16])]
 pub struct Settle<'info> {
     #[account(mut)]
@@ -496,6 +547,13 @@ pub struct Withdrawn {
 }
 
 #[event]
+pub struct Deposited {
+    pub agent_id: [u8; 16],
+    pub depositor: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
 pub struct VaultOpened {
     pub agent_id: [u8; 16],
     /// None for a house agent.
@@ -544,6 +602,8 @@ pub enum OxudeError {
     NotOwner,
     #[msg("Withdrawals go only to the owner's own token account")]
     NotOwnersAccount,
+    #[msg("A deposit comes only from the depositor's own token account")]
+    NotDepositorsAccount,
     #[msg("The vault doesn't match the ledger: a settlement is still in flight")]
     LedgerMismatch,
     #[msg("A withdrawal must leave the vault empty or with at least the minimum stake")]

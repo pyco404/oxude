@@ -11,8 +11,10 @@ import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
   setAuthority,
+  TOKEN_PROGRAM_ID,
   transfer,
 } from "@solana/spl-token";
+import BN from "bn.js";
 import { ChainClient, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
 import { uuidBytes } from "../src/chain/common.js";
 import { agentIdFor, newAgentId } from "../src/agent-id.js";
@@ -42,15 +44,13 @@ const MAX_SETTLEMENT_CEILING = 900;
 const outflowCap = (vault: number) => Math.max(OUTFLOW_FLOOR, Math.floor(vault / 4));
 
 /**
- * Puts tokens in a vault. Nothing mints them: they come out of the treasury,
- * which is the only place the supply ever was. A vault is an ordinary token
- * account, so this plain transfer reaches it without the program's help - which
- * is why the reconciler has to treat a surplus as money to credit rather than
- * as a disagreement.
+ * Puts tokens in a vault, the way the roster funds a house agent: a deposit
+ * from the treasury, which is the only place the supply ever was. Nothing
+ * mints them.
  */
 async function fund(agentId: string, amount: number): Promise<void> {
   if (amount === 0) return;
-  await transfer(connection, admin, treasury, pdas.vault(agentId), admin, amount);
+  await new ChainClient(connection, admin, stakeMint).deposit({ agentId, amount });
 }
 
 /** A house vault: an id derived from no owner, and the salt that proves it. */
@@ -199,6 +199,66 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect(await chain.vaultBalance(id)).toBe(0);
     // A vault opens once.
     await expect(chain.openVault({ agentId: id, owner: null, salt })).rejects.toThrow();
+  });
+
+  it("funds a vault by deposit, and says which agent and which wallet", async () => {
+    const { id, salt } = newAgentId(null);
+    await chain.openVault({ agentId: id, owner: null, salt });
+    const before = await chain.tokenBalance(admin.publicKey.toBase58());
+
+    const signature = await new ChainClient(connection, admin, stakeMint).deposit({ agentId: id, amount: 300 });
+    expect(await chain.vaultBalance(id)).toBe(300);
+    expect(await chain.tokenBalance(admin.publicKey.toBase58())).toBe(before - 300);
+
+    const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+    const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
+    const deposited = events.find((e) => e.name === "deposited")!;
+    expect(Array.from(deposited.data.agentId as number[])).toEqual(uuidBytes(id));
+    expect((deposited.data.depositor as { toBase58(): string }).toBase58()).toBe(admin.publicKey.toBase58());
+    expect(Number(deposited.data.amount)).toBe(300);
+
+    // Topping up is the same instruction again: this is what revives an agent
+    // that played itself down to nothing.
+    await fund(id, 50);
+    expect(await chain.vaultBalance(id)).toBe(350);
+  });
+
+  it("takes a deposit from anyone, but only out of their own account", async () => {
+    const { agent } = await playerVault(100);
+    // A stranger may pay into someone else's agent. The program has no reason
+    // to stop it - a plain transfer would reach the vault anyway - and it costs
+    // the stranger, not the agent.
+    const stranger = Keypair.generate();
+    await airdrop(stranger, 1);
+    const strangerAta = (await getOrCreateAssociatedTokenAccount(connection, admin, stakeMint, stranger.publicKey)).address;
+    await transfer(connection, admin, treasury, strangerAta, admin, 40);
+    await new ChainClient(connection, stranger, stakeMint).deposit({ agentId: agent, amount: 40 });
+    expect(await chain.vaultBalance(agent)).toBe(140);
+
+    // But they cannot spend someone else's account by naming it as the source.
+    // The treasury holds the supply, so this is the raid worth refusing.
+    await expect(
+      chain.program.methods
+        .deposit(uuidBytes(agent), new BN(10))
+        .accountsPartial({
+          depositor: stranger.publicKey,
+          config: pdas.config(),
+          source: treasury,
+          vault: pdas.vault(agent),
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([stranger])
+        .rpc(),
+    ).rejects.toThrow(/NotDepositorsAccount/);
+    expect(await chain.vaultBalance(agent)).toBe(140);
+  });
+
+  it("refuses a deposit of nothing", async () => {
+    const { agent } = await playerVault(50);
+    await expect(
+      new ChainClient(connection, admin, stakeMint).deposit({ agentId: agent, amount: 0 }),
+    ).rejects.toThrow(/ZeroAmount/);
+    expect(await chain.vaultBalance(agent)).toBe(50);
   });
 
   it("refuses a stake token that can still be minted", async () => {

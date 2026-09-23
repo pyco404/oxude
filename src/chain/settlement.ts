@@ -8,7 +8,7 @@ import {
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, type TransactionInstruction } from "@solana/web3.js";
 import { uuidBytes, type PreparedWithdrawal } from "./common.js";
 import idl from "./idl.json" with { type: "json" };
 import type { OxudeSettlement } from "./idl-types.js";
@@ -135,6 +135,43 @@ export class ChainClient {
     return this.program.methods
       .openOwnedVault(uuidBytes(input.agentId), salt, new PublicKey(input.owner))
       .accountsPartial({ ...accounts, agentOwner: pdas.owner(input.agentId) })
+      .rpc();
+  }
+
+  /**
+   * The instruction that moves `amount` base units from a wallet into an
+   * agent's vault. Built rather than sent, because the depositor is the one who
+   * signs it: at rent time it travels with the fee and the vault in one
+   * transaction the owner approves, and a top-up is the same instruction alone.
+   */
+  async depositInstruction(input: { agentId: string; depositor: string | PublicKey; amount: number }): Promise<TransactionInstruction> {
+    const depositor = typeof input.depositor === "string" ? new PublicKey(input.depositor) : input.depositor;
+    return this.program.methods
+      .deposit(uuidBytes(input.agentId), new BN(input.amount))
+      .accountsPartial({
+        depositor,
+        config: pdas.config(),
+        source: this.tokenAccount(depositor),
+        vault: pdas.vault(input.agentId),
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .instruction();
+  }
+
+  /**
+   * Deposits from this client's own signer. That is the treasury funding a
+   * house agent, never a player: a player's deposit is signed in their wallet.
+   */
+  async deposit(input: { agentId: string; amount: number }): Promise<string> {
+    return this.program.methods
+      .deposit(uuidBytes(input.agentId), new BN(input.amount))
+      .accountsPartial({
+        depositor: this.signer.publicKey,
+        config: pdas.config(),
+        source: this.tokenAccount(this.signer.publicKey),
+        vault: pdas.vault(input.agentId),
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
       .rpc();
   }
 
