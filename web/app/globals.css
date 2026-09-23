@@ -1,16 +1,34 @@
 @import "tailwindcss";
 
-/* Flat, dark, red on black. No gradients, no glow, no depth. */
+/*
+ * Flat and dark: no gradients, no glow, no depth. Colour carries meaning
+ * rather than decoration, so each one has exactly one job.
+ *
+ *   red    action and brand - buttons, active states, links. Nothing else.
+ *   ivory  body text.
+ *   muted  secondary text, and only that.
+ *   gold   money - stakes, chips, balances, rewards.
+ *   win    a result that went your way; loss, one that didn't.
+ *
+ * The portraits carry the rest of the colour, so the chrome stays quiet.
+ */
 @theme {
   --color-ink: #09090a;
   --color-panel: #111113;
   --color-panel-2: #16161a;
   --color-line: #26262c;
-  --color-text: #e9e7e4;
-  --color-muted: #8a8a93;
+  --color-text: #f2f0e8;
+  /* Lifted from #8a8a93: the old grey failed to read at the sizes it was used at. */
+  --color-muted: #9a9aa6;
   --color-red: #ff2d2d;
   --color-red-dim: #7f1414;
+  --color-gold: #e5b84b;
+  --color-win: #4ec77a;
+  /* A softened red, so a loss reads as red without competing with the action red. */
+  --color-loss: #f2555a;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  /* The one radius in the app: enough to take the edge off, not enough to notice. */
+  --radius-panel: 6px;
 }
 
 html,
