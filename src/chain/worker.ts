@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import type { OpenVaultInput } from "./settlement.js";
+import type { SeedOpenVaultInput } from "./seed-settlement.js";
 import { balancesOf } from "../db/ledger.js";
 import { agents, chainOps, withdrawals, type ChainOpRow } from "../db/schema.js";
 import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
@@ -24,7 +24,7 @@ import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
  */
 
 export type ChainPort = {
-  openVault(input: OpenVaultInput): Promise<string>;
+  openVault(input: SeedOpenVaultInput): Promise<string>;
   settle(input: { matchId: string; fromAgent: string; toAgent: string; amount: number }): Promise<string>;
   hasVault(agentId: string): Promise<boolean>;
   isSettled(matchId: string): Promise<boolean>;

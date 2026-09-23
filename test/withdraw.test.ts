@@ -10,7 +10,8 @@ import { createAgent, runMatch } from "../src/db/runner.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { affordableBands, agents, chainOps, ledger, MIN_STAKE, STAKE_BANDS, STARTING_BALANCE, withdrawals } from "../src/db/schema.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
-import type { OpenVaultInput, PreparedWithdrawal } from "../src/chain/settlement.js";
+import type { SeedOpenVaultInput } from "../src/chain/seed-settlement.js";
+import type { PreparedWithdrawal } from "../src/chain/common.js";
 
 // Withdrawals over real HTTP, against a fake chain that builds real Solana
 // transactions and applies the program's rules to them. The program's own
@@ -29,7 +30,7 @@ class FakeChain implements ChainPort {
   /** Simulates the RPC being unreachable. */
   down = false;
 
-  async openVault({ agentId, owner, amount }: OpenVaultInput) {
+  async openVault({ agentId, owner, amount }: SeedOpenVaultInput) {
     this.vaults.set(agentId, amount);
     if (owner) this.owners.set(agentId, owner);
     return `sig-open-${agentId}`;

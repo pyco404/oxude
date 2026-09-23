@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { ChainClient, PROGRAM_ID, pdas, uuidBytes } from "../src/chain/settlement.js";
+import { SEED_PROGRAM_ID, SeedChainClient, seedPdas } from "../src/chain/seed-settlement.js";
+import { uuidBytes } from "../src/chain/common.js";
 import { agentIdFor, newAgentId } from "../src/agent-id.js";
 import { EventParser } from "@coral-xyz/anchor";
 import { connect, migrate } from "../src/db/client.js";
@@ -24,7 +25,7 @@ let ledger: string;
 let connection: Connection;
 let admin: Keypair;
 let settler: Keypair;
-let chain: ChainClient;
+let chain: SeedChainClient;
 const MAX = 60;
 /** Must match the program's constants. */
 const OUTFLOW_FLOOR = 120;
@@ -33,7 +34,7 @@ const MAX_SEED = 900;
 const outflowCap = (vault: number) => Math.max(OUTFLOW_FLOOR, Math.floor(vault / 4));
 
 /** A house vault: an id derived from no owner, and the salt that proves it. */
-async function houseVault(amount: number, via: ChainClient = chain): Promise<string> {
+async function houseVault(amount: number, via: SeedChainClient = chain): Promise<string> {
   const { id, salt } = newAgentId(null);
   await via.openVault({ agentId: id, owner: null, salt, amount });
   return id;
@@ -60,7 +61,7 @@ describe.skipIf(!RUN)("settlement program", () => {
         "--reset", "--quiet", "--ledger", ledger,
         "--rpc-port", String(RPC_PORT), "--faucet-port", String(RPC_PORT + 1000),
         "--dynamic-port-range", `${RPC_PORT + 2000}-${RPC_PORT + 2100}`,
-        "--bpf-program", PROGRAM_ID.toBase58(), "chain/target/deploy/oxude_settlement.so",
+        "--bpf-program", SEED_PROGRAM_ID.toBase58(), "chain/target/deploy/oxude_settlement.so",
       ],
       { stdio: "ignore" },
     );
@@ -77,8 +78,8 @@ describe.skipIf(!RUN)("settlement program", () => {
     settler = Keypair.generate();
     await airdrop(admin, 5);
     await airdrop(settler, 5);
-    await new ChainClient(connection, admin).initialize(settler.publicKey, MAX);
-    chain = new ChainClient(connection, settler);
+    await new SeedChainClient(connection, admin).initialize(settler.publicKey, MAX);
+    chain = new SeedChainClient(connection, settler);
   }, 60_000);
 
   afterAll(() => {
@@ -90,18 +91,18 @@ describe.skipIf(!RUN)("settlement program", () => {
     const config = await chain.config();
     expect(config.settler.toBase58()).toBe(settler.publicKey.toBase58());
     expect(config.admin.toBase58()).toBe(admin.publicKey.toBase58());
-    expect(config.mint.toBase58()).toBe(pdas.mint().toBase58());
+    expect(config.mint.toBase58()).toBe(seedPdas.mint().toBase58());
     expect(config.maxSettlement.toNumber()).toBe(MAX);
   });
 
   it("lets only the config's admin change the per-match limit", async () => {
-    const asAdmin = new ChainClient(connection, admin);
+    const asAdmin = new SeedChainClient(connection, admin);
     // The settler cannot: this limit exists to bound the settler's own reach.
     await expect(chain.setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
     // Nor can a stranger paying their own fees.
     const stranger = Keypair.generate();
     await airdrop(stranger, 1);
-    await expect(new ChainClient(connection, stranger).setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
+    await expect(new SeedChainClient(connection, stranger).setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
     expect((await chain.config()).maxSettlement.toNumber()).toBe(MAX);
 
     // The admin can, and it takes effect at once: 90 is band C's max exposure,
@@ -125,14 +126,14 @@ describe.skipIf(!RUN)("settlement program", () => {
   });
 
   it("lets only the admin rotate the settler, and refuses a rotation that changes nothing", async () => {
-    const asAdmin = new ChainClient(connection, admin);
+    const asAdmin = new SeedChainClient(connection, admin);
     const fresh = Keypair.generate();
 
     // The settler cannot hand its own role on, nor can a stranger take it.
     await expect(chain.setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
     const stranger = Keypair.generate();
     await airdrop(stranger, 1);
-    await expect(new ChainClient(connection, stranger).setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
+    await expect(new SeedChainClient(connection, stranger).setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
     expect((await chain.config()).settler.toBase58()).toBe(settler.publicKey.toBase58());
 
     // A no-op rotation is refused, so it can never look like one happened.
@@ -150,7 +151,7 @@ describe.skipIf(!RUN)("settlement program", () => {
 
     // The new key has them. It pays its own rent, so give it some SOL.
     await airdrop(fresh, 2);
-    const asFresh = new ChainClient(connection, fresh);
+    const asFresh = new SeedChainClient(connection, fresh);
     const taken = newAgentId(null);
     await asFresh.openVault({ agentId: taken.id, owner: null, salt: taken.salt, amount: 100 });
     expect(await chain.vaultBalance(taken.id)).toBe(100);
@@ -264,7 +265,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect(await chain.vaultBalance(b)).toBe(222);
     expect(await chain.isSettled(match)).toBe(true);
 
-    const record = await chain.program.account.settlement.fetch(pdas.settlement(match));
+    const record = await chain.program.account.settlement.fetch(seedPdas.settlement(match));
     expect(record.amount.toNumber()).toBe(42);
 
     // The same match cannot move money twice, even with a different amount.
@@ -291,7 +292,7 @@ describe.skipIf(!RUN)("settlement program", () => {
   it("refuses anyone but the settler", async () => {
     const intruder = Keypair.generate();
     await airdrop(intruder, 2);
-    const rogue = new ChainClient(connection, intruder);
+    const rogue = new SeedChainClient(connection, intruder);
     const [a, b] = [await houseVault(180), await houseVault(180)];
 
     const mine = newAgentId(null);
@@ -346,7 +347,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     async function withdraw(
       input: { agent: string; owner: Keypair; amount: number; remaining: number; id?: string },
       signAs: Keypair = input.owner,
-      via: ChainClient = chain,
+      via: SeedChainClient = chain,
     ) {
       const prepared = await via.prepareWithdrawal({
         withdrawalId: input.id ?? randomUUID(),
@@ -382,7 +383,7 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(50);
 
       const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-      const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
+      const events = [...new EventParser(SEED_PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
       const withdrawn = events.find((e) => e.name === "withdrawn")!;
       expect(withdrawn).toBeDefined();
       expect(Array.from(withdrawn.data.withdrawalId as number[])).toEqual(uuidBytes(id));
@@ -402,7 +403,7 @@ describe.skipIf(!RUN)("settlement program", () => {
       const { agent, owner } = await ownedVault(100);
       await airdrop(owner, 1);
       // The owner builds it themselves, as settler and owner both: the program wants the configured settler.
-      const asOwner = new ChainClient(connection, owner);
+      const asOwner = new SeedChainClient(connection, owner);
       await expect(withdraw({ agent, owner, amount: 40, remaining: 60 }, owner, asOwner)).rejects.toThrow(/Error Code: NotSettler/);
       expect(await chain.vaultBalance(agent)).toBe(100);
     });
@@ -419,11 +420,11 @@ describe.skipIf(!RUN)("settlement program", () => {
       // Swap the destination for another wallet's account, then sign it all again.
       const other = Keypair.generate().publicKey;
       const { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } = await import("@solana/spl-token");
-      const otherAta = getAssociatedTokenAddressSync(pdas.mint(), other);
+      const otherAta = getAssociatedTokenAddressSync(seedPdas.mint(), other);
       const ix = prepared.transaction.instructions[1]!;
-      const dest = ix.keys.findIndex((k) => k.pubkey.equals(getAssociatedTokenAddressSync(pdas.mint(), owner.publicKey)));
+      const dest = ix.keys.findIndex((k) => k.pubkey.equals(getAssociatedTokenAddressSync(seedPdas.mint(), owner.publicKey)));
       ix.keys[dest] = { ...ix.keys[dest]!, pubkey: otherAta };
-      prepared.transaction.instructions[0] = createAssociatedTokenAccountIdempotentInstruction(settler.publicKey, otherAta, other, pdas.mint());
+      prepared.transaction.instructions[0] = createAssociatedTokenAccountIdempotentInstruction(settler.publicKey, otherAta, other, seedPdas.mint());
       prepared.transaction.signatures = prepared.transaction.signatures.map((s) => ({ ...s, signature: null }));
       prepared.transaction.partialSign(settler, owner);
       await expect(chain.submitWithdrawal(prepared.transaction.serialize(), prepared.lastValidBlockHeight)).rejects.toThrow(/Error Code: NotOwnersAccount/);

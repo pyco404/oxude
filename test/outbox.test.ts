@@ -5,7 +5,7 @@ import { chainOps, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
-import type { OpenVaultInput } from "../src/chain/settlement.js";
+import type { SeedOpenVaultInput } from "../src/chain/seed-settlement.js";
 import { agentIdFor } from "../src/agent-id.js";
 
 /** An in-memory stand-in for the program, with the same guarantees it enforces. */
@@ -19,7 +19,7 @@ class FakeChain implements ChainPort {
   /** Simulates a submission that landed but whose confirmation was lost. */
   landButThrow = false;
 
-  async openVault({ agentId, owner, salt, amount }: OpenVaultInput) {
+  async openVault({ agentId, owner, salt, amount }: SeedOpenVaultInput) {
     this.calls.push(`open ${agentId.slice(0, 4)}`);
     if (this.failNext) throw new Error(this.failNext);
     if (agentIdFor(owner, salt) !== agentId) throw new Error("Error Code: AgentIdMismatch");

@@ -91,16 +91,16 @@ if (autoplayMs > 0) {
 // Settlement on chain, when configured. The ledger is authoritative either
 // way; without a chain the outbox simply waits, and withdrawals are unavailable.
 const rpc = process.env["CHAIN_RPC_URL"];
-let chain: import("../src/chain/settlement.js").ChainClient | undefined;
+let chain: import("../src/chain/seed-settlement.js").SeedChainClient | undefined;
 if (rpc) {
   const { Connection, Keypair } = await import("@solana/web3.js");
-  const { ChainClient, loadKeypair } = await import("../src/chain/settlement.js");
+  const { SeedChainClient, loadKeypair } = await import("../src/chain/seed-settlement.js");
   // A host has no key file: CHAIN_SETTLER_SECRET carries the same JSON byte array.
   const secret = process.env["CHAIN_SETTLER_SECRET"];
   const settler = secret
     ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[]))
     : loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
-  chain = new ChainClient(new Connection(rpc, "confirmed"), settler);
+  chain = new SeedChainClient(new Connection(rpc, "confirmed"), settler);
 }
 
 // A host sets PORT and needs every interface; locally, loopback only.

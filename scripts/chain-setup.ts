@@ -1,5 +1,5 @@
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
-import { ChainClient, loadKeypair, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
+import { loadKeypair, SEED_PROGRAM_ID, SeedChainClient, seedPdas } from "../src/chain/seed-settlement.js";
 import { bandByName } from "../src/db/schema.js";
 
 // Initialises the settlement program on a cluster, idempotently, and tops up
@@ -18,8 +18,8 @@ const SETTLER_FLOOR = Number(process.env["SETTLER_MIN_SOL"] ?? 0.5);
 const sol = async (key: PublicKey) => (await connection.getBalance(key, "confirmed")) / LAMPORTS_PER_SOL;
 
 console.log(`cluster  ${rpc}`);
-console.log(`program  ${PROGRAM_ID.toBase58()}`);
-const program = await connection.getAccountInfo(PROGRAM_ID, "confirmed");
+console.log(`program  ${SEED_PROGRAM_ID.toBase58()}`);
+const program = await connection.getAccountInfo(SEED_PROGRAM_ID, "confirmed");
 if (!program?.executable) {
   console.error("The program is not deployed on this cluster. Run scripts/chain-deploy.sh first.");
   process.exit(1);
@@ -28,8 +28,8 @@ if (!program?.executable) {
 console.log(`admin    ${admin.publicKey.toBase58()}  ${(await sol(admin.publicKey)).toFixed(3)} SOL`);
 console.log(`settler  ${settler.publicKey.toBase58()}  ${(await sol(settler.publicKey)).toFixed(3)} SOL`);
 
-if (await connection.getAccountInfo(pdas.config(), "confirmed")) {
-  const config = await new ChainClient(connection, admin).config();
+if (await connection.getAccountInfo(seedPdas.config(), "confirmed")) {
+  const config = await new SeedChainClient(connection, admin).config();
   if (config.settler.toBase58() !== settler.publicKey.toBase58()) {
     console.error(`Already initialised with a different settler: ${config.settler.toBase58()}`);
     process.exit(1);
@@ -41,12 +41,12 @@ if (await connection.getAccountInfo(pdas.config(), "confirmed")) {
     console.warn(`WARNING  the config's admin is ${config.admin.toBase58()}, not this key.`);
     console.warn("         set-max-settlement will refuse this key with NotAdmin.");
   }
-  console.log(`config   ${pdas.config().toBase58()}  already initialised, limit ${config.maxSettlement.toString()}`);
+  console.log(`config   ${seedPdas.config().toBase58()}  already initialised, limit ${config.maxSettlement.toString()}`);
 } else {
-  const signature = await new ChainClient(connection, admin).initialize(settler.publicKey, bandByName("C").worstMatch);
-  console.log(`config   ${pdas.config().toBase58()}  initialised (${signature})`);
+  const signature = await new SeedChainClient(connection, admin).initialize(settler.publicKey, bandByName("C").worstMatch);
+  console.log(`config   ${seedPdas.config().toBase58()}  initialised (${signature})`);
 }
-console.log(`mint     ${pdas.mint().toBase58()}`);
+console.log(`mint     ${seedPdas.mint().toBase58()}`);
 
 // The settler pays rent for each vault and settlement record it creates.
 const have = await sol(settler.publicKey);

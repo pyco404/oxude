@@ -1,6 +1,6 @@
 import { Transaction } from "@solana/web3.js";
 import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
-import type { PreparedWithdrawal } from "../chain/settlement.js";
+import type { PreparedWithdrawal } from "../chain/common.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
 import { agents, chainOps, STAKE_BANDS, withdrawals, type WithdrawalStatus } from "./schema.js";

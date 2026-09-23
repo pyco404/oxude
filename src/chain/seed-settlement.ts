@@ -9,65 +9,59 @@ import {
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
-import { readFileSync } from "node:fs";
-import idl from "./idl.json" with { type: "json" };
-import type { OxudeSettlement } from "./idl-types.js";
+import { loadKeypair, uuidBytes, type PreparedWithdrawal } from "./common.js";
+import idl from "./seed-idl.json" with { type: "json" };
+import type { OxudeSettlement as SeedSettlement } from "./seed-idl-types.js";
+
+export { loadKeypair, uuidBytes, type PreparedWithdrawal };
 
 /**
- * Client for the settlement program. Everything that signs here signs with the
- * settler key the program was configured with; nothing an agent or a model
- * produces ever reaches a signature. Amounts arrive already validated by the
- * off-chain ledger, and the program checks their bounds again.
+ * Client for the **seed-funded** settlement program: the one deployed at
+ * `EKJHJ8js...` on devnet, whose mint is a program PDA with 0 decimals that the
+ * program itself mints. It is frozen. Its IDL (`seed-idl.json`) is a committed
+ * copy that `npm run chain:build` never rewrites, because the Rust in `chain/`
+ * is now the deposit-funded program (src/chain/settlement.ts).
+ *
+ * It stays only so that agents rented under the seed flow keep settling and
+ * their owners keep being able to withdraw. Nothing new is rented against it,
+ * and it is deleted once no un-retired agent is left on it.
+ *
+ * Everything that signs here signs with the settler key the program was
+ * configured with; nothing an agent or a model produces ever reaches a
+ * signature. Amounts arrive already validated by the off-chain ledger, and the
+ * program checks their bounds again.
  */
 
-export const PROGRAM_ID = new PublicKey((idl as { address: string }).address);
+export const SEED_PROGRAM_ID = new PublicKey((idl as { address: string }).address);
 
-/** Agent and match ids are UUIDs; on chain they are their 16 raw bytes. */
-export function uuidBytes(uuid: string): number[] {
-  const hex = uuid.replace(/-/g, "");
-  if (!/^[0-9a-f]{32}$/i.test(hex)) throw new Error(`not a uuid: ${uuid}`);
-  return Array.from(Buffer.from(hex, "hex"));
-}
-
-export const pdas = {
-  config: () => PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID)[0],
-  mint: () => PublicKey.findProgramAddressSync([Buffer.from("mint")], PROGRAM_ID)[0],
+export const seedPdas = {
+  config: () => PublicKey.findProgramAddressSync([Buffer.from("config")], SEED_PROGRAM_ID)[0],
+  mint: () => PublicKey.findProgramAddressSync([Buffer.from("mint")], SEED_PROGRAM_ID)[0],
   vault: (agentId: string) =>
-    PublicKey.findProgramAddressSync([Buffer.from("vault"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
+    PublicKey.findProgramAddressSync([Buffer.from("vault"), Buffer.from(uuidBytes(agentId))], SEED_PROGRAM_ID)[0],
   settlement: (matchId: string) =>
-    PublicKey.findProgramAddressSync([Buffer.from("settlement"), Buffer.from(uuidBytes(matchId))], PROGRAM_ID)[0],
+    PublicKey.findProgramAddressSync([Buffer.from("settlement"), Buffer.from(uuidBytes(matchId))], SEED_PROGRAM_ID)[0],
   owner: (agentId: string) =>
-    PublicKey.findProgramAddressSync([Buffer.from("owner"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
+    PublicKey.findProgramAddressSync([Buffer.from("owner"), Buffer.from(uuidBytes(agentId))], SEED_PROGRAM_ID)[0],
   withdrawal: (withdrawalId: string) =>
-    PublicKey.findProgramAddressSync([Buffer.from("withdrawal"), Buffer.from(uuidBytes(withdrawalId))], PROGRAM_ID)[0],
+    PublicKey.findProgramAddressSync([Buffer.from("withdrawal"), Buffer.from(uuidBytes(withdrawalId))], SEED_PROGRAM_ID)[0],
   outflow: (agentId: string) =>
-    PublicKey.findProgramAddressSync([Buffer.from("outflow"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
-  mintBudget: () => PublicKey.findProgramAddressSync([Buffer.from("mint_budget")], PROGRAM_ID)[0],
+    PublicKey.findProgramAddressSync([Buffer.from("outflow"), Buffer.from(uuidBytes(agentId))], SEED_PROGRAM_ID)[0],
+  mintBudget: () => PublicKey.findProgramAddressSync([Buffer.from("mint_budget")], SEED_PROGRAM_ID)[0],
 };
 
 /** What opening a vault needs: the id, and the owner and salt it was derived from (src/agent-id.ts). */
-export type OpenVaultInput = { agentId: string; owner: string | null; salt: string; amount: number };
+export type SeedOpenVaultInput = { agentId: string; owner: string | null; salt: string; amount: number };
 
-/** A withdrawal built and co-signed by the settler, waiting for the owner's signature. */
-export type PreparedWithdrawal = {
-  transaction: Transaction;
-  /** After this block height the transaction can never land, signed or not. */
-  lastValidBlockHeight: number;
-};
-
-export function loadKeypair(path: string): Keypair {
-  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8")) as number[]));
-}
-
-export class ChainClient {
-  readonly program: Program<OxudeSettlement>;
+export class SeedChainClient {
+  readonly program: Program<SeedSettlement>;
 
   constructor(
     readonly connection: Connection,
     readonly signer: Keypair,
   ) {
     const provider = new AnchorProvider(connection, new Wallet(signer), { commitment: "confirmed" });
-    this.program = new Program<OxudeSettlement>(idl as OxudeSettlement, provider);
+    this.program = new Program<SeedSettlement>(idl as SeedSettlement, provider);
   }
 
   /** One-time: config and mint. Signed by the admin, naming the settler. */
@@ -76,8 +70,8 @@ export class ChainClient {
       .initialize(settler, new BN(maxSettlement))
       .accountsPartial({
         admin: this.signer.publicKey,
-        config: pdas.config(),
-        mint: pdas.mint(),
+        config: seedPdas.config(),
+        mint: seedPdas.mint(),
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
@@ -92,7 +86,7 @@ export class ChainClient {
   async setMaxSettlement(maxSettlement: number): Promise<string> {
     return this.program.methods
       .setMaxSettlement(new BN(maxSettlement))
-      .accountsPartial({ admin: this.signer.publicKey, config: pdas.config() })
+      .accountsPartial({ admin: this.signer.publicKey, config: seedPdas.config() })
       .rpc();
   }
 
@@ -104,7 +98,7 @@ export class ChainClient {
   async setSettler(settler: PublicKey): Promise<string> {
     return this.program.methods
       .setSettler(settler)
-      .accountsPartial({ admin: this.signer.publicKey, config: pdas.config() })
+      .accountsPartial({ admin: this.signer.publicKey, config: seedPdas.config() })
       .rpc();
   }
 
@@ -113,14 +107,14 @@ export class ChainClient {
    * owner recorded in the same instruction; the program checks the id is the
    * hash of that owner and the salt.
    */
-  async openVault(input: OpenVaultInput): Promise<string> {
+  async openVault(input: SeedOpenVaultInput): Promise<string> {
     const salt = Array.from(Buffer.from(input.salt, "hex"));
     const accounts = {
       settler: this.signer.publicKey,
-      config: pdas.config(),
-      mint: pdas.mint(),
-      mintBudget: pdas.mintBudget(),
-      vault: pdas.vault(input.agentId),
+      config: seedPdas.config(),
+      mint: seedPdas.mint(),
+      mintBudget: seedPdas.mintBudget(),
+      vault: seedPdas.vault(input.agentId),
       systemProgram: SystemProgram.programId,
       tokenProgram: TOKEN_PROGRAM_ID,
     };
@@ -129,7 +123,7 @@ export class ChainClient {
     }
     return this.program.methods
       .openOwnedVault(uuidBytes(input.agentId), salt, new PublicKey(input.owner), new BN(input.amount))
-      .accountsPartial({ ...accounts, agentOwner: pdas.owner(input.agentId) })
+      .accountsPartial({ ...accounts, agentOwner: seedPdas.owner(input.agentId) })
       .rpc();
   }
 
@@ -138,11 +132,11 @@ export class ChainClient {
       .settle(uuidBytes(input.matchId), uuidBytes(input.fromAgent), uuidBytes(input.toAgent), new BN(input.amount))
       .accountsPartial({
         settler: this.signer.publicKey,
-        config: pdas.config(),
-        fromVault: pdas.vault(input.fromAgent),
-        toVault: pdas.vault(input.toAgent),
-        outflow: pdas.outflow(input.fromAgent),
-        settlement: pdas.settlement(input.matchId),
+        config: seedPdas.config(),
+        fromVault: seedPdas.vault(input.fromAgent),
+        toVault: seedPdas.vault(input.toAgent),
+        outflow: seedPdas.outflow(input.fromAgent),
+        settlement: seedPdas.settlement(input.matchId),
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
@@ -151,7 +145,7 @@ export class ChainClient {
 
   async vaultBalance(agentId: string): Promise<number | null> {
     try {
-      const account = await getAccount(this.connection, pdas.vault(agentId), "confirmed");
+      const account = await getAccount(this.connection, seedPdas.vault(agentId), "confirmed");
       return Number(account.amount);
     } catch {
       return null;
@@ -159,26 +153,26 @@ export class ChainClient {
   }
 
   async hasVault(agentId: string): Promise<boolean> {
-    return (await this.connection.getAccountInfo(pdas.vault(agentId), "confirmed")) !== null;
+    return (await this.connection.getAccountInfo(seedPdas.vault(agentId), "confirmed")) !== null;
   }
 
   async isSettled(matchId: string): Promise<boolean> {
-    return (await this.connection.getAccountInfo(pdas.settlement(matchId), "confirmed")) !== null;
+    return (await this.connection.getAccountInfo(seedPdas.settlement(matchId), "confirmed")) !== null;
   }
 
   /** The transaction that created a match's settlement record: the only one that touches it. */
   async settlementSignature(matchId: string): Promise<string | null> {
-    const sigs = await this.connection.getSignaturesForAddress(pdas.settlement(matchId), {}, "confirmed");
+    const sigs = await this.connection.getSignaturesForAddress(seedPdas.settlement(matchId), {}, "confirmed");
     return sigs.filter((s) => s.err === null).at(-1)?.signature ?? null;
   }
 
   async config() {
-    return this.program.account.config.fetch(pdas.config());
+    return this.program.account.config.fetch(seedPdas.config());
   }
 
   /** The owner recorded on chain for an agent, or null if none has been. */
   async ownerOf(agentId: string): Promise<string | null> {
-    const record = await this.program.account.agentOwner.fetchNullable(pdas.owner(agentId), "confirmed");
+    const record = await this.program.account.agentOwner.fetchNullable(seedPdas.owner(agentId), "confirmed");
     return record ? record.owner.toBase58() : null;
   }
 
@@ -196,18 +190,18 @@ export class ChainClient {
     remaining: number;
   }): Promise<PreparedWithdrawal> {
     const owner = new PublicKey(input.owner);
-    const mint = pdas.mint();
+    const mint = seedPdas.mint();
     const destination = getAssociatedTokenAddressSync(mint, owner);
     const withdraw = await this.program.methods
       .withdraw(uuidBytes(input.withdrawalId), uuidBytes(input.agentId), new BN(input.amount), new BN(input.remaining))
       .accountsPartial({
         settler: this.signer.publicKey,
         owner,
-        config: pdas.config(),
-        agentOwner: pdas.owner(input.agentId),
-        vault: pdas.vault(input.agentId),
+        config: seedPdas.config(),
+        agentOwner: seedPdas.owner(input.agentId),
+        vault: seedPdas.vault(input.agentId),
         destination,
-        withdrawal: pdas.withdrawal(input.withdrawalId),
+        withdrawal: seedPdas.withdrawal(input.withdrawalId),
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
@@ -238,7 +232,7 @@ export class ChainClient {
   }
 
   async isWithdrawn(withdrawalId: string): Promise<boolean> {
-    return (await this.connection.getAccountInfo(pdas.withdrawal(withdrawalId), "confirmed")) !== null;
+    return (await this.connection.getAccountInfo(seedPdas.withdrawal(withdrawalId), "confirmed")) !== null;
   }
 
   /** True once no transaction built before now can land any more. */
@@ -248,7 +242,7 @@ export class ChainClient {
 
   async tokenBalance(owner: string): Promise<number> {
     try {
-      const account = await getAccount(this.connection, getAssociatedTokenAddressSync(pdas.mint(), new PublicKey(owner)), "confirmed");
+      const account = await getAccount(this.connection, getAssociatedTokenAddressSync(seedPdas.mint(), new PublicKey(owner)), "confirmed");
       return Number(account.amount);
     } catch {
       return 0;
