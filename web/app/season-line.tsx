@@ -25,7 +25,8 @@ export function SeasonLine() {
   return (
     <p className="border border-line bg-panel-2 px-3 py-2 text-[12px] leading-4 text-muted">
       <span className="text-text">
-        Season {season.number} · {left > 0 ? `${duration(left)} left` : "ending now"}
+        Season <span className="font-mono">{season.number}</span> ·{" "}
+        {left > 0 ? `${duration(left)} left` : "ending now"}
       </span>
       <br />
       Every rental ends when the season does ({localMoment(season.endsAt)}), whenever it starts. Renew it to carry on

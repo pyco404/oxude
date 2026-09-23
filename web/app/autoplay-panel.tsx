@@ -162,7 +162,8 @@ export function AutoplayPanel({
           <div className="flex items-start justify-between gap-3">
             <p>
               <span className="text-muted">Since you left ({ago(summary.since, now)}):</span>{" "}
-              {summary.matches} {summary.matches === 1 ? "match" : "matches"},{" "}
+              <span className="font-mono">{summary.matches}</span>{" "}
+              {summary.matches === 1 ? "match" : "matches"},{" "}
               <span className={netTone(summary.net)}>{signed(summary.net)}</span>.
             </p>
             <button onClick={() => void dismiss()} className="shrink-0 text-[11px] text-muted hover:text-text">

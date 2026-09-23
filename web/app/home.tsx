@@ -751,7 +751,9 @@ function RosterPanel({
           </ul>
         )}
         {agents && agents.length > 8 ? (
-          <p className="mt-2 text-[11px] text-muted">and {agents.length - 8} more in this band</p>
+          <p className="mt-2 text-[11px] text-muted">
+            and <span className="font-mono">{agents.length - 8}</span> more in this band
+          </p>
         ) : null}
         <p className="mt-2 font-mono text-[11px] text-muted">name · plays as · matches · balance</p>
       </div>
@@ -864,9 +866,10 @@ function AgentCard({
         </dl>
         {typeof agent.rankedMatches === "number" && agent.rankedMatches !== (agent.matchesPlayed ?? 0) ? (
           <p className="mt-1 text-[12px] leading-5 text-muted">
-            The ladder counts {agent.rankedMatches} of {agent.matchesPlayed ?? 0} &mdash; the ones against other
-            players &mdash; for {whole(agent.rankedNet ?? 0)}. The rest were against house agents: they settled for
-            money, but don&apos;t rank.
+            The ladder counts <span className="font-mono">{agent.rankedMatches}</span> of{" "}
+            <span className="font-mono">{agent.matchesPlayed ?? 0}</span> &mdash; the ones against other players
+            &mdash; for <span className={`font-mono ${netTone(agent.rankedNet ?? 0)}`}>{whole(agent.rankedNet ?? 0)}</span>.
+            The rest were against house agents: they settled for money, but don&apos;t rank.
           </p>
         ) : null}
         <dl className="mt-2 grid grid-cols-2 border border-line">
@@ -898,11 +901,16 @@ function AgentCard({
                 pay its worst match outright, because nothing is clamped. */}
             {agent.canPlay === false ? (
               <p className="mb-2 border border-loss/50 px-3 py-2 text-[13px] leading-5 text-loss">
-                {agent.balance ?? 0} left, and a band {agent.band} match can move {agent.worstMatch}. It can&apos;t play
-                here until it covers that.{" "}
-                {agent.fallback
-                  ? `Band ${agent.fallback} is still open to it — up to ${bandByName(agent.fallback).worstMatch} a match.`
-                  : "No band is open to it now; all that is left is to withdraw."}
+                <span className="font-mono">{agent.balance ?? 0}</span> left, and a band {agent.band} match can move{" "}
+                <span className="font-mono">{agent.worstMatch}</span>. It can&apos;t play here until it covers that.{" "}
+                {agent.fallback ? (
+                  <>
+                    Band {agent.fallback} is still open to it &mdash; up to{" "}
+                    <span className="font-mono">{bandByName(agent.fallback).worstMatch}</span> a match.
+                  </>
+                ) : (
+                  "No band is open to it now; all that is left is to withdraw."
+                )}
               </p>
             ) : null}
             <div className="text-[12px] uppercase tracking-wider text-muted">Band</div>

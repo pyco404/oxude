@@ -104,8 +104,8 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             <span className={netTone(match.netB)}>{signed(match.netB)}</span>
           </p>
           <p className="mt-1 text-[13px] leading-5 text-muted">
-            {summary.winnerName ? `${summary.winnerName} took it` : "Level"} over {summary.rounds}{" "}
-            {summary.rounds === 1 ? "round" : "rounds"},{" "}
+            {summary.winnerName ? `${summary.winnerName} took it` : "Level"} over{" "}
+            <span className="font-mono">{summary.rounds}</span> {summary.rounds === 1 ? "round" : "rounds"},{" "}
             {match.exhibition ? (
               "nothing staked"
             ) : (

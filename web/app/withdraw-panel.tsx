@@ -126,7 +126,7 @@ export function WithdrawPanel({
             disabled={busy}
             className="mt-2 w-full bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
           >
-            Withdraw all {info.withdrawable}
+            Withdraw all <span className="font-mono">{info.withdrawable}</span>
           </button>
         </>
       ) : info.withdrawable > 0 ? (
@@ -153,8 +153,8 @@ export function WithdrawPanel({
             </button>
           </div>
           <p className="mt-1 text-[12px] leading-5 text-muted">
-            Leave at least {info.minStake} to keep playing — that covers a match in the cheapest band. Take it all to
-            retire instead.
+            Leave at least <span className="font-mono text-gold">{info.minStake}</span> to keep playing — that covers
+            a match in the cheapest band. Take it all to retire instead.
           </p>
 
           {confirmAll ? (

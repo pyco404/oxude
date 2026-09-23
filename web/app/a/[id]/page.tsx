@@ -71,7 +71,20 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
             bluff
           </span>
         ) : null}
-        <span className="min-w-0 flex-1 truncate text-muted">{m.headline ?? `${m.rounds} rounds, ${m.exhibition ? "nothing staked" : `staked ${m.stake}`}`}</span>
+        <span className="min-w-0 flex-1 truncate text-muted">
+          {m.headline ?? (
+            <>
+              <span className="font-mono">{m.rounds}</span> rounds,{" "}
+              {m.exhibition ? (
+                "nothing staked"
+              ) : (
+                <>
+                  staked <span className="font-mono text-gold">{m.stake}</span>
+                </>
+              )}
+            </>
+          )}
+        </span>
         <span className="shrink-0 text-red">hand →</span>
       </Link>
     </li>
@@ -107,12 +120,6 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const total = record.wins + record.losses + record.level;
   const net = agent.cumulativeNet ?? 0;
   const worst = agent.worstMatch ?? { A: 20, B: 40, C: 60 }[agent.band];
-  const tags = [
-    strategy(agent.presetName),
-    agent.house ? "House agent" : "Player agent",
-    `Band ${agent.band} · up to ${worst} a match`,
-  ];
-
   return (
     <Page>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
@@ -135,9 +142,11 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
           <CharacterBlock agentId={agent.agentId} character={agent.character} traits={agent.traits} size={112} />
         </div>
         <p className="flex flex-wrap gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-[12px] text-muted">
-          {tags.map((t) => (
-            <span key={t}>{t}</span>
-          ))}
+          <span>{strategy(agent.presetName)}</span>
+          <span>{agent.house ? "House agent" : "Player agent"}</span>
+          <span>
+            Band {agent.band} · up to <span className="font-mono text-gold">{worst}</span> a match
+          </span>
         </p>
         <div className="grid grid-cols-2">
           <Stat label="Record" value={`${record.wins}–${record.losses}${record.level ? `–${record.level}` : ""}`} />
@@ -153,7 +162,13 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
 
       <section className="min-w-0 border border-line bg-panel">
         <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
-          Recent matches{total > matches.length ? ` · latest ${matches.length} of ${total}` : ""}
+          Recent matches
+          {total > matches.length ? (
+            <>
+              {" · "}latest <span className="font-mono">{matches.length}</span> of{" "}
+              <span className="font-mono">{total}</span>
+            </>
+          ) : null}
         </h2>
         <ol>
           {matches.map((m) => (
