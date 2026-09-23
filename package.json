@@ -2,7 +2,7 @@
   "name": "oxude",
   "version": "0.0.1",
   "private": true,
-  "description": "Oxude match engine — agent-versus-agent betting game.",
+  "description": "Oxude match engine \u2014 agent-versus-agent betting game.",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -25,6 +25,7 @@
     "db:push": "drizzle-kit push",
     "serve": "tsx scripts/serve.ts",
     "chain:build": "cd chain && anchor build && cp target/idl/oxude_settlement.json ../src/chain/idl.json && cp target/types/oxude_settlement.ts ../src/chain/idl-types.ts",
+    "stake-mint": "tsx scripts/stake-mint.ts",
     "test:chain": "CHAIN=1 vitest run test/chain.test.ts",
     "start": "tsx scripts/serve.ts --migrate"
   },
