@@ -101,6 +101,13 @@ names; printing the table puts the values on screen.
       upgrade the program, rotate the settler and raise the per-match limit.
 - [ ] Close the known limitations below, particularly 1 (a stolen settler key
       can still drain slowly) and 4 (the settler is a hot key on the server).
+- [ ] Put an absolute ceiling on what one vault can pay out in a window,
+      alongside the proportional one. The cap is a quarter of the vault, which
+      was a bounded number while `MAX_SEED` bounded what a vault could hold.
+      Deposits remove that bound, so a quarter of a large vault is a large
+      number, and the proportional cap alone stops meaning what it used to.
+      One `min()` in `settle`, against a chip figure converted at the season's
+      rate like every other limit in the program.
 - [ ] Get an audit. The program, the auth flow and the ledger have tests, not an
       audit.
 - [ ] Recompute every survival figure from the player's deposit rather than the
