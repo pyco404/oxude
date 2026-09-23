@@ -27,7 +27,15 @@
  * backfill.
  */
 
-import { DEVNET_CHIP_RATE } from "./chain/settlement.js";
+/**
+ * The stake token's decimals, which the settlement program insists on. Here
+ * rather than beside the chain client, so that reading a balance does not drag
+ * an Anchor client into the ledger's dependencies.
+ */
+export const STAKE_DECIMALS = 6;
+
+/** Base units in one chip while the rate is fixed at one chip to one token. */
+export const DEVNET_CHIP_RATE = 10 ** STAKE_DECIMALS;
 
 /** Which funding flow an agent was rented under, which decides its stake token. */
 export type Funding = "seed" | "deposit";

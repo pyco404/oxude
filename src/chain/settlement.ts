@@ -10,6 +10,7 @@ import {
 } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, type TransactionInstruction } from "@solana/web3.js";
 import { uuidBytes, type PreparedWithdrawal } from "./common.js";
+import { DEVNET_CHIP_RATE, STAKE_DECIMALS } from "../chips.js";
 import idl from "./idl.json" with { type: "json" };
 import type { OxudeSettlement } from "./idl-types.js";
 
@@ -31,13 +32,12 @@ import type { OxudeSettlement } from "./idl-types.js";
 export const PROGRAM_ID = new PublicKey((idl as { address: string }).address);
 
 /**
- * The stake token's decimals, as the program insists on them. Every amount
- * crossing this client is in base units - never chips - so a caller that has
- * chips converts first, at the season's rate.
+ * Every amount crossing this client is in base units - never chips - so a
+ * caller holding chips converts first, at the season's rate. Re-exported from
+ * src/chips.ts, which owns the conversion and which the ledger can import
+ * without pulling an Anchor client in behind it.
  */
-export const STAKE_DECIMALS = 6;
-/** Base units in one chip while the rate is fixed at one chip to one token. */
-export const DEVNET_CHIP_RATE = 10 ** STAKE_DECIMALS;
+export { STAKE_DECIMALS, DEVNET_CHIP_RATE };
 
 export const pdas = {
   config: () => PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID)[0],

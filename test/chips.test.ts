@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import { connect, migrate } from "../src/db/client.js";
 import { balanceOf, record } from "../src/db/ledger.js";
 import { createAgent } from "../src/db/runner.js";
-import { baseUnits, chipRate, chips, SEED_CHIP_RATE } from "../src/chips.js";
-import { DEVNET_CHIP_RATE } from "../src/chain/settlement.js";
+import { baseUnits, chipRate, chips, DEVNET_CHIP_RATE, SEED_CHIP_RATE } from "../src/chips.js";
 import { STAKE_BANDS } from "../src/db/schema.js";
 
 // Chips against base units: the conversion, and that the ledger is wide enough

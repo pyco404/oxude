@@ -15,6 +15,7 @@ import {
 import type { MatchLog, Seat } from "../types.js";
 import type { Policy } from "../agents/policy.js";
 import type { Deal, Stakes, TurnOrder } from "../round.js";
+import type { Funding } from "../chips.js";
 
 /**
  * Everything needed to replay a match: the rules it was played under, plus the
@@ -54,6 +55,18 @@ export const agents = pgTable(
      * all already playing at.
      */
     band: text("band").$type<BandName>().notNull().default("B"),
+    /**
+     * Which funding flow this agent was rented under. It decides which stake
+     * token its vault holds, which program settles it, and so how many base
+     * units one of its chips is worth (src/chips.ts).
+     *
+     * "seed" is every agent rented before deposits: its vault holds the frozen
+     * program's 0-decimal mint, seeded rather than deposited, at one token to
+     * the chip. "deposit" is the flow this default moves to once it is switched
+     * on. An agent never changes flow - its vault is a token account for one
+     * mint - so this is written when it is rented and never again.
+     */
+    funding: text("funding").$type<Funding>().notNull().default("seed"),
     /**
      * Superseded by `band`, kept so old matches and their transcripts still
      * explain themselves. Nothing reads it to decide a match any more.
