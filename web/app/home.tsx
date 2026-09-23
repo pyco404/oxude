@@ -368,7 +368,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       <Header />
 
       {error ?? wallet.error ? (
-        <p className="mb-4 border border-red/40 bg-red-dim/20 px-3 py-2 text-[13px] text-red" role="alert">
+        <p className="mb-4 border border-loss/40 bg-loss/10 px-3 py-2 text-[13px] text-loss" role="alert">
           {error ?? wallet.error}
         </p>
       ) : null}
@@ -547,7 +547,7 @@ function RentPanel(props: {
                   type="checkbox"
                   checked={props.autoPreview}
                   onChange={(e) => props.setAutoPreview(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-[#ff2d2d]"
+                  className="h-3.5 w-3.5 accent-red"
                 />
                 Rate as I type
               </label>
@@ -694,7 +694,7 @@ function Behaviour({ table, delayMs = 0 }: { table: Record<string, Record<string
               title={`${action} at ${edge}`}
               style={{ animationDelay: `${delayMs + i * BAR_STAGGER_MS}ms` }}
               className={`bar-wipe block h-3 w-6 ${
-                action === "raise" ? "bg-red" : action === "call" ? "border border-muted" : "bg-line"
+                action === "raise" ? "bg-gold" : action === "call" ? "border border-muted" : "bg-line"
               }`}
             />
             <span className="font-mono text-[9px] text-muted">{edge.slice(1)}</span>
@@ -702,7 +702,7 @@ function Behaviour({ table, delayMs = 0 }: { table: Record<string, Record<string
         );
       })}
       <span className="ml-2 font-mono text-[9px] leading-3 text-muted">
-        <span className="text-red">raise</span> · call · <span className="opacity-60">fold</span>
+        <span className="text-gold">raise</span> · call · <span className="opacity-60">fold</span>
       </span>
     </span>
   );
@@ -875,7 +875,7 @@ function AgentCard({
         </dl>
 
         {retired ? (
-          <p className="mt-3 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
+          <p className="mt-3 border border-line px-3 py-2 text-[13px] leading-5 text-muted">
             Retired with <span className="font-mono text-gold">{agent.balance ?? 0}</span> left: it can&apos;t play
             again. Its record is frozen at{" "}
             {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
@@ -885,7 +885,7 @@ function AgentCard({
             {/* The cover rule: a band can only be played by a balance that could
                 pay its worst match outright, because nothing is clamped. */}
             {agent.canPlay === false ? (
-              <p className="mb-2 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
+              <p className="mb-2 border border-loss/50 px-3 py-2 text-[13px] leading-5 text-loss">
                 {agent.balance ?? 0} left, and a band {agent.band} match can move {agent.worstMatch}. It can&apos;t play
                 here until it covers that.{" "}
                 {agent.fallback
@@ -1022,7 +1022,7 @@ function PreviewPanel({
     <section className="mt-3 border border-line bg-panel">
       <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
         Expected result
-        <span className={`font-mono ${tab === "brief" ? "text-red" : "text-muted"}`}>
+        <span className={`font-mono ${tab === "brief" ? "text-gold" : "text-muted"}`}>
           {tab === "brief" ? "model call" : "free"}
         </span>
       </h2>

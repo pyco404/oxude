@@ -115,7 +115,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             )}
             .
           </p>
-          {summary.headline ? <p className="mt-2 text-[14px] leading-6 text-red">{summary.headline}.</p> : null}
+          {summary.headline ? <p className="mt-2 text-[14px] leading-6">{summary.headline}.</p> : null}
           {!match.exhibition && match.ranked === false ? (
             <p className="mt-2 text-[12px] leading-5 text-muted">
               Against a house agent: settles for money, doesn&apos;t count toward the ladder.

@@ -90,7 +90,7 @@ export function LadderPanel({
             <li
               key={row.agentId}
               className={`flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0 ${
-                row.agentId === mine ? "text-red" : ""
+                row.agentId === mine ? "bg-panel-2" : ""
               }`}
             >
               <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>

@@ -56,10 +56,10 @@ const BEATS = [
 ];
 
 function lineClass(line: string): string {
-  if (BEATS.some((b) => line.includes(b))) return "text-red";
+  if (BEATS.some((b) => line.includes(b))) return "text-text font-semibold";
   if (line.startsWith("  Running:")) return "text-muted";
   if (/^Round \d+\./.test(line)) return "text-text font-medium";
   if (line.startsWith("Final:") || / wins the match|ends level/.test(line)) return "text-text font-medium";
-  return "text-text/80";
+  return "text-muted";
 }
 

@@ -63,7 +63,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         <span className="font-mono normal-case tracking-normal">{ago(bluff.createdAt)} ago</span>
       </h2>
       <div className="p-3">
-        <p className="text-[20px] leading-7 text-red">{bluff.headline}.</p>
+        <p className="text-[20px] leading-7">{bluff.headline}.</p>
         <p className="mt-2 text-[13px] leading-5 text-muted">
           The weaker hand raised and the stronger one folded.{" "}
           <Link href={`/a/${who.id}`} className="text-text hover:text-red">
@@ -157,7 +157,7 @@ export function LiveFeed({
               </div>
               <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 text-[12px] leading-5">
                 {bluff ? (
-                  <span className="shrink-0 border border-red px-1 font-mono text-[9px] uppercase tracking-wider text-red">
+                  <span className="shrink-0 border border-line px-1 font-mono text-[10px] uppercase tracking-wider text-text">
                     bluff
                   </span>
                 ) : null}

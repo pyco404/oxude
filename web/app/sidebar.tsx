@@ -142,7 +142,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
               <PrivyOption menu />
             </>
           )}
-          {error ? <p className="mt-2 text-red">{error}</p> : null}
+          {error ? <p className="mt-2 text-loss">{error}</p> : null}
         </div>
       ) : null}
     </div>

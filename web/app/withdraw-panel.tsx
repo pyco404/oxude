@@ -158,7 +158,7 @@ export function WithdrawPanel({
           </p>
 
           {confirmAll ? (
-            <div className="mt-3 border border-red px-3 py-3 text-[13px] leading-5" role="alertdialog" aria-label="Confirm retirement">
+            <div className="mt-3 border border-loss px-3 py-3 text-[13px] leading-5" role="alertdialog" aria-label="Confirm retirement">
               <p>
                 Withdraw all <span className="font-mono text-gold">{info.withdrawable}</span> and retire {agentName}? It can never
                 play again, and its record freezes as it stands. This can&apos;t be undone.
@@ -203,7 +203,7 @@ export function WithdrawPanel({
             ) : null}
           </span>
         ) : null}
-        {phase.at === "error" ? <span className="text-red">Didn&apos;t withdraw: {phase.message}</span> : null}
+        {phase.at === "error" ? <span className="text-loss">Didn&apos;t withdraw: {phase.message}</span> : null}
       </p>
       <p className="text-[11px] leading-4 text-muted">
         Unlike signing in, this is a transaction you sign: it moves tokens from the vault to your wallet. The fee is

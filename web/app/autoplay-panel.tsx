@@ -139,7 +139,7 @@ export function AutoplayPanel({
   const on = status.enabled;
   const tone =
     state === "paused"
-      ? "border-red/60 text-red"
+      ? "border-loss/60 text-loss"
       : state === "held"
         ? "border-line text-text"
         : "border-line text-muted";
@@ -150,7 +150,7 @@ export function AutoplayPanel({
         <h3 className="text-[11px] uppercase tracking-wider text-muted">Autoplay</h3>
         <span
           className={`font-mono text-[11px] uppercase tracking-wider ${
-            state === "on" || state === "waiting" ? "text-text" : state === "paused" ? "text-red" : "text-muted"
+            state === "on" || state === "waiting" ? "text-text" : state === "paused" ? "text-loss" : "text-muted"
           }`}
         >
           {state === "waiting" ? "on · waiting" : state}
@@ -234,7 +234,7 @@ export function AutoplayPanel({
               Pauses before any match that could take you below this. Leave it empty to play until the balance can no
               longer cover the band.
             </p>
-            {!floorValid ? <p className="mt-1 text-[11px] text-red">A whole number of chips, or empty.</p> : null}
+            {!floorValid ? <p className="mt-1 text-[11px] text-loss">A whole number of chips, or empty.</p> : null}
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button
@@ -257,7 +257,7 @@ export function AutoplayPanel({
           </>
         ) : null}
 
-        {error ? <p className="mt-2 text-[12px] text-red">{error}</p> : null}
+        {error ? <p className="mt-2 text-[12px] text-loss">{error}</p> : null}
 
         <p className="mt-3 text-[11px] leading-4 text-muted">
           One match every {every(status.intervalMs)}, played on the server: you don&apos;t need this page open and

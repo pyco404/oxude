@@ -63,7 +63,7 @@ export default function AboutPage() {
           <ul className="space-y-2">
             {PRESETS.map(([name, text]) => (
               <li key={name} className="flex gap-3">
-                <span className="w-16 shrink-0 font-mono text-red">{name}</span>
+                <span className="w-16 shrink-0 font-mono">{name}</span>
                 <span>{text}</span>
               </li>
             ))}

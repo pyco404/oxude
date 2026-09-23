@@ -100,7 +100,7 @@ export function RentalPanel({
   if (rental.state === "expired") {
     const graceLeft = left(rental.graceEndsAt);
     body = (
-      <div className="border border-red px-3 py-3 text-[13px] leading-5 text-red" role="alert">
+      <div className="border border-loss px-3 py-3 text-[13px] leading-5 text-loss" role="alert">
         <p className="font-medium">
           Expired: renew within {graceLeft > 0 ? duration(graceLeft) : "moments"} to keep it.
         </p>
@@ -129,8 +129,8 @@ export function RentalPanel({
   } else {
     const endLeft = left(rental.endsAt);
     body = rental.remind ? (
-      <div className="border border-red/60 px-3 py-3 text-[13px] leading-5">
-        <p className="text-red">
+      <div className="border border-loss/60 px-3 py-3 text-[13px] leading-5">
+        <p className="text-loss">
           Season {rental.season.number} ends in {duration(endLeft)}: {localMoment(rental.endsAt!)}.
         </p>
         <p className="mt-1 text-muted">
@@ -153,7 +153,7 @@ export function RentalPanel({
     <div className="mt-4 border-t border-line pt-3">
       <h3 className="text-[11px] uppercase tracking-wider text-muted">Rental</h3>
       <div className="mt-2">{body}</div>
-      {error ? <p className="mt-2 text-[12px] text-red">{error}</p> : null}
+      {error ? <p className="mt-2 text-[12px] text-loss">{error}</p> : null}
     </div>
   );
 }

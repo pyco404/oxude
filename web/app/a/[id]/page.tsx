@@ -67,7 +67,9 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
       </div>
       <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
         {m.beat === "bluff-worked" ? (
-          <span className="shrink-0 border border-red px-1 font-mono text-[9px] uppercase tracking-wider text-red">bluff</span>
+          <span className="shrink-0 border border-line px-1 font-mono text-[10px] uppercase tracking-wider text-text">
+            bluff
+          </span>
         ) : null}
         <span className="min-w-0 flex-1 truncate text-muted">{m.headline ?? `${m.rounds} rounds, ${m.exhibition ? "nothing staked" : `staked ${m.stake}`}`}</span>
         <span className="shrink-0 text-red">hand →</span>
@@ -124,7 +126,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
               retired
             </span>
           ) : (
-            <span className="shrink-0 border border-red px-1 font-mono text-[9px] uppercase tracking-wider text-red">
+            <span className="shrink-0 border border-line px-1 font-mono text-[10px] uppercase tracking-wider text-text">
               active
             </span>
           )}
