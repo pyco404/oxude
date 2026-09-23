@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type LadderPeriod, type LadderRow } from "@/lib/api";
 import { Segmented } from "@/app/ui";
+import { netTone } from "@/lib/tone";
 
 const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
 const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
@@ -113,13 +114,25 @@ export function LadderPanel({
                 {row.matchesPlayed}m
               </span>
               <span className={`${col} w-16 shrink-0 text-right font-mono text-[12px] text-muted`}>{row.matchesPlayed}</span>
-              <span className={`w-20 shrink-0 text-right font-mono ${wide ? "lg:hidden" : ""}`}>
+              <span
+                className={`w-20 shrink-0 text-right font-mono ${wide ? "lg:hidden" : ""} ${netTone(
+                  tab === "winnings" ? row.cumulativeNet : row.netPerMatch ?? 0,
+                )}`}
+              >
                 {tab === "winnings" ? whole(row.cumulativeNet) : money(row.netPerMatch ?? 0)}
               </span>
-              <span className={`${col} w-24 shrink-0 text-right font-mono ${tab === "per-match" ? "text-text" : "text-muted"}`}>
+              <span
+                className={`${col} w-24 shrink-0 text-right font-mono ${
+                  tab === "per-match" ? netTone(row.netPerMatch ?? 0) : "text-muted"
+                }`}
+              >
                 {money(row.netPerMatch ?? 0)}
               </span>
-              <span className={`${col} w-24 shrink-0 text-right font-mono ${tab === "winnings" ? "text-text" : "text-muted"}`}>
+              <span
+                className={`${col} w-24 shrink-0 text-right font-mono ${
+                  tab === "winnings" ? netTone(row.cumulativeNet) : "text-muted"
+                }`}
+              >
                 {whole(row.cumulativeNet)}
               </span>
               <span className={`${col} w-28 shrink-0 text-right font-mono text-[12px] text-muted`}>

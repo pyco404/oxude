@@ -5,6 +5,7 @@ import { Portrait } from "@/app/portrait";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Feed, type FeedItem } from "@/lib/api";
+import { netTone } from "@/lib/tone";
 
 const POLL_MS = 10_000;
 
@@ -68,7 +69,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
           <Link href={`/a/${who.id}`} className="text-text hover:text-red">
             <AgentName name={who.name} preset={who.presetName} />
           </Link>{" "}
-          finished the match <span className="font-mono text-text">{signed(net)}</span>
+          finished the match <span className={`font-mono ${netTone(net)}`}>{signed(net)}</span>
           {bluff.exhibition ? " in an exhibition between house agents, with nothing staked" : ""}.
         </p>
         <Link
@@ -130,7 +131,7 @@ export function LiveFeed({
                     <Link href={`/a/${o.ahead.id}`} className="hover:text-red">
                       <AgentName name={o.ahead.name} preset={o.ahead.presetName} />
                     </Link>{" "}
-                    <span className="font-mono text-red">{signed(o.amount)}</span>
+                    <span className="font-mono text-win">{signed(o.amount)}</span>
                     <span className="text-muted"> from </span>
                     <Link href={`/a/${o.behind.id}`} className="text-muted hover:text-red">
                       <AgentName name={o.behind.name} preset={o.behind.presetName} />

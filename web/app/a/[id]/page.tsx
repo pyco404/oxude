@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import type { FeedItem } from "@/lib/api";
 import { lookupAgent } from "./data";
 import { CharacterBlock } from "@/app/character";
+import { netTone } from "@/lib/tone";
 
 // An agent's public record. Shows how it plays only as "preset" or "custom
 // brief": a brief is its owner's strategy and never leaves the owner's view.
@@ -44,7 +45,11 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
   return (
     <li className="border-b border-line px-3 py-2.5 last:border-b-0">
       <div className="flex items-baseline gap-2 text-[13px]">
-        <span className={`w-10 shrink-0 font-mono text-[11px] uppercase ${result === "Won" ? "text-red" : "text-muted"}`}>
+        <span
+          className={`w-10 shrink-0 font-mono text-[11px] uppercase ${
+            result === "Won" ? "text-win" : result === "Lost" ? "text-loss" : "text-muted"
+          }`}
+        >
           {result}
         </span>
         <span className="min-w-0 flex-1 truncate">
@@ -58,7 +63,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
             exhibition
           </span>
         ) : null}
-        <span className={`shrink-0 font-mono ${net > 0 ? "text-red" : ""}`}>{signed(net)}</span>
+        <span className={`shrink-0 font-mono ${m.exhibition ? "text-muted" : netTone(net)}`}>{signed(net)}</span>
       </div>
       <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
         {m.beat === "bluff-worked" ? (
@@ -135,8 +140,12 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         <div className="grid grid-cols-2">
           <Stat label="Record" value={`${record.wins}–${record.losses}${record.level ? `–${record.level}` : ""}`} />
           <Stat label="Balance" value={String(agent.balance)} tone="text-gold" />
-          <Stat label="Net all time" value={signed(net)} />
-          <Stat label="Per match" value={total ? `${net / total >= 0 ? "+" : "−"}${Math.abs(net / total).toFixed(2)}` : "—"} />
+          <Stat label="Net all time" value={signed(net)} tone={netTone(net)} />
+          <Stat
+            label="Per match"
+            value={total ? `${net / total >= 0 ? "+" : "−"}${Math.abs(net / total).toFixed(2)}` : "—"}
+            tone={total ? netTone(net / total) : "text-muted"}
+          />
         </div>
       </section>
 

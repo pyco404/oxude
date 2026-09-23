@@ -15,6 +15,7 @@ import { CharacterBlock } from "@/app/character";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
 import { useCountUp } from "@/lib/motion";
+import { netFill, netTone } from "@/lib/tone";
 import {
   installUrl,
   type WalletName,
@@ -661,7 +662,10 @@ function PresetCard({
             {preset.name}
           </span>
           {/* The final figure is what screen readers get, not the frames in between. */}
-          <span className="font-mono text-[12px] text-muted" aria-label={rating === undefined ? undefined : `${money(rating, 3)} per match`}>
+          <span
+            className={`font-mono text-[12px] ${shown === undefined ? "text-muted" : netTone(shown)}`}
+            aria-label={rating === undefined ? undefined : `${money(rating, 3)} per match`}
+          >
             {shown === undefined ? "…" : `${money(shown, 3)} / match`}
           </span>
         </span>
@@ -855,7 +859,7 @@ function AgentCard({
             value={String(agent.balance ?? 0)}
             tone={(agent.balance ?? 0) <= 20 ? "text-loss" : "text-gold"}
           />
-          <Stat label="net won" value={whole(agent.cumulativeNet ?? 0)} />
+          <Stat label="net won" value={whole(agent.cumulativeNet ?? 0)} tone={netTone(agent.cumulativeNet ?? 0)} />
           <Stat label="matches" value={String(agent.matchesPlayed ?? 0)} />
         </dl>
         {typeof agent.rankedMatches === "number" && agent.rankedMatches !== (agent.matchesPlayed ?? 0) ? (
@@ -866,7 +870,7 @@ function AgentCard({
           </p>
         ) : null}
         <dl className="mt-2 grid grid-cols-2 gap-2 border border-line">
-          <Stat label="recent form" value={money(agent.recentForm ?? 0)} />
+          <Stat label="recent form" value={money(agent.recentForm ?? 0)} tone={netTone(agent.recentForm ?? 0)} />
           <Stat label="band" value={`${agent.band ?? "B"} · up to ${agent.worstMatch ?? bandByName(agent.band ?? "B").worstMatch}`} />
         </dl>
 
@@ -940,7 +944,7 @@ function AgentCard({
             vs{" "}
             <AgentName name={lastPlay.opponent.name} preset={lastPlay.opponent.presetName} /> ·{" "}
             {lastPlay.result.rounds} rounds · staked <span className="text-gold">{lastPlay.stake}</span> ·{" "}
-            <span className={lastPlay.result.net >= 0 ? "text-text" : "text-red"}>{whole(lastPlay.result.net)}</span>
+            <span className={netTone(lastPlay.result.net)}>{whole(lastPlay.result.net)}</span>
             {lastPlay.result.net !== lastPlay.result.uncappedNet
               ? ` (capped from ${whole(lastPlay.result.uncappedNet)})`
               : ""}{" "}
@@ -1027,7 +1031,9 @@ function PreviewPanel({
           <p className="font-mono text-[13px] text-muted">rating…</p>
         ) : preview ? (
           <>
-            <p className="font-mono text-3xl text-red">{money(preview.value.trueRating, 3)}</p>
+            <p className={`font-mono text-3xl ${netTone(preview.value.trueRating)}`}>
+              {money(preview.value.trueRating, 3)}
+            </p>
             <p className="mt-1 text-[12px] leading-4 text-muted">
               per match, {preview.value.basis} ({preview.value.roster} agents)
             </p>
@@ -1039,11 +1045,13 @@ function PreviewPanel({
                   </span>
                   <span className="h-2 flex-1 bg-panel-2">
                     <span
-                      className={`block h-2 ${b.expectedNet >= 0 ? "bg-red" : "bg-line"}`}
+                      className={`block h-2 ${netFill(b.expectedNet)}`}
                       style={{ width: `${Math.min(100, (Math.abs(b.expectedNet) / worst) * 100)}%` }}
                     />
                   </span>
-                  <span className="w-14 shrink-0 text-right font-mono text-[11px]">{money(b.expectedNet)}</span>
+                  <span className={`w-14 shrink-0 text-right font-mono text-[11px] ${netTone(b.expectedNet)}`}>
+                    {money(b.expectedNet)}
+                  </span>
                 </li>
               ))}
             </ul>

@@ -6,6 +6,7 @@ import { Page, PageNote } from "@/app/site-header";
 import { notFound } from "next/navigation";
 import { Transcript } from "@/app/transcript";
 import { getMatch, lookupMatch } from "./data";
+import { netTone } from "@/lib/tone";
 
 // The public face of a match: no auth, no owner, nothing private. This is the
 // page a link preview points at, so it renders from the server.
@@ -89,16 +90,18 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
               >
                 <Portrait id={who.id} size={96} />
                 <span className="max-w-full truncate text-[13px]">{summary.names[seat]}</span>
-                <span className={`font-mono text-[12px] ${net > 0 ? "text-red" : "text-muted"}`}>{signed(net)}</span>
+                <span className={`font-mono text-[12px] ${match.exhibition ? "text-muted" : netTone(net)}`}>
+                  {signed(net)}
+                </span>
               </Link>
             );
           })}
         </div>
         <div className="p-3">
           <p className="font-mono text-2xl">
-            <span className={match.netA >= 0 ? "text-red" : "text-text"}>{signed(match.netA)}</span>
+            <span className={netTone(match.netA)}>{signed(match.netA)}</span>
             <span className="text-muted"> / </span>
-            <span className={match.netB >= 0 ? "text-red" : "text-text"}>{signed(match.netB)}</span>
+            <span className={netTone(match.netB)}>{signed(match.netB)}</span>
           </p>
           <p className="mt-1 text-[13px] leading-5 text-muted">
             {summary.winnerName ? `${summary.winnerName} took it` : "Level"} over {summary.rounds}{" "}

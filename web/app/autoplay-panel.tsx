@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type AutoplayStatus, type SinceYouLeft } from "@/lib/api";
 import { useWallet } from "./wallet-context";
+import { netTone } from "@/lib/tone";
 
 /** How often the panel asks the server what is true now. The countdown ticks locally in between. */
 const REFRESH_MS = 30_000;
@@ -162,7 +163,7 @@ export function AutoplayPanel({
             <p>
               <span className="text-muted">Since you left ({ago(summary.since, now)}):</span>{" "}
               {summary.matches} {summary.matches === 1 ? "match" : "matches"},{" "}
-              <span className={summary.net >= 0 ? "text-text" : "text-red"}>{signed(summary.net)}</span>.
+              <span className={netTone(summary.net)}>{signed(summary.net)}</span>.
             </p>
             <button onClick={() => void dismiss()} className="shrink-0 text-[11px] text-muted hover:text-text">
               Dismiss
@@ -171,7 +172,7 @@ export function AutoplayPanel({
           {summary.bestHand ? (
             <p className="mt-1 text-[12px] text-muted">
               Best hand:{" "}
-              <Link href={`/m/${summary.bestHand.matchId}`} className="text-red hover:underline">
+              <Link href={`/m/${summary.bestHand.matchId}`} className={`${netTone(summary.bestHand.net)} underline-offset-2 hover:underline`}>
                 {signed(summary.bestHand.net)}
               </Link>
               {summary.bestHand.headline ? ` — ${summary.bestHand.headline}` : ""}
@@ -207,7 +208,7 @@ export function AutoplayPanel({
           <dt className="text-muted">Today (UTC)</dt>
           <dd className="text-right">
             {status.today.matches} {status.today.matches === 1 ? "match" : "matches"},{" "}
-            <span className={status.today.net >= 0 ? "text-text" : "text-red"}>{signed(status.today.net)}</span>
+            <span className={netTone(status.today.net)}>{signed(status.today.net)}</span>
           </dd>
         </dl>
 
