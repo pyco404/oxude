@@ -58,7 +58,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
   const who = bluff.beatSeat === "B" ? bluff.b : bluff.a;
   return (
     <section className="mb-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
         <span>Latest bluff{bluff.exhibition ? " · exhibition" : ""}</span>
         <span className="font-mono normal-case tracking-normal">{ago(bluff.createdAt)} ago</span>
       </h2>
@@ -106,7 +106,7 @@ export function LiveFeed({
   const rows = [...live, ...older.filter((m) => !seen.has(m.id))];
   return (
     <section className={`border border-line bg-panel ${className}`}>
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
         <span>Live matches</span>
         <span className="flex items-center gap-1.5 font-mono normal-case tracking-normal">
           <span className="inline-block h-1.5 w-1.5 bg-red" aria-hidden />
@@ -149,7 +149,7 @@ export function LiveFeed({
                   </span>
                 )}
                 {m.exhibition ? (
-                  <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+                  <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
                     exhibition
                   </span>
                 ) : null}
@@ -157,7 +157,7 @@ export function LiveFeed({
               </div>
               <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 text-[12px] leading-5">
                 {bluff ? (
-                  <span className="shrink-0 border border-line px-1 font-mono text-[10px] uppercase tracking-wider text-text">
+                  <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
                     bluff
                   </span>
                 ) : null}

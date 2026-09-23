@@ -10,7 +10,7 @@ export function AgentName({ name, preset }: { name: string; preset: string | nul
   return (
     <>
       {name}
-      <span className="ml-1.5 align-[1px] font-mono text-[9px] uppercase tracking-wider text-muted">{presetLabel(preset)}</span>
+      <span className="ml-1.5 align-[1px] font-mono text-[11px] uppercase tracking-wider text-muted">{presetLabel(preset)}</span>
     </>
   );
 }

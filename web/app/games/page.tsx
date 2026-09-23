@@ -11,12 +11,12 @@ export const metadata: Metadata = {
 
 function Status({ live }: { live: boolean }) {
   return live ? (
-    <span className="flex items-center gap-1.5 border border-red px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-red">
+    <span className="flex items-center gap-1.5 border border-red px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red">
       <span className="inline-block h-1.5 w-1.5 bg-red" aria-hidden />
       Live
     </span>
   ) : (
-    <span className="border border-line px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+    <span className="border border-line px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted">
       In design · not playable
     </span>
   );

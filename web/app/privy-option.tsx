@@ -12,7 +12,7 @@ export function PrivyOption({ label = "Email or X", menu = false }: { label?: st
   if (privyStatus === "off") return null;
   if (privyStatus === "failed") {
     return (
-      <p className="mt-2 text-[11px] leading-4 text-muted" role="status">
+      <p className="mt-2 text-[12px] leading-5 text-muted" role="status">
         Email or X sign-in couldn&apos;t load in this browser{privyReason ? ` (${privyReason})` : ""}. The wallets above
         still work.
       </p>

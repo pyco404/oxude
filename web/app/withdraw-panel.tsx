@@ -105,7 +105,7 @@ export function WithdrawPanel({
 
   return (
     <div className="mt-4 border-t border-line pt-3">
-      <h3 className="text-[11px] uppercase tracking-wider text-muted">Withdraw</h3>
+      <h3 className="text-[12px] uppercase tracking-wider text-muted">Withdraw</h3>
       <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
         <span>
           Withdrawable now <span className="font-mono text-gold">{info.withdrawable}</span>
@@ -118,7 +118,7 @@ export function WithdrawPanel({
 
       {info.withdrawable > 0 && lapsed ? (
         <>
-          <p className="mt-1 text-[11px] leading-4 text-muted">
+          <p className="mt-1 text-[12px] leading-5 text-muted">
             Its rental lapsed, so the whole balance comes out at once.
           </p>
           <button
@@ -152,7 +152,7 @@ export function WithdrawPanel({
               Withdraw{amountOk ? ` ${n}` : ""}
             </button>
           </div>
-          <p className="mt-1 text-[11px] leading-4 text-muted">
+          <p className="mt-1 text-[12px] leading-5 text-muted">
             Leave at least {info.minStake} to keep playing — that covers a match in the cheapest band. Take it all to
             retire instead.
           </p>
@@ -205,7 +205,7 @@ export function WithdrawPanel({
         ) : null}
         {phase.at === "error" ? <span className="text-loss">Didn&apos;t withdraw: {phase.message}</span> : null}
       </p>
-      <p className="text-[11px] leading-4 text-muted">
+      <p className="text-[12px] leading-5 text-muted">
         Unlike signing in, this is a transaction you sign: it moves tokens from the vault to your wallet. The fee is
         paid for you. Devnet tokens have no value.
       </p>

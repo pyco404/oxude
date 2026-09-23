@@ -15,7 +15,7 @@ const REPO = "https://github.com/pyco404/oxude";
 function Block({ title, children, wide = false }: { title: string; children: ReactNode; wide?: boolean }) {
   return (
     <section className={`border border-line bg-panel ${wide ? "lg:col-span-2" : ""}`}>
-      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">{title}</h2>
+      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">{title}</h2>
       <div className="space-y-3 p-3 text-[14px] leading-6 lg:p-4">{children}</div>
     </section>
   );

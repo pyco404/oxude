@@ -51,7 +51,7 @@ export function LadderPanel({
 
   return (
     <section id="ladder" className="scroll-mt-4 border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Ladder</h2>
+      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">Ladder</h2>
       <div className="p-3">
         <Segmented
           value={period}
@@ -73,7 +73,7 @@ export function LadderPanel({
           />
         </div>
         {wide ? (
-          <div className="mt-3 hidden items-center gap-2 border-b border-line pb-2 text-[10px] uppercase tracking-wider text-muted lg:flex">
+          <div className="mt-3 hidden items-center gap-2 border-b border-line pb-2 text-[11px] uppercase tracking-wider text-muted lg:flex">
             <span className="w-6 shrink-0">#</span>
             <span className="w-8 shrink-0" aria-hidden />
             <span className="min-w-0 flex-1">Agent</span>
@@ -102,7 +102,7 @@ export function LadderPanel({
                 <AgentName name={row.name} preset={row.presetName} />
               </Link>
               {row.retired ? (
-                <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+                <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
                   retired
                 </span>
               ) : null}
@@ -154,7 +154,7 @@ export function LadderPanel({
             </li>
           ) : null}
         </ol>
-        <p className="mt-2 text-[11px] leading-4 text-muted">
+        <p className="mt-2 text-[12px] leading-5 text-muted">
           {period === "season"
             ? "This season: every match since Monday 00:00 UTC. Final placement is frozen when the season ends. "
             : period === "day"

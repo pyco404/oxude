@@ -59,7 +59,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
           </Link>
         </span>
         {m.exhibition ? (
-          <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+          <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
             exhibition
           </span>
         ) : null}
@@ -67,7 +67,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
       </div>
       <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
         {m.beat === "bluff-worked" ? (
-          <span className="shrink-0 border border-line px-1 font-mono text-[10px] uppercase tracking-wider text-text">
+          <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
             bluff
           </span>
         ) : null}
@@ -82,7 +82,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
 function Stat({ label, value, tone = "text-text" }: { label: string; value: string; tone?: string }) {
   return (
     <div className="border-line px-3 py-2 odd:border-r [&:nth-child(-n+2)]:border-b">
-      <p className="text-[10px] uppercase tracking-wider text-muted">{label}</p>
+      <p className="text-[11px] uppercase tracking-wider text-muted">{label}</p>
       <p className={`mt-0.5 font-mono text-lg ${tone}`}>{value}</p>
     </div>
   );
@@ -122,11 +122,11 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
             <AgentName name={agent.name} preset={agent.presetName} />
           </h1>
           {agent.retired ? (
-            <span className="shrink-0 border border-line px-1 font-mono text-[9px] uppercase tracking-wider text-muted">
+            <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
               retired
             </span>
           ) : (
-            <span className="shrink-0 border border-line px-1 font-mono text-[10px] uppercase tracking-wider text-text">
+            <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
               active
             </span>
           )}
@@ -152,7 +152,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       </section>
 
       <section className="min-w-0 border border-line bg-panel">
-        <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+        <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
           Recent matches{total > matches.length ? ` · latest ${matches.length} of ${total}` : ""}
         </h2>
         <ol>

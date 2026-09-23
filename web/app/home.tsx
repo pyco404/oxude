@@ -438,7 +438,7 @@ function ConnectPanel({
   return (
     <div className="mb-3 border border-line bg-panel p-3">
       <p className="text-[13px] leading-5">Want one of your own? Sign in to rent an agent and play.</p>
-      <p className="mt-1 text-[11px] leading-4 text-muted">
+      <p className="mt-1 text-[12px] leading-5 text-muted">
         You sign a message, not a transaction: it costs nothing and moves nothing. Browsing needs no wallet.
       </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -501,7 +501,7 @@ function RentPanel(props: {
     props.signedIn && (props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12);
   return (
     <section className="border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">Rent an agent</h2>
+      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">Rent an agent</h2>
       <div className="space-y-3 p-3">
         <SeasonLine />
         <Segmented
@@ -527,7 +527,7 @@ function RentPanel(props: {
               />
             ))}
           </ul>
-          <p className="text-[11px] leading-4 text-muted">
+          <p className="text-[12px] leading-5 text-muted">
             Figures are exact expected net per match against band {props.band}&apos;s roster as it stands today, on band
             B&apos;s scale. Free to see.
           </p>
@@ -561,7 +561,7 @@ function RentPanel(props: {
               className="w-full border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
             >
               {props.previewing ? "Rating…" : "Rate this brief"}
-              <span className="ml-2 font-mono text-[10px] uppercase tracking-wider">
+              <span className="ml-2 font-mono text-[11px] uppercase tracking-wider">
                 {props.firstFree ? "first one free" : "costs a model call"}
               </span>
             </button>
@@ -577,7 +577,7 @@ function RentPanel(props: {
         />
 
         <div className="border border-line px-3 py-2">
-          <div className="text-[11px] uppercase tracking-wider text-muted">Stakes</div>
+          <div className="text-[12px] uppercase tracking-wider text-muted">Stakes</div>
           <div className="mt-2 grid grid-cols-3 gap-1">
             {BANDS.map((b) => {
               const chosen = props.band === b.name;
@@ -592,14 +592,14 @@ function RentPanel(props: {
                   <div className="mt-0.5 font-mono text-[11px] text-gold">
                     {b.ante}/{b.baseBet}/{b.raisedBet}
                   </div>
-                  <div className="mt-1 text-[11px] leading-4 text-muted">
+                  <div className="mt-1 text-[12px] leading-5 text-muted">
                     up to <span className="font-mono text-gold">{b.worstMatch}</span> a match
                   </div>
                 </button>
               );
             })}
           </div>
-          <p className="mt-2 text-[11px] leading-4 text-muted">
+          <p className="mt-2 text-[12px] leading-5 text-muted">
             {bandBlurb(props.bandRows, props.band, props.presetName)} It starts with <span className="font-mono text-gold">{SEED_BALANCE}</span> to play with, and is
             only matched against agents on the same scale.
           </p>
@@ -618,11 +618,11 @@ function RentPanel(props: {
                 : "Rent on this brief"}
         </button>
         {props.tab === "brief" ? (
-          <p className="text-[11px] leading-4 text-muted">
+          <p className="text-[12px] leading-5 text-muted">
             Renting on a brief writes its table once, with one model call. Playing it after that is free.
           </p>
         ) : (
-          <p className="text-[11px] leading-4 text-muted">Presets are free to rent and free to rate.</p>
+          <p className="text-[12px] leading-5 text-muted">Presets are free to rent and free to rate.</p>
         )}
       </div>
     </section>
@@ -697,11 +697,11 @@ function Behaviour({ table, delayMs = 0 }: { table: Record<string, Record<string
                 action === "raise" ? "bg-gold" : action === "call" ? "border border-muted" : "bg-line"
               }`}
             />
-            <span className="font-mono text-[9px] text-muted">{edge.slice(1)}</span>
+            <span className="font-mono text-[11px] text-muted">{edge.slice(1)}</span>
           </span>
         );
       })}
-      <span className="ml-2 font-mono text-[9px] leading-3 text-muted">
+      <span className="ml-2 font-mono text-[11px] leading-3 text-muted">
         <span className="text-gold">raise</span> · call · <span className="opacity-60">fold</span>
       </span>
     </span>
@@ -720,7 +720,7 @@ function RosterPanel({
 }) {
   return (
     <section className="mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
         Who you'd meet
         <span className="font-mono normal-case tracking-normal">band {band}</span>
       </h2>
@@ -743,7 +743,7 @@ function RosterPanel({
                 <span className="min-w-0 flex-1 truncate">
                   <AgentName name={a.name} preset={a.presetName} />
                 </span>
-                <span className="w-14 shrink-0 font-mono text-[10px] text-muted">{a.presetName ?? "brief"}</span>
+                <span className="w-16 shrink-0 truncate font-mono text-[11px] text-muted">{a.presetName ?? "brief"}</span>
                 <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
                 <span className="w-12 shrink-0 text-right font-mono text-[11px] text-gold">{a.balance}</span>
               </li>
@@ -753,7 +753,7 @@ function RosterPanel({
         {agents && agents.length > 8 ? (
           <p className="mt-2 text-[11px] text-muted">and {agents.length - 8} more in this band</p>
         ) : null}
-        <p className="mt-2 font-mono text-[10px] text-muted">name · plays as · matches · balance</p>
+        <p className="mt-2 font-mono text-[11px] text-muted">name · plays as · matches · balance</p>
       </div>
     </section>
   );
@@ -775,7 +775,7 @@ function YourAgents({
 }) {
   return (
     <section className="border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
         Your agents<span className="ml-2 normal-case tracking-normal">{agents.length}</span>
       </h2>
       <ul className="p-1">
@@ -793,7 +793,7 @@ function YourAgents({
                   <AgentName name={a.name} preset={a.presetName} />
                 </span>
                 {a.retired ? (
-                  <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted">retired</span>
+                  <span className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-muted">retired</span>
                 ) : (
                   <span className="shrink-0 font-mono text-[12px] text-gold">{a.balance ?? 0}</span>
                 )}
@@ -830,7 +830,7 @@ function AgentCard({
   const [expired, setExpired] = useState(false);
   return (
     <section className="border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
         {retired ? "Retired agent" : "Your agent"}
       </h2>
       <div className="p-3">
@@ -863,7 +863,7 @@ function AgentCard({
           <Stat label="matches" value={String(agent.matchesPlayed ?? 0)} />
         </dl>
         {typeof agent.rankedMatches === "number" && agent.rankedMatches !== (agent.matchesPlayed ?? 0) ? (
-          <p className="mt-1 text-[11px] leading-4 text-muted">
+          <p className="mt-1 text-[12px] leading-5 text-muted">
             The ladder counts {agent.rankedMatches} of {agent.matchesPlayed ?? 0} &mdash; the ones against other
             players &mdash; for {whole(agent.rankedNet ?? 0)}. The rest were against house agents: they settled for
             money, but don&apos;t rank.
@@ -893,7 +893,7 @@ function AgentCard({
                   : "No band is open to it now; all that is left is to withdraw."}
               </p>
             ) : null}
-            <div className="text-[11px] uppercase tracking-wider text-muted">Band</div>
+            <div className="text-[12px] uppercase tracking-wider text-muted">Band</div>
             <div className="mt-1 grid grid-cols-3 gap-1">
               {(agent.bands ?? []).map((b) => {
                 const current = b.name === agent.band;
@@ -913,12 +913,12 @@ function AgentCard({
                     }`}
                   >
                     <div className="font-mono text-[12px]">{b.name}</div>
-                    <div className="font-mono text-[10px] text-gold">≤{b.worstMatch}</div>
+                    <div className="font-mono text-[11px] text-gold">≤{b.worstMatch}</div>
                   </button>
                 );
               })}
             </div>
-            <p className="mt-1 text-[11px] leading-4 text-muted">
+            <p className="mt-1 text-[12px] leading-5 text-muted">
               A band is a money scale: the same game, every amount multiplied. It can move to any band its balance
               covers — nothing is clamped, so a match is only played when both sides can pay the worst of it.
             </p>
@@ -926,7 +926,7 @@ function AgentCard({
         )}
 
         {typeof agent.trueRating === "number" ? (
-          <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
+          <p className="mt-2 font-mono text-[12px] leading-5 text-muted">
             private rating {money(agent.trueRating, 3)} per match, {agent.trueRatingBasis ?? "against today's roster"}
           </p>
         ) : null}
@@ -940,7 +940,7 @@ function AgentCard({
         </button>
 
         {lastPlay ? (
-          <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
+          <p className="mt-2 font-mono text-[12px] leading-5 text-muted">
             vs{" "}
             <AgentName name={lastPlay.opponent.name} preset={lastPlay.opponent.presetName} /> ·{" "}
             {lastPlay.result.rounds} rounds · staked <span className="text-gold">{lastPlay.stake}</span> ·{" "}
@@ -952,7 +952,7 @@ function AgentCard({
           </p>
         ) : null}
         {lastPlay && lastPlay.ranked === false ? (
-          <p className="mt-1 text-[11px] leading-4 text-muted">
+          <p className="mt-1 text-[12px] leading-5 text-muted">
             Against a house agent: settles for money, doesn&apos;t count toward the ladder.
           </p>
         ) : null}
@@ -1001,7 +1001,7 @@ function AgentCard({
 function Stat({ label, value, tone = "text-text" }: { label: string; value: string; tone?: string }) {
   return (
     <div className="border-r border-line px-3 py-2 last:border-r-0">
-      <dt className="text-[10px] uppercase tracking-wider text-muted">{label}</dt>
+      <dt className="text-[11px] uppercase tracking-wider text-muted">{label}</dt>
       <dd className={`mt-0.5 font-mono text-[15px] ${tone}`}>{value}</dd>
     </div>
   );
@@ -1020,7 +1020,7 @@ function PreviewPanel({
   const worst = preview ? Math.max(...preview.value.breakdown.map((b) => Math.abs(b.expectedNet)), 0.001) : 1;
   return (
     <section className="mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[11px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
         Expected result
         <span className={`font-mono ${tab === "brief" ? "text-gold" : "text-muted"}`}>
           {tab === "brief" ? "model call" : "free"}

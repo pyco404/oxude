@@ -151,7 +151,7 @@ export function RentalPanel({
 
   return (
     <div className="mt-4 border-t border-line pt-3">
-      <h3 className="text-[11px] uppercase tracking-wider text-muted">Rental</h3>
+      <h3 className="text-[12px] uppercase tracking-wider text-muted">Rental</h3>
       <div className="mt-2">{body}</div>
       {error ? <p className="mt-2 text-[12px] text-loss">{error}</p> : null}
     </div>

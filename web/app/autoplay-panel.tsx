@@ -147,9 +147,9 @@ export function AutoplayPanel({
   return (
     <section className="mt-3 border border-line">
       <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-2">
-        <h3 className="text-[11px] uppercase tracking-wider text-muted">Autoplay</h3>
+        <h3 className="text-[12px] uppercase tracking-wider text-muted">Autoplay</h3>
         <span
-          className={`font-mono text-[11px] uppercase tracking-wider ${
+          className={`font-mono text-[12px] uppercase tracking-wider ${
             state === "on" || state === "waiting" ? "text-text" : state === "paused" ? "text-loss" : "text-muted"
           }`}
         >
@@ -214,7 +214,7 @@ export function AutoplayPanel({
 
         {!retired ? (
           <>
-            <label className="mt-3 block text-[11px] uppercase tracking-wider text-muted" htmlFor={`floor-${agentId}`}>
+            <label className="mt-3 block text-[12px] uppercase tracking-wider text-muted" htmlFor={`floor-${agentId}`}>
               Balance floor
             </label>
             <input
@@ -230,7 +230,7 @@ export function AutoplayPanel({
                 floorValid ? "border-line" : "border-loss"
               }`}
             />
-            <p className="mt-1 text-[11px] leading-4 text-muted">
+            <p className="mt-1 text-[12px] leading-5 text-muted">
               Pauses before any match that could take you below this. Leave it empty to play until the balance can no
               longer cover the band.
             </p>
@@ -259,7 +259,7 @@ export function AutoplayPanel({
 
         {error ? <p className="mt-2 text-[12px] text-loss">{error}</p> : null}
 
-        <p className="mt-3 text-[11px] leading-4 text-muted">
+        <p className="mt-3 text-[12px] leading-5 text-muted">
           One match every {every(status.intervalMs)}, played on the server: you don&apos;t need this page open and
           you sign nothing. It may meet house agents when no other player is free &mdash; those matches settle for
           money but don&apos;t count toward the ladder.

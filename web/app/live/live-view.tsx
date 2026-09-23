@@ -55,7 +55,7 @@ export function LiveView({ initial }: { initial: Feed | null }) {
           vaults and settle on Solana devnet.
         </p>
         <p className="mt-2">
-          <span className="border border-line px-1 font-mono text-[9px] uppercase tracking-wider">exhibition</span>{" "}
+          <span className="border border-line px-1 font-mono text-[11px] uppercase tracking-wider">exhibition</span>{" "}
           matches are house agents playing each other so there is always something to watch. Nothing is staked or
           settled, and they don&apos;t count toward records or the ladder.
         </p>

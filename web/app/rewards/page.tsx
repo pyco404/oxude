@@ -31,7 +31,7 @@ const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 function Tile({ label, value, sub }: { label: string; value: string; sub?: ReactNode }) {
   return (
     <div className="border border-line bg-panel px-3 py-3">
-      <p className="text-[10px] uppercase tracking-wider text-muted">{label}</p>
+      <p className="text-[11px] uppercase tracking-wider text-muted">{label}</p>
       <p className="mt-1 font-mono text-2xl text-gold">{value}</p>
       {sub ? <div className="mt-1 text-[12px] leading-5 text-muted">{sub}</div> : null}
     </div>
@@ -54,7 +54,7 @@ function RewardsSection({ r }: { r: Rewards }) {
   return (
     <section className="border border-line">
       <div className="border-b border-line bg-panel px-3 py-2.5 lg:px-4">
-        <h2 className="text-[11px] uppercase tracking-wider text-muted">Rewards</h2>
+        <h2 className="text-[12px] uppercase tracking-wider text-muted">Rewards</h2>
       </div>
       <p className="border-b border-gold/50 bg-gold/5 px-3 py-2.5 text-[13px] leading-5 text-text lg:px-4">
         Not live yet. $OXUDE has launched on mainnet, but rewards are funded by the creator-fee split and paid at
@@ -87,13 +87,13 @@ function RewardsSection({ r }: { r: Rewards }) {
       </div>
 
       <div className="border-t border-line">
-        <h3 className="px-3 py-2 text-[11px] uppercase tracking-wider text-muted lg:px-4">Recent payouts</h3>
+        <h3 className="px-3 py-2 text-[12px] uppercase tracking-wider text-muted lg:px-4">Recent payouts</h3>
         {payouts.length === 0 ? (
           <p className="px-3 pb-3 text-[13px] text-muted lg:px-4">No payouts yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-left text-[13px]">
-              <thead className="text-[10px] uppercase tracking-wider text-muted">
+              <thead className="text-[11px] uppercase tracking-wider text-muted">
                 <tr className="border-y border-line">
                   <th className="px-3 py-2 font-normal lg:px-4">Date</th>
                   <th className="px-3 py-2 font-normal">Rank</th>
@@ -135,7 +135,7 @@ function RewardsSection({ r }: { r: Rewards }) {
       </div>
 
       <div className="space-y-2 border-t border-line p-3 text-[13px] leading-5 lg:p-4">
-        <h3 className="text-[11px] uppercase tracking-wider text-muted">Prize schedule</h3>
+        <h3 className="text-[12px] uppercase tracking-wider text-muted">Prize schedule</h3>
         <p>
           Paid daily, on ladder placement, to the owners of the top few agents. Each day&apos;s prize is a fixed
           percentage of what the reward wallet holds, so the pool shrinks slowly and never empties.
@@ -153,7 +153,7 @@ function ActivitySection({ a }: { a: Activity | null }) {
   return (
     <section className="border border-line">
       <div className="border-b border-line bg-panel px-3 py-2.5 lg:px-4">
-        <h2 className="text-[11px] uppercase tracking-wider text-muted">Match activity</h2>
+        <h2 className="text-[12px] uppercase tracking-wider text-muted">Match activity</h2>
       </div>
       {a === null ? (
         <p className="p-3 text-[13px] text-muted lg:p-4">Couldn&apos;t reach the server. Try again in a moment.</p>
