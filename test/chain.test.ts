@@ -659,4 +659,36 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(await chain.isWithdrawn(id)).toBe(true);
     });
   });
+
+  describe("the season rate", () => {
+    /** Mirrors the program's ceiling on tokens per chip. */
+    const MAX_CHIP_RATE = 1_000 * CHIP;
+
+    // Last in the file on purpose. A rate change cannot be undone here: the
+    // program makes a rate stand for six days of slots before it moves again,
+    // so anything declared after this would run against a different rate.
+    it("holds a new rate to a ceiling, a half-either-way band, and an interval", async () => {
+      const asAdmin = new ChainClient(connection, admin, stakeMint);
+      // The settler cannot move the rate; this is the admin's alone.
+      await expect(chain.setChipRate(CHIP)).rejects.toThrow(/NotAdmin/);
+      // Nor can it be zero, nor cost more than the ceiling on tokens per chip.
+      await expect(asAdmin.setChipRate(0)).rejects.toThrow(/InvalidLimit/);
+      await expect(asAdmin.setChipRate(MAX_CHIP_RATE + 1)).rejects.toThrow(/RateCeiling/);
+      // Nor move by more than half, either way, in one step.
+      await expect(asAdmin.setChipRate(CHIP / 2 - 1)).rejects.toThrow(/RateMoveTooBig/);
+      await expect(asAdmin.setChipRate(CHIP * 1.5 + 1)).rejects.toThrow(/RateMoveTooBig/);
+      expect((await chain.config()).chipRate.toNumber()).toBe(CHIP);
+
+      // Half as many base units to the chip - the token having doubled - is
+      // exactly at the edge, so it is allowed. max_settlement follows the rate,
+      // so it still means band C's 60 chips and not half of them.
+      await asAdmin.setChipRate(CHIP / 2);
+      const after = await chain.config();
+      expect(after.chipRate.toNumber()).toBe(CHIP / 2);
+      expect(after.maxSettlement.toNumber()).toBe(60 * (CHIP / 2));
+
+      // And now it has to stand: a second move is refused, however small.
+      await expect(asAdmin.setChipRate(CHIP / 2)).rejects.toThrow(/RateTooSoon/);
+    });
+  });
 });

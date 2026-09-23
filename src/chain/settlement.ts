@@ -114,6 +114,21 @@ export class ChainClient {
   }
 
   /**
+   * Sets the season's rate: base units to one chip. The signer must be the
+   * admin. The program holds the number to three bounds of its own - half
+   * either way, a ceiling on tokens per chip, and six days since the last move
+   * - and rescales max_settlement so it still means the same number of chips.
+   *
+   * Devnet never calls this: the rate is fixed at one chip to one token.
+   */
+  async setChipRate(chipRate: number): Promise<string> {
+    return this.program.methods
+      .setChipRate(new BN(chipRate))
+      .accountsPartial({ admin: this.signer.publicKey, config: pdas.config() })
+      .rpc();
+  }
+
+  /**
    * Sets what renting costs, in base units. The signer must be the admin
    * recorded on the config. On mainnet this is called once per season
    * boundary, in the same transaction as the rate it was computed from.

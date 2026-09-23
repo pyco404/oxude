@@ -69,6 +69,21 @@ pub const RENTAL_SEED: &[u8] = b"rental";
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
 pub const WINDOW_SLOTS: u64 = 1_500;
+/// The most base units one chip may ever cost, which is equivalently a floor on
+/// the market cap: with a billion tokens issued and a chip pegged near a cent,
+/// a thousand tokens to the chip is a ten-thousand-dollar cap. Below that the
+/// rate clamps instead of following, so a tiny early cap cannot make one chip
+/// cost an absurd share of the supply.
+pub const MAX_CHIP_RATE: u64 = 1_000 * 1_000_000;
+/// How long the rate must stand before it can move again: six days of slots,
+/// safely inside a seven-day season.
+///
+/// This bounds how *often* the rate can move, not *when*. The season boundary
+/// is a wall-clock Monday and the ledger owns it; slot times drift, so a
+/// slot-derived week would sometimes refuse a change that was on time. What
+/// this stops is an admin compounding several ±50% moves inside a day, which
+/// the per-change band alone would allow.
+pub const MIN_RATE_INTERVAL_SLOTS: u64 = 6 * 24 * 60 * 60 * 1_000 / 400;
 /// The stake token's decimals. Not needed by any arithmetic here - `chip_rate`
 /// carries the whole conversion - but checked at `initialize` so that a
 /// deployment cannot be pointed at a token of a different scale, where every
@@ -117,7 +132,43 @@ pub mod oxude_settlement {
         config.max_settlement = max_settlement;
         config.rent = rent;
         config.chip_rate = chip_rate;
+        // Zero means the rate has never moved, so the first change need not
+        // wait out an interval that has not started.
+        config.chip_rate_slot = 0;
         config.bump = ctx.bumps.config;
+        Ok(())
+    }
+
+    /// Sets the season's rate: how many base units one chip is worth.
+    ///
+    /// The admin supplies a number computed off chain from a published
+    /// time-weighted average price, and the program holds it to three bounds it
+    /// can check for itself: it may not move by more than half either way, it
+    /// may not exceed `MAX_CHIP_RATE`, and it may not move again for
+    /// `MIN_RATE_INTERVAL_SLOTS`. Those bound what a wrong or dishonest reading
+    /// can do; they do not make one acceptable. An on-chain oracle can take the
+    /// admin's place later without changing any of the three.
+    ///
+    /// `max_settlement` is a chip figure held in base units, so it is rescaled
+    /// here rather than left to mean a different number of chips than it did
+    /// yesterday - which also means a falling rate can never strand it above
+    /// the ceiling and make the next change impossible.
+    pub fn set_chip_rate(ctx: Context<SetChipRate>, chip_rate: u64) -> Result<()> {
+        require!(chip_rate > 0, OxudeError::InvalidLimit);
+        require!(chip_rate <= MAX_CHIP_RATE, OxudeError::RateCeiling);
+        let slot = Clock::get()?.slot;
+        let config = &mut ctx.accounts.config;
+        require!(rate_interval_passed(config.chip_rate_slot, slot), OxudeError::RateTooSoon);
+        require!(rate_within_band(config.chip_rate, chip_rate), OxudeError::RateMoveTooBig);
+        let previous = config.chip_rate;
+        config.max_settlement = config
+            .max_settlement
+            .checked_mul(chip_rate)
+            .and_then(|scaled| scaled.checked_div(previous))
+            .ok_or(OxudeError::RateOverflow)?;
+        config.chip_rate = chip_rate;
+        config.chip_rate_slot = slot;
+        emit!(ChipRateChanged { previous, chip_rate, max_settlement: config.max_settlement });
         Ok(())
     }
 
@@ -396,6 +447,22 @@ pub fn outflow_cap(vault: u64, chip_rate: u64) -> u64 {
     OUTFLOW_FLOOR_CHIPS.saturating_mul(chip_rate).max(vault / 4)
 }
 
+/// Whether a new rate is within half of the one in place, either way. A token
+/// that doubles or halves in a week moves the chip rate by half, and the rest
+/// is caught up the week after.
+pub fn rate_within_band(previous: u64, next: u64) -> bool {
+    match (next.checked_mul(2), previous.checked_mul(3)) {
+        (Some(twice), Some(thrice)) => twice >= previous && twice <= thrice,
+        _ => false,
+    }
+}
+
+/// Whether the rate has stood long enough to move again. A rate that has never
+/// moved may move at once.
+pub fn rate_interval_passed(last_slot: u64, slot: u64) -> bool {
+    last_slot == 0 || slot >= last_slot.saturating_add(MIN_RATE_INTERVAL_SLOTS)
+}
+
 /// An amount in chips as base units of the stake token, at the season's rate.
 /// Every chip-denominated limit in this program goes through here, so none of
 /// them is a base-unit number frozen at one season's prices.
@@ -426,6 +493,8 @@ pub struct Config {
     /// Base units in one chip, for this season. Every chip-denominated limit
     /// here is converted through it.
     pub chip_rate: u64,
+    /// The slot the rate last moved at; 0 until it first does.
+    pub chip_rate_slot: u64,
     pub bump: u8,
 }
 
@@ -486,6 +555,14 @@ pub struct Outflow {
 
 #[derive(Accounts)]
 pub struct SetSettler<'info> {
+    /// The admin recorded on the config, and nobody else.
+    pub admin: Signer<'info>,
+    #[account(mut, seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
+    pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
+pub struct SetChipRate<'info> {
     /// The admin recorded on the config, and nobody else.
     pub admin: Signer<'info>,
     #[account(mut, seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
@@ -725,6 +802,14 @@ pub struct RentPaid {
 }
 
 #[event]
+pub struct ChipRateChanged {
+    pub previous: u64,
+    pub chip_rate: u64,
+    /// Rescaled with the rate, so it still means the same number of chips.
+    pub max_settlement: u64,
+}
+
+#[event]
 pub struct RentChanged {
     pub previous: u64,
     pub rent: u64,
@@ -776,6 +861,12 @@ pub enum OxudeError {
     WrongStakeDecimals,
     #[msg("A chip limit does not fit in base units at this rate")]
     RateOverflow,
+    #[msg("One chip cannot cost more than the ceiling on tokens per chip")]
+    RateCeiling,
+    #[msg("The chip rate cannot move by more than half in one step")]
+    RateMoveTooBig,
+    #[msg("The chip rate has not stood long enough to move again")]
+    RateTooSoon,
     #[msg("The vault doesn't match the ledger: a settlement is still in flight")]
     LedgerMismatch,
     #[msg("A withdrawal must leave the vault empty or with at least the minimum stake")]
@@ -833,6 +924,37 @@ mod tests {
         assert_eq!(in_base_units(MIN_STAKE_CHIPS, CHIP).unwrap(), 10_000_000);
         // A rate that would make a limit wrap is an error, never a small number.
         assert!(in_base_units(MAX_SETTLEMENT_CEILING_CHIPS, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn a_rate_may_move_by_half_either_way_and_no_further() {
+        // Exactly half and exactly half again as much are both allowed.
+        assert!(rate_within_band(1_000, 500));
+        assert!(rate_within_band(1_000, 1_500));
+        assert!(rate_within_band(1_000, 1_000));
+        // A hair outside either edge is not.
+        assert!(!rate_within_band(1_000, 499));
+        assert!(!rate_within_band(1_000, 1_501));
+        // Zero is never a rate, and nothing wraps at the top of the range.
+        assert!(!rate_within_band(1_000, 0));
+        assert!(!rate_within_band(u64::MAX, u64::MAX));
+    }
+
+    #[test]
+    fn a_rate_that_has_moved_must_stand_for_six_days_of_slots() {
+        // Never moved: the first change need not wait.
+        assert!(rate_interval_passed(0, 0));
+        assert!(rate_interval_passed(0, 1));
+        // Moved: not before the interval is out, and not a slot early.
+        assert!(!rate_interval_passed(100, 100));
+        assert!(!rate_interval_passed(100, 100 + MIN_RATE_INTERVAL_SLOTS - 1));
+        assert!(rate_interval_passed(100, 100 + MIN_RATE_INTERVAL_SLOTS));
+        // Six days of slots is inside a seven-day season.
+        assert!(MIN_RATE_INTERVAL_SLOTS < 7 * 24 * 60 * 60 * 1_000 / 400);
+        // Nothing wraps at the top of the range: the interval saturates rather
+        // than rolling over into letting a change through early.
+        assert!(!rate_interval_passed(u64::MAX, u64::MAX - 1));
+        assert!(!rate_interval_passed(u64::MAX - MIN_RATE_INTERVAL_SLOTS + 1, 0));
     }
 
     #[test]

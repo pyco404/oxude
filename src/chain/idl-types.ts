@@ -554,6 +554,72 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "setChipRate",
+      "docs": [
+        "Sets the season's rate: how many base units one chip is worth.",
+        "",
+        "The admin supplies a number computed off chain from a published",
+        "time-weighted average price, and the program holds it to three bounds it",
+        "can check for itself: it may not move by more than half either way, it",
+        "may not exceed `MAX_CHIP_RATE`, and it may not move again for",
+        "`MIN_RATE_INTERVAL_SLOTS`. Those bound what a wrong or dishonest reading",
+        "can do; they do not make one acceptable. An on-chain oracle can take the",
+        "admin's place later without changing any of the three.",
+        "",
+        "`max_settlement` is a chip figure held in base units, so it is rescaled",
+        "here rather than left to mean a different number of chips than it did",
+        "yesterday - which also means a falling rate can never strand it above",
+        "the ceiling and make the next change impossible."
+      ],
+      "discriminator": [
+        118,
+        150,
+        126,
+        120,
+        34,
+        136,
+        51,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "chipRate",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "setMaxSettlement",
       "docs": [
         "Raises or lowers the most a single settlement can move. The admin",
@@ -1177,6 +1243,19 @@ export type OxudeSettlement = {
   ],
   "events": [
     {
+      "name": "chipRateChanged",
+      "discriminator": [
+        10,
+        73,
+        213,
+        147,
+        97,
+        222,
+        148,
+        129
+      ]
+    },
+    {
       "name": "deposited",
       "discriminator": [
         111,
@@ -1359,26 +1438,41 @@ export type OxudeSettlement = {
     },
     {
       "code": 6015,
+      "name": "rateCeiling",
+      "msg": "One chip cannot cost more than the ceiling on tokens per chip"
+    },
+    {
+      "code": 6016,
+      "name": "rateMoveTooBig",
+      "msg": "The chip rate cannot move by more than half in one step"
+    },
+    {
+      "code": 6017,
+      "name": "rateTooSoon",
+      "msg": "The chip rate has not stood long enough to move again"
+    },
+    {
+      "code": 6018,
       "name": "ledgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6016,
+      "code": 6019,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6017,
+      "code": 6020,
       "name": "agentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6018,
+      "code": 6021,
       "name": "outflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6019,
+      "code": 6022,
       "name": "mintableStakeToken",
       "msg": "The stake token still has a mint authority: its supply is not fixed"
     }
@@ -1408,6 +1502,29 @@ export type OxudeSettlement = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "chipRateChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "u64"
+          },
+          {
+            "name": "chipRate",
+            "type": "u64"
+          },
+          {
+            "name": "maxSettlement",
+            "docs": [
+              "Rescaled with the rate, so it still means the same number of chips."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1451,6 +1568,13 @@ export type OxudeSettlement = {
             "docs": [
               "Base units in one chip, for this season. Every chip-denominated limit",
               "here is converted through it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "chipRateSlot",
+            "docs": [
+              "The slot the rate last moved at; 0 until it first does."
             ],
             "type": "u64"
           },
