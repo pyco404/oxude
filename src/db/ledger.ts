@@ -37,7 +37,7 @@ export async function record(db: Writable, movements: Movement[]): Promise<void>
 
 export async function balanceOf(db: Writable, agentId: string): Promise<number> {
   const [row] = await db
-    .select({ balance: sql<number>`coalesce(sum(${ledger.amount}), 0)::int` })
+    .select({ balance: sql<number>`coalesce(sum(${ledger.amount}), 0)::bigint` })
     .from(ledger)
     .where(eq(ledger.agentId, agentId));
   return Number(row?.balance ?? 0);
@@ -46,7 +46,7 @@ export async function balanceOf(db: Writable, agentId: string): Promise<number> 
 export async function balancesOf(db: Writable, agentIds: string[]): Promise<Map<string, number>> {
   if (agentIds.length === 0) return new Map();
   const rows = await db
-    .select({ agentId: ledger.agentId, balance: sql<number>`coalesce(sum(${ledger.amount}), 0)::int` })
+    .select({ agentId: ledger.agentId, balance: sql<number>`coalesce(sum(${ledger.amount}), 0)::bigint` })
     .from(ledger)
     .where(inArray(ledger.agentId, agentIds))
     .groupBy(ledger.agentId);

@@ -5,11 +5,29 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { Pool } from "pg";
+import pg, { Pool } from "pg";
 import * as schema from "./schema.js";
 
 /** Either driver, through the query builder they share. */
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
+
+/**
+ * Read a 64-bit integer as a JavaScript number, in both drivers.
+ *
+ * PGlite already does; node-postgres hands back a string, because an int8 can
+ * hold more than a JavaScript number can. That difference is invisible through
+ * a typed column, which drizzle coerces either way, but not through a raw
+ * `sum(...)::bigint` - and since every test runs on PGlite, a balance that came
+ * back as "900000000" in production would never fail here. So the two are made
+ * to agree, and anything too large to be exact throws rather than quietly
+ * losing its last digits. Nothing in this schema comes close: the whole stake
+ * supply is 1e15 base units against a safe integer of about 9e15.
+ */
+pg.types.setTypeParser(pg.types.builtins.INT8, (value: string) => {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) throw new Error(`${value} is too large to read as a number without losing precision`);
+  return n;
+});
 
 /**
  * A real Postgres when DATABASE_URL is set (docker-compose provides one),

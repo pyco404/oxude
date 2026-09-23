@@ -449,7 +449,7 @@ export async function playableBands(
   // Joined rather than correlated: a subquery grouped by agent is the pattern
   // the rest of this file uses, and it is the one that actually correlates.
   const balances = db
-    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
+    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::bigint`.as("balance") })
     .from(ledger)
     .groupBy(ledger.agentId)
     .as("balances");
@@ -518,7 +518,7 @@ async function recentOpponents(db: Db, agentId: string, limit: number): Promise<
  * is the situation this is here to avoid rather than a reason to try again.
  */
 const committedOutflow = (agentId: unknown) => sql<number>`coalesce((
-  select sum(${chainOps.amount})::int from ${chainOps}
+  select sum(${chainOps.amount})::bigint from ${chainOps}
   where ${chainOps.kind} = 'settle'
     and ${chainOps.fromAgent} = ${agentId}
     and ${chainOps.status} <> 'failed'
@@ -542,7 +542,7 @@ const committedOutflow = (agentId: unknown) => sql<number>`coalesce((
  */
 export async function hasOutflowRoom(db: Db, agentId: string, worstMatch: number): Promise<boolean> {
   const [row] = await db
-    .select({ balance: sql<number>`coalesce(sum(${ledger.amount})::int, 0)`, spent: committedOutflow(agentId) })
+    .select({ balance: sql<number>`coalesce(sum(${ledger.amount})::bigint, 0)`, spent: committedOutflow(agentId) })
     .from(ledger)
     .where(eq(ledger.agentId, agentId));
   const balance = Number(row?.balance ?? 0);
@@ -563,7 +563,7 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   // Paired on true rating: the only signal here that is not noise. No recency
   // gate, so a cold roster can bootstrap.
   const solvent = db
-    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
+    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::bigint`.as("balance") })
     .from(ledger)
     .groupBy(ledger.agentId)
     .having(sql`sum(${ledger.amount}) >= ${bandByName(me.band).worstMatch}`)
@@ -685,7 +685,7 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
   // winnings against the house are still there and simply do not count.
   const netPerMatch = sql<number>`case when ${ratings.rankedMatches} = 0 then 0
     else ${ratings.rankedNet}::double precision / ${ratings.rankedMatches} end`;
-  const balance = sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
+  const balance = sql<number>`coalesce((select sum(${ledger.amount})::bigint from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
   const rows = db
     .select({
       agentId: agents.id,
@@ -816,7 +816,7 @@ const publicAgentColumns = {
   rankedNet: ratings.rankedNet,
   recentForm: ratings.rollingNet50,
   band: agents.band,
-  balance: sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
+  balance: sql<number>`coalesce((select sum(${ledger.amount})::bigint from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
   retired: sql<boolean>`${agents.retiredAt} is not null`,
   /** A house agent: unowned, seeded so a first player has someone to meet. */
   house: sql<boolean>`${agents.ownerId} is null`,
@@ -866,7 +866,7 @@ export async function ownerAgent(db: Db, agentId: string, ownerId: string | null
 export async function roster(db: Db, options: { band?: BandName; limit?: number } = {}) {
   const inBand = options.band === undefined ? sql`true` : eq(agents.band, options.band);
 
-  const balance = sql<number>`coalesce((select sum(${ledger.amount})::int from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
+  const balance = sql<number>`coalesce((select sum(${ledger.amount})::bigint from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
   return db
     .select({
       agentId: agents.id,

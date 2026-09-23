@@ -27,7 +27,7 @@ export async function pickHousePair(
 ): Promise<[string, string] | null> {
   // Joined rather than correlated, as in playableBands.
   const balances = db
-    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::int`.as("balance") })
+    .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::bigint`.as("balance") })
     .from(ledger)
     .groupBy(ledger.agentId)
     .as("balances");

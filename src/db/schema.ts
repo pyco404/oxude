@@ -390,8 +390,13 @@ export const ledger = pgTable(
     agentId: uuid("agent_id")
       .notNull()
       .references(() => agents.id),
-    /** Signed: positive is money in. */
-    amount: integer("amount").notNull(),
+    /**
+     * Signed base units of the agent's stake token; positive is money in.
+     * Never chips - see src/chips.ts for why no chip figure is ever stored.
+     * Wide because six decimals put a 900-chip balance at 9e8, and a 32-bit
+     * column tops out at about 2,147 chips.
+     */
+    amount: bigint("amount", { mode: "number" }).notNull(),
     reason: text("reason").$type<LedgerReason>().notNull(),
     /** Set for settlements. */
     matchId: uuid("match_id").references(() => matches.id),
@@ -477,7 +482,8 @@ export const chainOps = pgTable(
     matchId: uuid("match_id").references(() => matches.id),
     fromAgent: uuid("from_agent").references(() => agents.id),
     toAgent: uuid("to_agent").references(() => agents.id),
-    amount: integer("amount").notNull(),
+    /** Base units, as the program takes them. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
     /** open_vault (and, historically, register_owner): the owner's wallet; null for a house agent. */
     owner: text("owner"),
     /** open_vault: the salt that, hashed with the owner, gives the agent's id (src/agent-id.ts). */
@@ -508,9 +514,10 @@ export const withdrawals = pgTable(
       .notNull()
       .references(() => agents.id),
     ownerId: text("owner_id").notNull(),
-    amount: integer("amount").notNull(),
-    /** What the vault holds afterwards; the program checks this against the vault. */
-    remaining: integer("remaining").notNull(),
+    /** Base units out of the vault. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    /** Base units the vault holds afterwards; the program checks this against the vault. */
+    remaining: bigint("remaining", { mode: "number" }).notNull(),
     /** Taking the lot retires the agent. */
     retire: boolean("retire").notNull(),
     status: text("status").$type<WithdrawalStatus>().notNull().default("prepared"),
