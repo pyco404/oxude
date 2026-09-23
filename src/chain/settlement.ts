@@ -30,6 +30,15 @@ import type { OxudeSettlement } from "./idl-types.js";
 
 export const PROGRAM_ID = new PublicKey((idl as { address: string }).address);
 
+/**
+ * The stake token's decimals, as the program insists on them. Every amount
+ * crossing this client is in base units - never chips - so a caller that has
+ * chips converts first, at the season's rate.
+ */
+export const STAKE_DECIMALS = 6;
+/** Base units in one chip while the rate is fixed at one chip to one token. */
+export const DEVNET_CHIP_RATE = 10 ** STAKE_DECIMALS;
+
 export const pdas = {
   config: () => PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID)[0],
   vault: (agentId: string) =>
@@ -80,9 +89,9 @@ export class ChainClient {
    * One-time: the config, pointed at the stake token. Signed by the admin,
    * naming the settler. The program refuses a mint that can still be minted.
    */
-  async initialize(settler: PublicKey, maxSettlement: number, rent: number): Promise<string> {
+  async initialize(settler: PublicKey, maxSettlement: number, rent: number, chipRate: number): Promise<string> {
     return this.program.methods
-      .initialize(settler, new BN(maxSettlement), new BN(rent))
+      .initialize(settler, new BN(maxSettlement), new BN(rent), new BN(chipRate))
       .accountsPartial({
         admin: this.signer.publicKey,
         config: pdas.config(),

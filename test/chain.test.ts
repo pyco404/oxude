@@ -16,7 +16,7 @@ import {
   transfer,
 } from "@solana/spl-token";
 import BN from "bn.js";
-import { ChainClient, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
+import { ChainClient, DEVNET_CHIP_RATE, PROGRAM_ID, pdas, STAKE_DECIMALS } from "../src/chain/settlement.js";
 import { uuidBytes } from "../src/chain/common.js";
 import { agentIdFor, newAgentId } from "../src/agent-id.js";
 import { EventParser } from "@coral-xyz/anchor";
@@ -37,12 +37,28 @@ let chain: ChainClient;
 let stakeMint: PublicKey;
 /** Holds the whole supply, and is where every vault in this file is funded from. */
 let treasury: PublicKey;
-const MAX = 60;
+/**
+ * What initialize said to the stake tokens it should refuse. Captured in
+ * beforeAll rather than asserted in a test of its own, because the config is a
+ * singleton PDA: after the first initialize every later one fails on the
+ * account already existing, whatever the mint is, which would make the
+ * assertions below pass without ever reaching the checks they are about.
+ */
+let initRefusals: { mintable: string; decimals: string };
+/**
+ * Every figure in this file is written as chips times CHIP, because that is how
+ * the product thinks and how the program's own limits are stated. The chain
+ * only ever sees the product: base units, six decimals. On devnet the rate is
+ * fixed at one chip to one whole token.
+ */
+const CHIP = DEVNET_CHIP_RATE;
+/** Band C's worst match, which is what max_settlement is set to. */
+const MAX = 60 * CHIP;
 /** What a rental costs, burned. */
-const RENT = 200;
-/** Must match the program's constants. */
-const OUTFLOW_FLOOR = 120;
-const MAX_SETTLEMENT_CEILING = 900;
+const RENT = 200 * CHIP;
+/** Must match the program's constants, converted at the rate. */
+const OUTFLOW_FLOOR = 120 * CHIP;
+const MAX_SETTLEMENT_CEILING = 900 * CHIP;
 /** What one vault may pay out in a window, measured on what it holds. */
 const outflowCap = (vault: number) => Math.max(OUTFLOW_FLOOR, Math.floor(vault / 4));
 
@@ -70,6 +86,16 @@ async function playerVault(amount: number, owner: Keypair = Keypair.generate()) 
   await chain.openVault({ agentId: id, owner: owner.publicKey.toBase58(), salt });
   await fund(id, amount);
   return { agent: id, owner };
+}
+
+/** The error a call failed with, as text. Empty if it unexpectedly succeeded. */
+async function refusal(call: () => Promise<unknown>): Promise<string> {
+  try {
+    await call();
+    return "";
+  } catch (error) {
+    return String(error);
+  }
 }
 
 async function airdrop(to: Keypair, sol: number) {
@@ -107,12 +133,27 @@ describe.skipIf(!RUN)("settlement program", () => {
     // The stake token, made the way a pump.fun token is: a mint with an
     // authority, the whole supply issued once, and then the authority given up
     // for good. After the last step nobody can mint, this program included.
-    stakeMint = await createMint(connection, admin, admin.publicKey, null, 0);
+    stakeMint = await createMint(connection, admin, admin.publicKey, null, STAKE_DECIMALS);
     treasury = (await getOrCreateAssociatedTokenAccount(connection, admin, stakeMint, admin.publicKey)).address;
-    await mintTo(connection, admin, stakeMint, treasury, admin, 1_000_000_000);
+    // A billion tokens, as $OXUDE has: 1e15 base units, well inside a u64 and
+    // inside a JavaScript safe integer too.
+    await mintTo(connection, admin, stakeMint, treasury, admin, 1_000_000_000 * CHIP);
     await setAuthority(connection, admin, stakeMint, admin, AuthorityType.MintTokens, null);
 
-    await new ChainClient(connection, admin, stakeMint).initialize(settler.publicKey, MAX, RENT);
+    // Before the real one, the two the program must turn away.
+    const mintable = await createMint(connection, admin, admin.publicKey, null, STAKE_DECIMALS);
+    const wrongScale = await createMint(connection, admin, admin.publicKey, null, 0);
+    await setAuthority(connection, admin, wrongScale, admin, AuthorityType.MintTokens, null);
+    initRefusals = {
+      mintable: await refusal(() =>
+        new ChainClient(connection, admin, mintable).initialize(settler.publicKey, MAX, RENT, CHIP),
+      ),
+      decimals: await refusal(() =>
+        new ChainClient(connection, admin, wrongScale).initialize(settler.publicKey, MAX, RENT, CHIP),
+      ),
+    };
+
+    await new ChainClient(connection, admin, stakeMint).initialize(settler.publicKey, MAX, RENT, CHIP);
     chain = new ChainClient(connection, settler, stakeMint);
   }, 60_000);
 
@@ -152,12 +193,12 @@ describe.skipIf(!RUN)("settlement program", () => {
     }
 
     it("burns the fee out of the renter's own tokens, and takes it off the supply", async () => {
-      const who = await renter(500);
+      const who = await renter(500 * CHIP);
       const supply = Number((await getMint(connection, stakeMint)).supply);
       const rentalId = randomUUID();
 
       const signature = await payRent(who, rentalId);
-      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(300);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(300 * CHIP);
       // Burned, not collected: the supply itself falls by the fee.
       expect(Number((await getMint(connection, stakeMint)).supply)).toBe(supply - RENT);
       expect(await chain.isRentPaid(rentalId)).toBe(true);
@@ -171,29 +212,29 @@ describe.skipIf(!RUN)("settlement program", () => {
     });
 
     it("charges the price the config carries, and nothing else", async () => {
-      const who = await renter(500);
+      const who = await renter(500 * CHIP);
       // Under the price, and over it: both refused. The amount is in the
       // transaction the renter signs, so a price that moved while they were
       // signing fails here instead of quietly costing them more.
       await expect(payRent(who, randomUUID(), RENT - 1)).rejects.toThrow(/WrongRent/);
       await expect(payRent(who, randomUUID(), RENT + 1)).rejects.toThrow(/WrongRent/);
-      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(500);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(500 * CHIP);
     });
 
     it("pays for a rental once", async () => {
-      const who = await renter(500);
+      const who = await renter(500 * CHIP);
       const rentalId = randomUUID();
       await payRent(who, rentalId);
       await expect(payRent(who, rentalId)).rejects.toThrow(/already in use/);
-      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(300);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(300 * CHIP);
     });
 
     it("needs the renter's own signature and the settler's", async () => {
-      const who = await renter(500);
+      const who = await renter(500 * CHIP);
       const stranger = Keypair.generate();
       // Somebody else signing in the renter's place: the burn has no authority.
       await expect(payRent(who, randomUUID(), RENT, stranger)).rejects.toThrow();
-      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(500);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(500 * CHIP);
     });
 
     it("lets only the admin change the price", async () => {
@@ -206,10 +247,10 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect((await chain.config()).rent.toNumber()).toBe(RENT * 2);
       // The old price now fails, which is the protection: nobody is charged a
       // price they did not see.
-      const who = await renter(500);
+      const who = await renter(500 * CHIP);
       await expect(payRent(who, randomUUID(), RENT)).rejects.toThrow(/WrongRent/);
       await payRent(who, randomUUID(), RENT * 2);
-      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(100);
+      expect(await chain.tokenBalance(who.publicKey.toBase58())).toBe(100 * CHIP);
 
       // Put it back: the rest of this file assumes the price it was opened with.
       await asAdmin.setRent(RENT);
@@ -220,27 +261,27 @@ describe.skipIf(!RUN)("settlement program", () => {
   it("lets only the config's admin change the per-match limit", async () => {
     const asAdmin = new ChainClient(connection, admin, stakeMint);
     // The settler cannot: this limit exists to bound the settler's own reach.
-    await expect(chain.setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
+    await expect(chain.setMaxSettlement(90 * CHIP)).rejects.toThrow(/NotAdmin/);
     // Nor can a stranger paying their own fees.
     const stranger = Keypair.generate();
     await airdrop(stranger, 1);
-    await expect(new ChainClient(connection, stranger, stakeMint).setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
+    await expect(new ChainClient(connection, stranger, stakeMint).setMaxSettlement(90 * CHIP)).rejects.toThrow(/NotAdmin/);
     expect((await chain.config()).maxSettlement.toNumber()).toBe(MAX);
 
     // The admin can, and it takes effect at once: 90 is band C's max exposure,
     // which is the reason this instruction exists.
-    await asAdmin.setMaxSettlement(90);
-    expect((await chain.config()).maxSettlement.toNumber()).toBe(90);
-    const payer = await houseVault(180);
-    const payee = await houseVault(10);
-    await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 90 });
-    expect(await chain.vaultBalance(payer)).toBe(90);
+    await asAdmin.setMaxSettlement(90 * CHIP);
+    expect((await chain.config()).maxSettlement.toNumber()).toBe(90 * CHIP);
+    const payer = await houseVault(180 * CHIP);
+    const payee = await houseVault(10 * CHIP);
+    await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 90 * CHIP });
+    expect(await chain.vaultBalance(payer)).toBe(90 * CHIP);
 
     // Zero, and anything above a full seed, are refused: a stolen admin key
     // cannot switch the per-settlement guard off.
     await expect(asAdmin.setMaxSettlement(0)).rejects.toThrow(/InvalidLimit/);
     await expect(asAdmin.setMaxSettlement(MAX_SETTLEMENT_CEILING + 1)).rejects.toThrow(/InvalidLimit/);
-    expect((await chain.config()).maxSettlement.toNumber()).toBe(90);
+    expect((await chain.config()).maxSettlement.toNumber()).toBe(90 * CHIP);
 
     // Put it back: the rest of this file assumes the limit it was opened with.
     await asAdmin.setMaxSettlement(MAX);
@@ -276,8 +317,8 @@ describe.skipIf(!RUN)("settlement program", () => {
     const asFresh = new ChainClient(connection, fresh, stakeMint);
     const taken = newAgentId(null);
     await asFresh.openVault({ agentId: taken.id, owner: null, salt: taken.salt });
-    await fund(taken.id, 100);
-    expect(await chain.vaultBalance(taken.id)).toBe(100);
+    await fund(taken.id, 100 * CHIP);
+    expect(await chain.vaultBalance(taken.id)).toBe(100 * CHIP);
 
     // Put it back, so every later test still signs with the original settler.
     await asAdmin.setSettler(settler.publicKey);
@@ -297,40 +338,40 @@ describe.skipIf(!RUN)("settlement program", () => {
     await chain.openVault({ agentId: id, owner: null, salt });
     const before = await chain.tokenBalance(admin.publicKey.toBase58());
 
-    const signature = await new ChainClient(connection, admin, stakeMint).deposit({ agentId: id, amount: 300 });
-    expect(await chain.vaultBalance(id)).toBe(300);
-    expect(await chain.tokenBalance(admin.publicKey.toBase58())).toBe(before - 300);
+    const signature = await new ChainClient(connection, admin, stakeMint).deposit({ agentId: id, amount: 300 * CHIP });
+    expect(await chain.vaultBalance(id)).toBe(300 * CHIP);
+    expect(await chain.tokenBalance(admin.publicKey.toBase58())).toBe(before - 300 * CHIP);
 
     const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
     const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
     const deposited = events.find((e) => e.name === "deposited")!;
     expect(Array.from(deposited.data.agentId as number[])).toEqual(uuidBytes(id));
     expect((deposited.data.depositor as { toBase58(): string }).toBase58()).toBe(admin.publicKey.toBase58());
-    expect(Number(deposited.data.amount)).toBe(300);
+    expect(Number(deposited.data.amount)).toBe(300 * CHIP);
 
     // Topping up is the same instruction again: this is what revives an agent
     // that played itself down to nothing.
-    await fund(id, 50);
-    expect(await chain.vaultBalance(id)).toBe(350);
+    await fund(id, 50 * CHIP);
+    expect(await chain.vaultBalance(id)).toBe(350 * CHIP);
   });
 
   it("takes a deposit from anyone, but only out of their own account", async () => {
-    const { agent } = await playerVault(100);
+    const { agent } = await playerVault(100 * CHIP);
     // A stranger may pay into someone else's agent. The program has no reason
     // to stop it - a plain transfer would reach the vault anyway - and it costs
     // the stranger, not the agent.
     const stranger = Keypair.generate();
     await airdrop(stranger, 1);
     const strangerAta = (await getOrCreateAssociatedTokenAccount(connection, admin, stakeMint, stranger.publicKey)).address;
-    await transfer(connection, admin, treasury, strangerAta, admin, 40);
-    await new ChainClient(connection, stranger, stakeMint).deposit({ agentId: agent, amount: 40 });
-    expect(await chain.vaultBalance(agent)).toBe(140);
+    await transfer(connection, admin, treasury, strangerAta, admin, 40 * CHIP);
+    await new ChainClient(connection, stranger, stakeMint).deposit({ agentId: agent, amount: 40 * CHIP });
+    expect(await chain.vaultBalance(agent)).toBe(140 * CHIP);
 
     // But they cannot spend someone else's account by naming it as the source.
     // The treasury holds the supply, so this is the raid worth refusing.
     await expect(
       chain.program.methods
-        .deposit(uuidBytes(agent), new BN(10))
+        .deposit(uuidBytes(agent), new BN(10 * CHIP))
         .accountsPartial({
           depositor: stranger.publicKey,
           config: pdas.config(),
@@ -341,26 +382,24 @@ describe.skipIf(!RUN)("settlement program", () => {
         .signers([stranger])
         .rpc(),
     ).rejects.toThrow(/NotDepositorsAccount/);
-    expect(await chain.vaultBalance(agent)).toBe(140);
+    expect(await chain.vaultBalance(agent)).toBe(140 * CHIP);
   });
 
   it("refuses a deposit of nothing", async () => {
-    const { agent } = await playerVault(50);
+    const { agent } = await playerVault(50 * CHIP);
     await expect(
       new ChainClient(connection, admin, stakeMint).deposit({ agentId: agent, amount: 0 }),
     ).rejects.toThrow(/ZeroAmount/);
-    expect(await chain.vaultBalance(agent)).toBe(50);
+    expect(await chain.vaultBalance(agent)).toBe(50 * CHIP);
   });
 
-  it("refuses a stake token that can still be minted", async () => {
+  it("refuses a stake token that can still be minted, or that is not six decimals", () => {
     // The supply guarantee, checked rather than assumed: a mint that still has
     // an authority is refused, so no deployment can rest on an inflatable token.
-    const inflatable = await createMint(connection, admin, admin.publicKey, null, 0);
-    const payer = Keypair.generate();
-    await airdrop(payer, 2);
-    await expect(
-      new ChainClient(connection, payer, inflatable).initialize(settler.publicKey, MAX, RENT),
-    ).rejects.toThrow(/MintableStakeToken|already in use/);
+    expect(initRefusals.mintable).toMatch(/MintableStakeToken/);
+    // And a token of a different scale, where every figure the product quotes
+    // would be out by a factor of a thousand.
+    expect(initRefusals.decimals).toMatch(/WrongStakeDecimals/);
   });
 
   it("opens a vault only under the id its owner and salt hash to", async () => {
@@ -383,41 +422,41 @@ describe.skipIf(!RUN)("settlement program", () => {
 
   it("caps what one vault can pay out through settlements in a window", async () => {
     // A vault this size is governed by the floor: a quarter of 180 is less.
-    const payer = await houseVault(180);
-    const payee = await houseVault(10);
-    const bystander = await houseVault(180);
+    const payer = await houseVault(180 * CHIP);
+    const payee = await houseVault(10 * CHIP);
+    const bystander = await houseVault(180 * CHIP);
     let paid = 0;
     while (paid + MAX <= OUTFLOW_FLOOR) {
       await chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: MAX });
       paid += MAX;
     }
-    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_FLOOR);
+    expect(await chain.vaultBalance(payer)).toBe(180 * CHIP - OUTFLOW_FLOOR);
     // Its window is spent, though the vault still holds enough to pay.
-    await expect(chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 1 })).rejects.toThrow(
+    await expect(chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: 1 * CHIP })).rejects.toThrow(
       /OutflowLimit/,
     );
-    expect(await chain.vaultBalance(payer)).toBe(180 - OUTFLOW_FLOOR);
+    expect(await chain.vaultBalance(payer)).toBe(180 * CHIP - OUTFLOW_FLOOR);
     // The limit is per vault: everyone else carries on settling.
     await chain.settle({ matchId: randomUUID(), fromAgent: bystander, toAgent: payee, amount: MAX });
-    expect(await chain.vaultBalance(bystander)).toBe(120);
+    expect(await chain.vaultBalance(bystander)).toBe(120 * CHIP);
     // And it cannot be dodged by paying a different vault.
-    const elsewhere = await houseVault(10);
+    const elsewhere = await houseVault(10 * CHIP);
     await expect(
-      chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: elsewhere, amount: 1 }),
+      chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: elsewhere, amount: 1 * CHIP }),
     ).rejects.toThrow(/OutflowLimit/);
   });
 
   it("lets a large vault pay out more than the floor, in proportion to what it holds", async () => {
     const payer = await houseVault(MAX_SETTLEMENT_CEILING);
-    const payee = await houseVault(10);
+    const payee = await houseVault(10 * CHIP);
     // The cap is read from the balance before each settlement leaves, so it
     // falls as the vault pays: at 900 the first window allows three matches at
     // MAX (caps of 225, 210, 195 against 60, 120, 180 spent), and the fourth
     // asks 240 of a cap that has fallen to 180.
     const schedule = [
-      { cap: outflowCap(900), after: 840 },
-      { cap: outflowCap(840), after: 780 },
-      { cap: outflowCap(780), after: 720 },
+      { cap: outflowCap(900 * CHIP), after: 840 * CHIP },
+      { cap: outflowCap(840 * CHIP), after: 780 * CHIP },
+      { cap: outflowCap(780 * CHIP), after: 720 * CHIP },
     ];
     let paid = 0;
     for (const step of schedule) {
@@ -427,62 +466,62 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(await chain.vaultBalance(payer)).toBe(step.after);
     }
     // More than a flat floor would ever have allowed, and still a quarter-ish.
-    expect(paid).toBe(180);
+    expect(paid).toBe(180 * CHIP);
     expect(paid).toBeGreaterThan(OUTFLOW_FLOOR);
-    expect(paid + MAX).toBeGreaterThan(outflowCap(720));
+    expect(paid + MAX).toBeGreaterThan(outflowCap(720 * CHIP));
     await expect(chain.settle({ matchId: randomUUID(), fromAgent: payer, toAgent: payee, amount: MAX })).rejects.toThrow(
       /OutflowLimit/,
     );
-    expect(await chain.vaultBalance(payer)).toBe(720);
+    expect(await chain.vaultBalance(payer)).toBe(720 * CHIP);
   });
 
   it("settles a match between vaults and records it once", async () => {
-    const [a, b] = [await houseVault(180), await houseVault(180)];
+    const [a, b] = [await houseVault(180 * CHIP), await houseVault(180 * CHIP)];
     const match = randomUUID();
 
-    await chain.settle({ matchId: match, fromAgent: a, toAgent: b, amount: 42 });
-    expect(await chain.vaultBalance(a)).toBe(138);
-    expect(await chain.vaultBalance(b)).toBe(222);
+    await chain.settle({ matchId: match, fromAgent: a, toAgent: b, amount: 42 * CHIP });
+    expect(await chain.vaultBalance(a)).toBe(138 * CHIP);
+    expect(await chain.vaultBalance(b)).toBe(222 * CHIP);
     expect(await chain.isSettled(match)).toBe(true);
 
     const record = await chain.program.account.settlement.fetch(pdas.settlement(match));
-    expect(record.amount.toNumber()).toBe(42);
+    expect(record.amount.toNumber()).toBe(42 * CHIP);
 
     // The same match cannot move money twice, even with a different amount.
-    await expect(chain.settle({ matchId: match, fromAgent: a, toAgent: b, amount: 1 })).rejects.toThrow();
-    expect(await chain.vaultBalance(a)).toBe(138);
+    await expect(chain.settle({ matchId: match, fromAgent: a, toAgent: b, amount: 1 * CHIP })).rejects.toThrow();
+    expect(await chain.vaultBalance(a)).toBe(138 * CHIP);
   });
 
   it("refuses more than the per-match limit, even from the settler", async () => {
-    const [a, b] = [await houseVault(180), await houseVault(180)];
+    const [a, b] = [await houseVault(180 * CHIP), await houseVault(180 * CHIP)];
     await expect(chain.settle({ matchId: randomUUID(), fromAgent: a, toAgent: b, amount: MAX + 1 })).rejects.toThrow(
       /OverLimit|per-match limit/,
     );
-    expect(await chain.vaultBalance(a)).toBe(180);
+    expect(await chain.vaultBalance(a)).toBe(180 * CHIP);
   });
 
   it("refuses a vault that cannot cover it, and a self-settlement", async () => {
-    const [poor, rich] = [await houseVault(10), await houseVault(180)];
-    await expect(chain.settle({ matchId: randomUUID(), fromAgent: poor, toAgent: rich, amount: 11 })).rejects.toThrow(
+    const [poor, rich] = [await houseVault(10 * CHIP), await houseVault(180 * CHIP)];
+    await expect(chain.settle({ matchId: randomUUID(), fromAgent: poor, toAgent: rich, amount: 11 * CHIP })).rejects.toThrow(
       /InsufficientVault|cannot cover/,
     );
-    await expect(chain.settle({ matchId: randomUUID(), fromAgent: rich, toAgent: rich, amount: 5 })).rejects.toThrow();
+    await expect(chain.settle({ matchId: randomUUID(), fromAgent: rich, toAgent: rich, amount: 5 * CHIP })).rejects.toThrow();
   });
 
   it("refuses anyone but the settler", async () => {
     const intruder = Keypair.generate();
     await airdrop(intruder, 2);
     const rogue = new ChainClient(connection, intruder, stakeMint);
-    const [a, b] = [await houseVault(180), await houseVault(180)];
+    const [a, b] = [await houseVault(180 * CHIP), await houseVault(180 * CHIP)];
 
     const mine = newAgentId(null);
     await expect(rogue.openVault({ agentId: mine.id, owner: null, salt: mine.salt })).rejects.toThrow(
       /NotSettler|settler/,
     );
-    await expect(rogue.settle({ matchId: randomUUID(), fromAgent: a, toAgent: b, amount: 10 })).rejects.toThrow(
+    await expect(rogue.settle({ matchId: randomUUID(), fromAgent: a, toAgent: b, amount: 10 * CHIP })).rejects.toThrow(
       /NotSettler|settler/,
     );
-    expect(await chain.vaultBalance(a)).toBe(180);
+    expect(await chain.vaultBalance(a)).toBe(180 * CHIP);
   });
 
   // The ledger-to-chain round trip is pending the funding flow. `createAgent`
@@ -515,7 +554,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     }
 
     it("records the owner as the vault opens, and never another", async () => {
-      const { agent, owner } = await ownedVault(50);
+      const { agent, owner } = await ownedVault(50 * CHIP);
       expect(await chain.ownerOf(agent)).toBe(owner.publicKey.toBase58());
       // The record comes with the vault, and a vault opens once: there is no second chance to name an owner.
       const { id, salt } = newAgentId(owner.publicKey.toBase58());
@@ -525,15 +564,15 @@ describe.skipIf(!RUN)("settlement program", () => {
       ).rejects.toThrow();
       expect(await chain.ownerOf(agent)).toBe(owner.publicKey.toBase58());
       // A house vault has no owner, so nothing can ever be withdrawn from it.
-      expect(await chain.ownerOf(await houseVault(10))).toBeNull();
+      expect(await chain.ownerOf(await houseVault(10 * CHIP))).toBeNull();
     });
 
     it("pays the owner, leaves the vault where the ledger says, and emits an event", async () => {
-      const { agent, owner } = await ownedVault(180);
+      const { agent, owner } = await ownedVault(180 * CHIP);
       const id = randomUUID();
-      const { signature } = await withdraw({ agent, owner, amount: 50, remaining: 130, id });
-      expect(await chain.vaultBalance(agent)).toBe(130);
-      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(50);
+      const { signature } = await withdraw({ agent, owner, amount: 50 * CHIP, remaining: 130 * CHIP, id });
+      expect(await chain.vaultBalance(agent)).toBe(130 * CHIP);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(50 * CHIP);
 
       const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
       const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
@@ -541,34 +580,34 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(withdrawn).toBeDefined();
       expect(Array.from(withdrawn.data.withdrawalId as number[])).toEqual(uuidBytes(id));
       expect((withdrawn.data.owner as { toBase58(): string }).toBase58()).toBe(owner.publicKey.toBase58());
-      expect(Number(withdrawn.data.amount)).toBe(50);
-      expect(Number(withdrawn.data.remaining)).toBe(130);
+      expect(Number(withdrawn.data.amount)).toBe(50 * CHIP);
+      expect(Number(withdrawn.data.remaining)).toBe(130 * CHIP);
     });
 
     it("refuses anyone but the recorded owner, even with the settler co-signing", async () => {
-      const { agent } = await ownedVault(100);
+      const { agent } = await ownedVault(100 * CHIP);
       const thief = Keypair.generate();
-      await expect(withdraw({ agent, owner: thief, amount: 40, remaining: 60 })).rejects.toThrow(/Error Code: NotOwner\b/);
-      expect(await chain.vaultBalance(agent)).toBe(100);
+      await expect(withdraw({ agent, owner: thief, amount: 40 * CHIP, remaining: 60 * CHIP })).rejects.toThrow(/Error Code: NotOwner\b/);
+      expect(await chain.vaultBalance(agent)).toBe(100 * CHIP);
     });
 
     it("refuses the owner alone: the settler must co-sign", async () => {
-      const { agent, owner } = await ownedVault(100);
+      const { agent, owner } = await ownedVault(100 * CHIP);
       await airdrop(owner, 1);
       // The owner builds it themselves, as settler and owner both: the program wants the configured settler.
       const asOwner = new ChainClient(connection, owner, stakeMint);
-      await expect(withdraw({ agent, owner, amount: 40, remaining: 60 }, owner, asOwner)).rejects.toThrow(/Error Code: NotSettler/);
-      expect(await chain.vaultBalance(agent)).toBe(100);
+      await expect(withdraw({ agent, owner, amount: 40 * CHIP, remaining: 60 * CHIP }, owner, asOwner)).rejects.toThrow(/Error Code: NotSettler/);
+      expect(await chain.vaultBalance(agent)).toBe(100 * CHIP);
     });
 
     it("refuses to pay into anyone else's token account", async () => {
-      const { agent, owner } = await ownedVault(100);
+      const { agent, owner } = await ownedVault(100 * CHIP);
       const prepared = await chain.prepareWithdrawal({
         withdrawalId: randomUUID(),
         agentId: agent,
         owner: owner.publicKey.toBase58(),
-        amount: 40,
-        remaining: 60,
+        amount: 40 * CHIP,
+        remaining: 60 * CHIP,
       });
       // Swap the destination for another wallet's account, then sign it all again.
       const other = Keypair.generate().publicKey;
@@ -581,42 +620,42 @@ describe.skipIf(!RUN)("settlement program", () => {
       prepared.transaction.signatures = prepared.transaction.signatures.map((s) => ({ ...s, signature: null }));
       prepared.transaction.partialSign(settler, owner);
       await expect(chain.submitWithdrawal(prepared.transaction.serialize(), prepared.lastValidBlockHeight)).rejects.toThrow(/Error Code: NotOwnersAccount/);
-      expect(await chain.vaultBalance(agent)).toBe(100);
+      expect(await chain.vaultBalance(agent)).toBe(100 * CHIP);
     });
 
     it("refuses while the vault disagrees with the ledger: a match is still settling", async () => {
-      const { agent, owner } = await ownedVault(100);
+      const { agent, owner } = await ownedVault(100 * CHIP);
       // The ledger already took a 20-chip loss the chain hasn't settled yet: it thinks 80 remain after 30 out.
-      await expect(withdraw({ agent, owner, amount: 30, remaining: 50 })).rejects.toThrow(/Error Code: LedgerMismatch/);
-      expect(await chain.vaultBalance(agent)).toBe(100);
+      await expect(withdraw({ agent, owner, amount: 30 * CHIP, remaining: 50 * CHIP })).rejects.toThrow(/Error Code: LedgerMismatch/);
+      expect(await chain.vaultBalance(agent)).toBe(100 * CHIP);
     });
 
     it("refuses to leave a vault that can't play: nothing, or at least the minimum stake", async () => {
-      const { agent, owner } = await ownedVault(100);
-      await expect(withdraw({ agent, owner, amount: 95, remaining: 5 })).rejects.toThrow(/Error Code: Unplayable/);
-      expect(await chain.vaultBalance(agent)).toBe(100);
-      await withdraw({ agent, owner, amount: 90, remaining: 10 });
-      expect(await chain.vaultBalance(agent)).toBe(10);
+      const { agent, owner } = await ownedVault(100 * CHIP);
+      await expect(withdraw({ agent, owner, amount: 95 * CHIP, remaining: 5 * CHIP })).rejects.toThrow(/Error Code: Unplayable/);
+      expect(await chain.vaultBalance(agent)).toBe(100 * CHIP);
+      await withdraw({ agent, owner, amount: 90 * CHIP, remaining: 10 * CHIP });
+      expect(await chain.vaultBalance(agent)).toBe(10 * CHIP);
     });
 
     it("takes the lot on a full withdrawal", async () => {
-      const { agent, owner } = await ownedVault(70);
-      await withdraw({ agent, owner, amount: 70, remaining: 0 });
+      const { agent, owner } = await ownedVault(70 * CHIP);
+      await withdraw({ agent, owner, amount: 70 * CHIP, remaining: 0 });
       expect(await chain.vaultBalance(agent)).toBe(0);
-      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(70);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(70 * CHIP);
     });
 
     it("never pays twice: not the same bytes again, not the same withdrawal id again", async () => {
-      const { agent, owner } = await ownedVault(100);
+      const { agent, owner } = await ownedVault(100 * CHIP);
       const id = randomUUID();
-      const { raw } = await withdraw({ agent, owner, amount: 40, remaining: 60, id });
+      const { raw } = await withdraw({ agent, owner, amount: 40 * CHIP, remaining: 60 * CHIP, id });
       // The same signed transaction again: the network knows it, and the vault doesn't move.
       await chain.submitWithdrawal(raw, (await connection.getLatestBlockhash()).lastValidBlockHeight).catch(() => undefined);
-      expect(await chain.vaultBalance(agent)).toBe(60);
-      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(40);
+      expect(await chain.vaultBalance(agent)).toBe(60 * CHIP);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(40 * CHIP);
       // A fresh transaction reusing the withdrawal id: its record already exists.
-      await expect(withdraw({ agent, owner, amount: 40, remaining: 20, id })).rejects.toThrow(/already in use/);
-      expect(await chain.vaultBalance(agent)).toBe(60);
+      await expect(withdraw({ agent, owner, amount: 40 * CHIP, remaining: 20 * CHIP, id })).rejects.toThrow(/already in use/);
+      expect(await chain.vaultBalance(agent)).toBe(60 * CHIP);
       expect(await chain.isWithdrawn(id)).toBe(true);
     });
   });

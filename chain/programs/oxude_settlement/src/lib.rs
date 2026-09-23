@@ -7,8 +7,17 @@
 //!
 //! - only the configured settler key can open vaults or settle, and only the
 //!   admin can point the config at a different one;
+//! Every amount here is in the stake token's base units, six decimals, never in
+//! chips. The game is played in chips and the ledger converts them at the
+//! season's rate, which the config carries as `chip_rate`: the base units in
+//! one chip. The limits below are chip-denominated ideas - band A's worst
+//! match, band C's worst match - so each is written as chips and multiplied by
+//! that rate, rather than frozen as a base-unit number that would mean a
+//! different amount of money every season.
+//!
 //! - a single settlement can never move more than `max_settlement`, which only
-//!   the admin key can change and never above `MAX_SETTLEMENT_CEILING`; and no
+//!   the admin key can change and never above `MAX_SETTLEMENT_CEILING_CHIPS`
+//!   converted at the rate; and no
 //!   vault can pay out more than `outflow_cap` of its own balance through
 //!   settlements in one window of `WINDOW_SLOTS` - so a stolen settler key
 //!   drains slowly enough to be stopped;
@@ -60,17 +69,23 @@ pub const RENTAL_SEED: &[u8] = b"rental";
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
 pub const WINDOW_SLOTS: u64 = 1_500;
-/// The least one vault can pay out through settlements in one window. A small
-/// vault is allowed this much even though a quarter of it is less.
-pub const OUTFLOW_FLOOR: u64 = 120;
-/// The hard ceiling on `max_settlement`, so that even a stolen admin key cannot
-/// turn the per-settlement guard off. Vaults are funded by deposit and have no
-/// ceiling of their own, which is why this one is written out rather than
-/// borrowed from a seed amount that no longer exists.
-pub const MAX_SETTLEMENT_CEILING: u64 = 900;
-/// The smallest stake a match can have. A vault left with less than this
-/// could never play again, so a withdrawal must leave nothing or at least this.
-pub const MIN_STAKE: u64 = 10;
+/// The stake token's decimals. Not needed by any arithmetic here - `chip_rate`
+/// carries the whole conversion - but checked at `initialize` so that a
+/// deployment cannot be pointed at a token of a different scale, where every
+/// figure the product quotes would be out by a factor of a thousand.
+pub const STAKE_DECIMALS: u8 = 6;
+/// The hard ceiling on `max_settlement`, in chips, so that even a stolen admin
+/// key cannot turn the per-settlement guard off. Vaults are funded by deposit
+/// and have no ceiling of their own, which is why this one is written out
+/// rather than borrowed from a seed amount that no longer exists.
+pub const MAX_SETTLEMENT_CEILING_CHIPS: u64 = 900;
+/// The least one vault can pay out through settlements in one window, in chips.
+/// A small vault is allowed this much even though a quarter of it is less.
+pub const OUTFLOW_FLOOR_CHIPS: u64 = 120;
+/// The smallest stake a match can have, in chips: band A's worst match. A vault
+/// left with less than this could never play again, so a withdrawal must leave
+/// nothing or at least this.
+pub const MIN_STAKE_CHIPS: u64 = 10;
 
 #[program]
 pub mod oxude_settlement {
@@ -82,10 +97,18 @@ pub mod oxude_settlement {
     /// its mint authority is already `None`. That is the whole of the supply
     /// guarantee: this program holds no authority to mint, and neither does
     /// anyone else, so the currency cannot be inflated after this call.
-    pub fn initialize(ctx: Context<Initialize>, settler: Pubkey, max_settlement: u64, rent: u64) -> Result<()> {
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        settler: Pubkey,
+        max_settlement: u64,
+        rent: u64,
+        chip_rate: u64,
+    ) -> Result<()> {
+        require!(chip_rate > 0, OxudeError::InvalidLimit);
         require!(max_settlement > 0, OxudeError::InvalidLimit);
-        require!(max_settlement <= MAX_SETTLEMENT_CEILING, OxudeError::InvalidLimit);
+        require!(max_settlement <= in_base_units(MAX_SETTLEMENT_CEILING_CHIPS, chip_rate)?, OxudeError::InvalidLimit);
         require!(rent > 0, OxudeError::InvalidLimit);
+        require!(ctx.accounts.mint.decimals == STAKE_DECIMALS, OxudeError::WrongStakeDecimals);
         require!(ctx.accounts.mint.mint_authority.is_none(), OxudeError::MintableStakeToken);
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
@@ -93,6 +116,7 @@ pub mod oxude_settlement {
         config.mint = ctx.accounts.mint.key();
         config.max_settlement = max_settlement;
         config.rent = rent;
+        config.chip_rate = chip_rate;
         config.bump = ctx.bumps.config;
         Ok(())
     }
@@ -153,11 +177,13 @@ pub mod oxude_settlement {
     /// recorded at initialize is the only key that can call it - not the
     /// settler, whose reach this value is there to limit in the first place.
     /// It exists so a band with bigger stakes can be priced in without another
-    /// program upgrade, and it is bounded by `MAX_SETTLEMENT_CEILING` so that a
-    /// stolen admin key cannot turn the per-settlement guard off altogether.
+    /// program upgrade, and it is bounded by `MAX_SETTLEMENT_CEILING_CHIPS` at
+    /// the season's rate, so that a stolen admin key cannot turn the
+    /// per-settlement guard off altogether.
     pub fn set_max_settlement(ctx: Context<SetMaxSettlement>, max_settlement: u64) -> Result<()> {
         require!(max_settlement > 0, OxudeError::InvalidLimit);
-        require!(max_settlement <= MAX_SETTLEMENT_CEILING, OxudeError::InvalidLimit);
+        let ceiling = in_base_units(MAX_SETTLEMENT_CEILING_CHIPS, ctx.accounts.config.chip_rate)?;
+        require!(max_settlement <= ceiling, OxudeError::InvalidLimit);
         let config = &mut ctx.accounts.config;
         let previous = config.max_settlement;
         config.max_settlement = max_settlement;
@@ -264,7 +290,7 @@ pub mod oxude_settlement {
         let outflow = &mut ctx.accounts.outflow;
         outflow.bump = ctx.bumps.outflow;
         // Measured on what the vault holds now, before this settlement leaves it.
-        let cap = outflow_cap(ctx.accounts.from_vault.amount);
+        let cap = outflow_cap(ctx.accounts.from_vault.amount, ctx.accounts.config.chip_rate);
         (outflow.window_start, outflow.spent) = charge(outflow.window_start, outflow.spent, slot, amount, cap)
             .ok_or(OxudeError::OutflowLimit)?;
 
@@ -310,7 +336,8 @@ pub mod oxude_settlement {
         let held = ctx.accounts.vault.amount;
         require!(held >= amount, OxudeError::InsufficientVault);
         require!(held - amount == remaining, OxudeError::LedgerMismatch);
-        require!(remaining == 0 || remaining >= MIN_STAKE, OxudeError::Unplayable);
+        let min_stake = in_base_units(MIN_STAKE_CHIPS, ctx.accounts.config.chip_rate)?;
+        require!(remaining == 0 || remaining >= min_stake, OxudeError::Unplayable);
 
         let bump = ctx.accounts.config.bump;
         let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[bump]]];
@@ -350,8 +377,8 @@ pub fn agent_id_for(owner: &Pubkey, salt: &[u8; 16]) -> [u8; 16] {
 }
 
 /// The most this vault can pay out through settlements in one window: a quarter
-/// of what it holds, but never less than `OUTFLOW_FLOOR`. Proportional so that
-/// a large vault is not held to a small one's limit.
+/// of what it holds, but never less than `OUTFLOW_FLOOR_CHIPS` at the season's
+/// rate. Proportional so that a large vault is not held to a small one's limit.
 ///
 /// `settle` reads this from the balance before each payment leaves, so the cap
 /// falls as the vault pays and what it has already spent chases a falling
@@ -365,8 +392,15 @@ pub fn agent_id_for(owner: &Pubkey, salt: &[u8; 16]) -> [u8; 16] {
 /// Note that with deposits there is no ceiling on what a vault may hold, so a
 /// quarter of a large one is a large number. An absolute per-window ceiling
 /// alongside this proportional one is on the pre-mainnet list (docs/security.md).
-pub fn outflow_cap(vault: u64) -> u64 {
-    OUTFLOW_FLOOR.max(vault / 4)
+pub fn outflow_cap(vault: u64, chip_rate: u64) -> u64 {
+    OUTFLOW_FLOOR_CHIPS.saturating_mul(chip_rate).max(vault / 4)
+}
+
+/// An amount in chips as base units of the stake token, at the season's rate.
+/// Every chip-denominated limit in this program goes through here, so none of
+/// them is a base-unit number frozen at one season's prices.
+pub fn in_base_units(chips: u64, chip_rate: u64) -> Result<u64> {
+    chips.checked_mul(chip_rate).ok_or(OxudeError::RateOverflow.into())
 }
 
 /// A fixed-window budget: `(window_start, spent)` after charging `amount` at
@@ -389,6 +423,9 @@ pub struct Config {
     pub max_settlement: u64,
     /// What renting an agent costs, in base units. Burned, not collected.
     pub rent: u64,
+    /// Base units in one chip, for this season. Every chip-denominated limit
+    /// here is converted through it.
+    pub chip_rate: u64,
     pub bump: u8,
 }
 
@@ -735,6 +772,10 @@ pub enum OxudeError {
     WrongRent,
     #[msg("Rent is paid only from the renter's own token account")]
     NotRentersAccount,
+    #[msg("The stake token does not have the expected number of decimals")]
+    WrongStakeDecimals,
+    #[msg("A chip limit does not fit in base units at this rate")]
+    RateOverflow,
     #[msg("The vault doesn't match the ledger: a settlement is still in flight")]
     LedgerMismatch,
     #[msg("A withdrawal must leave the vault empty or with at least the minimum stake")]
@@ -765,19 +806,33 @@ mod tests {
         assert_eq!(charge(0, u64::MAX, 1, 1, u64::MAX), None);
     }
 
+    /// One chip at the rate devnet is fixed to: one whole token, six decimals.
+    const CHIP: u64 = 1_000_000;
+
     #[test]
     fn the_outflow_cap_is_a_quarter_of_the_vault_with_a_floor() {
+        let floor = OUTFLOW_FLOOR_CHIPS * CHIP;
         // Small vaults get the floor: a quarter of them is less than it.
-        assert_eq!(outflow_cap(0), OUTFLOW_FLOOR);
-        assert_eq!(outflow_cap(MIN_STAKE), OUTFLOW_FLOOR);
-        assert_eq!(outflow_cap(480), OUTFLOW_FLOOR);
+        assert_eq!(outflow_cap(0, CHIP), floor);
+        assert_eq!(outflow_cap(MIN_STAKE_CHIPS * CHIP, CHIP), floor);
+        assert_eq!(outflow_cap(480 * CHIP, CHIP), floor);
         // The floor and the quarter meet at four times the floor.
-        assert_eq!(outflow_cap(4 * OUTFLOW_FLOOR), OUTFLOW_FLOOR);
-        assert_eq!(outflow_cap(4 * OUTFLOW_FLOOR + 4), OUTFLOW_FLOOR + 1);
-        // Above that it is proportional: a vault of 900 can pay out a quarter.
-        assert_eq!(outflow_cap(900), 225);
-        // No overflow at the top of the range.
-        assert_eq!(outflow_cap(u64::MAX), u64::MAX / 4);
+        assert_eq!(outflow_cap(4 * floor, CHIP), floor);
+        assert_eq!(outflow_cap(4 * floor + 4, CHIP), floor + 1);
+        // Above that it is proportional: a vault of 900 chips pays out 225.
+        assert_eq!(outflow_cap(900 * CHIP, CHIP), 225 * CHIP);
+        // No overflow at the top of the range, and none in the floor either.
+        assert_eq!(outflow_cap(u64::MAX, CHIP), u64::MAX / 4);
+        assert_eq!(outflow_cap(0, u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn chip_limits_convert_at_the_rate_and_refuse_to_wrap() {
+        assert_eq!(in_base_units(60, CHIP).unwrap(), 60_000_000);
+        assert_eq!(in_base_units(MAX_SETTLEMENT_CEILING_CHIPS, CHIP).unwrap(), 900_000_000);
+        assert_eq!(in_base_units(MIN_STAKE_CHIPS, CHIP).unwrap(), 10_000_000);
+        // A rate that would make a limit wrap is an error, never a small number.
+        assert!(in_base_units(MAX_SETTLEMENT_CEILING_CHIPS, u64::MAX).is_err());
     }
 
     #[test]

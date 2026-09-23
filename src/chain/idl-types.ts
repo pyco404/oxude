@@ -189,6 +189,10 @@ export type OxudeSettlement = {
         {
           "name": "rent",
           "type": "u64"
+        },
+        {
+          "name": "chipRate",
+          "type": "u64"
         }
       ]
     },
@@ -556,8 +560,9 @@ export type OxudeSettlement = {
         "recorded at initialize is the only key that can call it - not the",
         "settler, whose reach this value is there to limit in the first place.",
         "It exists so a band with bigger stakes can be priced in without another",
-        "program upgrade, and it is bounded by `MAX_SETTLEMENT_CEILING` so that a",
-        "stolen admin key cannot turn the per-settlement guard off altogether."
+        "program upgrade, and it is bounded by `MAX_SETTLEMENT_CEILING_CHIPS` at",
+        "the season's rate, so that a stolen admin key cannot turn the",
+        "per-settlement guard off altogether."
       ],
       "discriminator": [
         31,
@@ -1344,26 +1349,36 @@ export type OxudeSettlement = {
     },
     {
       "code": 6013,
+      "name": "wrongStakeDecimals",
+      "msg": "The stake token does not have the expected number of decimals"
+    },
+    {
+      "code": 6014,
+      "name": "rateOverflow",
+      "msg": "A chip limit does not fit in base units at this rate"
+    },
+    {
+      "code": 6015,
       "name": "ledgerMismatch",
       "msg": "The vault doesn't match the ledger: a settlement is still in flight"
     },
     {
-      "code": 6014,
+      "code": 6016,
       "name": "unplayable",
       "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
     },
     {
-      "code": 6015,
+      "code": 6017,
       "name": "agentIdMismatch",
       "msg": "The agent id isn't the hash of this owner and salt"
     },
     {
-      "code": 6016,
+      "code": 6018,
       "name": "outflowLimit",
       "msg": "This vault has paid out all it can in this window"
     },
     {
-      "code": 6017,
+      "code": 6019,
       "name": "mintableStakeToken",
       "msg": "The stake token still has a mint authority: its supply is not fixed"
     }
@@ -1428,6 +1443,14 @@ export type OxudeSettlement = {
             "name": "rent",
             "docs": [
               "What renting an agent costs, in base units. Burned, not collected."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "chipRate",
+            "docs": [
+              "Base units in one chip, for this season. Every chip-denominated limit",
+              "here is converted through it."
             ],
             "type": "u64"
           },
