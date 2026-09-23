@@ -11,6 +11,7 @@ import { useWallet } from "@/app/wallet-context";
 import { WithdrawPanel } from "@/app/withdraw-panel";
 import { SeasonLine } from "@/app/season-line";
 import { RentalPanel } from "@/app/rental-panel";
+import { FaucetPanel } from "@/app/faucet-panel";
 import { CharacterBlock } from "@/app/character";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
@@ -624,6 +625,9 @@ function RentPanel(props: {
         ) : (
           <p className="text-[12px] leading-5 text-muted">Presets are free to rent and free to rate.</p>
         )}
+        {/* Devnet only, and renders nothing anywhere else: the api has no faucet
+            to answer with, so nobody is shown one that cannot exist. */}
+        <FaucetPanel />
       </div>
     </section>
   );
