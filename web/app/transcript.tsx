@@ -8,8 +8,8 @@ export function Transcript({ text, matchId }: { text: string; matchId?: string }
   const lines = useMemo(() => text.split("\n"), [text]);
   if (!text) return null;
   return (
-    <section className="mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className="rounded-panel mt-3 border border-line bg-panel">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         Transcript
         <span className="flex gap-3 normal-case tracking-normal">
           {matchId ? (

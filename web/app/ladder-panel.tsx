@@ -50,9 +50,9 @@ export function LadderPanel({
   }, [tab, limit, period, refreshKey]);
 
   return (
-    <section id="ladder" className="scroll-mt-4 border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">Ladder</h2>
-      <div className="p-3">
+    <section id="ladder" className="rounded-panel scroll-mt-4 border border-line bg-panel">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">Ladder</h2>
+      <div className="p-4">
         <Segmented
           value={period}
           onChange={setPeriod}
@@ -90,7 +90,7 @@ export function LadderPanel({
             <li
               key={row.agentId}
               className={`flex items-center gap-2 border-b border-line py-2 text-[13px] last:border-b-0 ${
-                row.agentId === mine ? "bg-panel-2" : ""
+                row.agentId === mine ? "-mx-2 rounded-panel bg-panel-2 px-2" : ""
               }`}
             >
               <span className="w-6 shrink-0 font-mono text-[11px] text-muted">{i + 1}</span>
@@ -102,7 +102,7 @@ export function LadderPanel({
                 <AgentName name={row.name} preset={row.presetName} />
               </Link>
               {row.retired ? (
-                <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
+                <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
                   retired
                 </span>
               ) : null}

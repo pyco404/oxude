@@ -100,7 +100,7 @@ export function RentalPanel({
   if (rental.state === "expired") {
     const graceLeft = left(rental.graceEndsAt);
     body = (
-      <div className="border border-loss px-3 py-3 text-[13px] leading-5 text-loss" role="alert">
+      <div className="rounded-panel border border-loss px-3 py-3 text-[13px] leading-5 text-loss" role="alert">
         <p className="font-medium">
           Expired: renew within {graceLeft > 0 ? duration(graceLeft) : "moments"} to keep it.
         </p>
@@ -114,7 +114,7 @@ export function RentalPanel({
     );
   } else if (rental.state === "lapsed") {
     body = (
-      <p className="border border-line px-3 py-2 text-[13px] leading-5 text-muted">
+      <p className="rounded-panel border border-line px-3 py-2 text-[13px] leading-5 text-muted">
         Lapsed: not renewed within 24 hours of the season ending, so it retired. Its record is kept, and its balance can
         be withdrawn below.
       </p>
@@ -129,7 +129,7 @@ export function RentalPanel({
   } else {
     const endLeft = left(rental.endsAt);
     body = rental.remind ? (
-      <div className="border border-loss/60 px-3 py-3 text-[13px] leading-5">
+      <div className="rounded-panel border border-loss/60 px-3 py-3 text-[13px] leading-5">
         <p className="text-loss">
           Season {rental.season.number} ends in {duration(endLeft)}: {localMoment(rental.endsAt!)}.
         </p>

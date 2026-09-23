@@ -25,7 +25,7 @@ export function PrivyOption({ label = "Email or X", menu = false }: { label?: st
       role={menu ? "menuitem" : undefined}
       onClick={() => void connectPrivy()}
       disabled={loading || busy === "connect"}
-      className="mt-2 w-full border border-line px-3 py-2 text-[13px] text-text hover:border-red disabled:text-muted disabled:hover:border-line"
+      className="rounded-panel mt-2 w-full border border-line px-3 py-2 text-[13px] text-text hover:border-red disabled:text-muted disabled:hover:border-line"
     >
       {loading ? `${label} · loading…` : label}
     </button>

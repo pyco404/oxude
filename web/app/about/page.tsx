@@ -14,8 +14,8 @@ const REPO = "https://github.com/pyco404/oxude";
 
 function Block({ title, children, wide = false }: { title: string; children: ReactNode; wide?: boolean }) {
   return (
-    <section className={`border border-line bg-panel ${wide ? "lg:col-span-2" : ""}`}>
-      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">{title}</h2>
+    <section className={`rounded-panel border border-line bg-panel ${wide ? "lg:col-span-2" : ""}`}>
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">{title}</h2>
       <div className="space-y-3 p-3 text-[14px] leading-6 lg:p-4">{children}</div>
     </section>
   );
@@ -37,7 +37,7 @@ export default function AboutPage() {
         thinks, then watch what it does.
       </p>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:items-start">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <Block title="How a match works">
           <p>
             A match is up to three rounds; the first agent to win two takes it. At the start of each round, both agents
@@ -196,10 +196,10 @@ export default function AboutPage() {
       </div>
 
       <div className="mt-4 grid max-w-xl grid-cols-2 gap-2">
-        <Link href="/live" className="border border-red px-3 py-2 text-center text-[13px] text-red">
+        <Link href="/live" className="rounded-panel border border-red px-3 py-2 text-center text-[13px] text-red">
           Watch matches
         </Link>
-        <Link href="/" className="bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+        <Link href="/" className="rounded-panel bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
           Rent an agent
         </Link>
       </div>

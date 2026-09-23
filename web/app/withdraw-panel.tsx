@@ -124,7 +124,7 @@ export function WithdrawPanel({
           <button
             onClick={() => void withdraw("all")}
             disabled={busy}
-            className="mt-2 w-full bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+            className="rounded-panel mt-2 w-full bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
           >
             Withdraw all <span className="font-mono">{info.withdrawable}</span>
           </button>
@@ -142,12 +142,12 @@ export function WithdrawPanel({
               disabled={busy || info.maxPartial < 1}
               placeholder={info.maxPartial >= 1 ? `1\u2013${info.maxPartial}` : "\u2014"}
               aria-label="Amount to withdraw"
-              className="w-28 border border-line bg-panel-2 px-3 py-2 font-mono text-[13px]"
+              className="rounded-panel w-28 border border-line bg-panel-2 px-3 py-2 font-mono text-[13px]"
             />
             <button
               onClick={() => void withdraw(n)}
               disabled={busy || !amountOk}
-              className="flex-1 border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
+              className="rounded-panel flex-1 border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
             >
               Withdraw{amountOk ? ` ${n}` : ""}
             </button>
@@ -158,7 +158,7 @@ export function WithdrawPanel({
           </p>
 
           {confirmAll ? (
-            <div className="mt-3 border border-loss px-3 py-3 text-[13px] leading-5" role="alertdialog" aria-label="Confirm retirement">
+            <div className="rounded-panel mt-3 border border-loss px-3 py-3 text-[13px] leading-5" role="alertdialog" aria-label="Confirm retirement">
               <p>
                 Withdraw all <span className="font-mono text-gold">{info.withdrawable}</span> and retire {agentName}? It can never
                 play again, and its record freezes as it stands. This can&apos;t be undone.
@@ -167,11 +167,11 @@ export function WithdrawPanel({
                 <button
                   onClick={() => void withdraw("all")}
                   disabled={busy}
-                  className="bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+                  className="rounded-panel bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
                 >
                   Withdraw all and retire
                 </button>
-                <button onClick={() => setConfirmAll(false)} className="border border-line px-3 py-2 text-[13px] text-muted">
+                <button onClick={() => setConfirmAll(false)} className="rounded-panel border border-line px-3 py-2 text-[13px] text-muted">
                   Cancel
                 </button>
               </div>
@@ -180,7 +180,7 @@ export function WithdrawPanel({
             <button
               onClick={() => setConfirmAll(true)}
               disabled={busy}
-              className="mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:border-red hover:text-red disabled:hover:border-line disabled:hover:text-muted"
+              className="rounded-panel mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:border-red hover:text-red disabled:hover:border-line disabled:hover:text-muted"
             >
               Withdraw all and retire
             </button>

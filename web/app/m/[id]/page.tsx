@@ -55,7 +55,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   if (found.status === "unavailable") {
     return (
       <Page>
-        <p className="max-w-3xl border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
+        <p className="rounded-panel max-w-3xl border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
           This match is temporarily unavailable. The link is fine; try again in a moment.
         </p>
       </Page>
@@ -66,8 +66,8 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   const { match, summary, transcript } = data;
   return (
     <Page>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-      <section className="border border-line bg-panel lg:sticky lg:top-8">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+      <section className="rounded-panel border border-line bg-panel lg:sticky lg:top-8">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
           <Link href={`/a/${match.agentA.id}`} className="hover:text-red">
             <AgentName name={summary.names.A} preset={match.agentA.presetName} />
@@ -97,7 +97,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             );
           })}
         </div>
-        <div className="p-3">
+        <div className="p-4">
           <p className="font-mono text-2xl">
             <span className={netTone(match.netA)}>{signed(match.netA)}</span>
             <span className="text-muted"> / </span>

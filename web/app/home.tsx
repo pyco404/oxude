@@ -368,13 +368,13 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       <Header />
 
       {error ?? wallet.error ? (
-        <p className="mb-4 border border-loss/40 bg-loss/10 px-3 py-2 text-[13px] text-loss" role="alert">
+        <p className="rounded-panel mb-4 border border-loss/40 bg-loss/10 px-3 py-2 text-[13px] text-loss" role="alert">
           {error ?? wallet.error}
         </p>
       ) : null}
 
       {/* Two columns from lg: the game on the left, renting on the right. Below lg they stack in this order. */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
         <div className="flex min-w-0 flex-col gap-3 *:m-0">
           {/* Signed out, the game comes first: a bluff and the live feed, then the ask. */}
           {session ? null : (
@@ -436,7 +436,7 @@ function ConnectPanel({
 }) {
   const all: WalletName[] = ["Phantom", "Solflare"];
   return (
-    <div className="mb-3 border border-line bg-panel p-3">
+    <div className="rounded-panel mb-3 border border-line bg-panel p-3">
       <p className="text-[13px] leading-5">Want one of your own? Sign in to rent an agent and play.</p>
       <p className="mt-1 text-[12px] leading-5 text-muted">
         You sign a message, not a transaction: it costs nothing and moves nothing. Browsing needs no wallet.
@@ -448,7 +448,7 @@ function ConnectPanel({
               key={name}
               onClick={() => onConnect(name)}
               disabled={busy}
-              className="bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+              className="rounded-panel bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
             >
               {busy ? "Waiting…" : name}
             </button>
@@ -458,7 +458,7 @@ function ConnectPanel({
               href={installUrl(name)}
               target="_blank"
               rel="noreferrer"
-              className="border border-line px-3 py-2 text-center text-[13px] text-muted"
+              className="rounded-panel border border-line px-3 py-2 text-center text-[13px] text-muted"
             >
               Get {name}
             </a>
@@ -500,8 +500,8 @@ function RentPanel(props: {
   const ready =
     props.signedIn && (props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12);
   return (
-    <section className="border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">Rent an agent</h2>
+    <section className="rounded-panel border border-line bg-panel">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">Rent an agent</h2>
       <div className="space-y-3 p-3">
         <SeasonLine />
         <Segmented
@@ -539,7 +539,7 @@ function RentPanel(props: {
               onChange={(e) => props.setBrief(e.target.value)}
               rows={4}
               placeholder="Tell it how to play. Be specific: when to fold, when to raise, when to bluff."
-              className="w-full resize-y border border-line bg-panel-2 px-3 py-2 font-mono text-[13px] leading-5 text-text placeholder:text-muted/60"
+              className="rounded-panel w-full resize-y border border-line bg-panel-2 px-3 py-2 font-mono text-[13px] leading-5 text-text placeholder:text-muted/60"
             />
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
               <label className="flex items-center gap-2">
@@ -558,7 +558,7 @@ function RentPanel(props: {
             <button
               onClick={props.onRateBrief}
               disabled={!props.signedIn || props.brief.trim().length < 12 || props.previewing}
-              className="w-full border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
+              className="rounded-panel w-full border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
             >
               {props.previewing ? "Rating…" : "Rate this brief"}
               <span className="ml-2 font-mono text-[11px] uppercase tracking-wider">
@@ -573,10 +573,10 @@ function RentPanel(props: {
           onChange={(e) => props.setName(e.target.value)}
           placeholder="Name your agent, or leave it empty and it gets a name of its own"
           maxLength={32}
-          className="w-full border border-line bg-panel-2 px-3 py-2 text-[13px] placeholder:text-muted/60"
+          className="rounded-panel w-full border border-line bg-panel-2 px-3 py-2 text-[13px] placeholder:text-muted/60"
         />
 
-        <div className="border border-line px-3 py-2">
+        <div className="rounded-panel border border-line px-3 py-2">
           <div className="text-[12px] uppercase tracking-wider text-muted">Stakes</div>
           <div className="mt-2 grid grid-cols-3 gap-1">
             {BANDS.map((b) => {
@@ -586,7 +586,7 @@ function RentPanel(props: {
                   key={b.name}
                   onClick={() => props.setBand(b.name)}
                   aria-pressed={chosen}
-                  className={`border px-2 py-2 text-left ${chosen ? "border-red bg-panel-2" : "border-line"}`}
+                  className={`rounded-panel border px-2 py-2 text-left ${chosen ? "border-red bg-panel-2" : "border-line"}`}
                 >
                   <div className="font-mono text-[13px]">{b.label}</div>
                   <div className="mt-0.5 font-mono text-[11px] text-gold">
@@ -607,7 +607,7 @@ function RentPanel(props: {
         <button
           onClick={props.onRent}
           disabled={!ready || props.busy}
-          className="w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
+          className="rounded-panel w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
           {!props.signedIn
             ? "Sign in to rent"
@@ -653,7 +653,7 @@ function PresetCard({
       <button
         onClick={onSelect}
         aria-pressed={selected}
-        className={`card-border w-full border px-3 py-3 text-left ${
+        className={`rounded-panel card-border w-full border px-3 py-3 text-left ${
           selected ? "border-red bg-panel-2" : "border-line bg-panel hover:border-muted"
         }`}
       >
@@ -719,12 +719,12 @@ function RosterPanel({
   fromAgent: boolean;
 }) {
   return (
-    <section className="mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className="rounded-panel mt-3 border border-line bg-panel">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         Who you'd meet
         <span className="font-mono normal-case tracking-normal">band {band}</span>
       </h2>
-      <div className="p-3">
+      <div className="p-4">
         <p className="mb-2 text-[12px] leading-5 text-muted">
           {fromAgent
             ? "Your agent plays on this money scale. It is only matched against others on the same one."
@@ -776,8 +776,8 @@ function YourAgents({
   onSelect: (id: string) => void;
 }) {
   return (
-    <section className="border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className="rounded-panel border border-line bg-panel">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         Your agents<span className="ml-2 normal-case tracking-normal">{agents.length}</span>
       </h2>
       <ul className="p-1">
@@ -831,11 +831,11 @@ function AgentCard({
   // Expired: the season ended without a renewal. It cannot play until renewed.
   const [expired, setExpired] = useState(false);
   return (
-    <section className="border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className="rounded-panel border border-line bg-panel">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         {retired ? "Retired agent" : "Your agent"}
       </h2>
-      <div className="p-3">
+      <div className="p-4">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-lg font-medium">
             <AgentName name={agent.name} preset={agent.presetName} />
@@ -844,7 +844,7 @@ function AgentCard({
         </div>
 
         {agent.character?.pendingName ? (
-          <p className="mt-2 border border-line px-3 py-2 text-[12px] leading-5 text-muted">
+          <p className="rounded-panel mt-2 border border-line px-3 py-2 text-[12px] leading-5 text-muted">
             Your name <span className="text-text">&ldquo;{agent.character.pendingName}&rdquo;</span> is waiting for its
             check. Until it passes, everyone else sees this agent as {agent.name}; it switches over by itself.
           </p>
@@ -855,7 +855,7 @@ function AgentCard({
           </div>
         ) : null}
 
-        <dl className="mt-3 grid grid-cols-3 border border-line">
+        <dl className="rounded-panel mt-3 grid grid-cols-3 border border-line">
           <Stat
             label="balance"
             value={String(agent.balance ?? 0)}
@@ -872,7 +872,7 @@ function AgentCard({
             The rest were against house agents: they settled for money, but don&apos;t rank.
           </p>
         ) : null}
-        <dl className="mt-2 grid grid-cols-2 border border-line">
+        <dl className="rounded-panel mt-2 grid grid-cols-2 border border-line">
           <Stat label="recent form" value={money(agent.recentForm ?? 0)} tone={netTone(agent.recentForm ?? 0)} />
           <Stat
             label="band"
@@ -890,7 +890,7 @@ function AgentCard({
         </dl>
 
         {retired ? (
-          <p className="mt-3 border border-line px-3 py-2 text-[13px] leading-5 text-muted">
+          <p className="rounded-panel mt-3 border border-line px-3 py-2 text-[13px] leading-5 text-muted">
             Retired with <span className="font-mono text-gold">{agent.balance ?? 0}</span> left: it can&apos;t play
             again. Its record is frozen at{" "}
             {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
@@ -900,7 +900,7 @@ function AgentCard({
             {/* The cover rule: a band can only be played by a balance that could
                 pay its worst match outright, because nothing is clamped. */}
             {agent.canPlay === false ? (
-              <p className="mb-2 border border-loss/50 px-3 py-2 text-[13px] leading-5 text-loss">
+              <p className="rounded-panel mb-2 border border-loss/50 px-3 py-2 text-[13px] leading-5 text-loss">
                 <span className="font-mono">{agent.balance ?? 0}</span> left, and a band {agent.band} match can move{" "}
                 <span className="font-mono">{agent.worstMatch}</span>. It can&apos;t play here until it covers that.{" "}
                 {agent.fallback ? (
@@ -928,7 +928,7 @@ function AgentCard({
                         ? `${b.stakes.ante}/${b.stakes.baseBet}/${b.stakes.raisedBet}, up to ${b.worstMatch} a match`
                         : `Needs ${b.worstMatch} to cover a match`
                     }
-                    className={`border px-2 py-1.5 text-left ${
+                    className={`rounded-panel border px-2 py-1.5 text-left ${
                       current ? "border-red bg-panel-2" : b.affordable ? "border-line" : "border-line/40 opacity-40"
                     }`}
                   >
@@ -954,7 +954,7 @@ function AgentCard({
         <button
           onClick={onPlay}
           disabled={busy || retired || expired}
-          className="mt-3 w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
+          className="rounded-panel mt-3 w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
           {retired ? "Retired" : expired ? "Expired: renew to play" : busy ? "Playing…" : "Play a match"}
         </button>
@@ -1054,14 +1054,14 @@ function PreviewPanel({
   if (tab === null) return null;
   const worst = preview ? Math.max(...preview.value.breakdown.map((b) => Math.abs(b.expectedNet)), 0.001) : 1;
   return (
-    <section className="mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className="rounded-panel mt-3 border border-line bg-panel">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         Expected result
         <span className={`font-mono ${tab === "brief" ? "text-gold" : "text-muted"}`}>
           {tab === "brief" ? "model call" : "free"}
         </span>
       </h2>
-      <div className="p-3">
+      <div className="p-4">
         {previewing ? (
           <p className="font-mono text-[13px] text-muted">rating…</p>
         ) : preview ? (

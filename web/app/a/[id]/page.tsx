@@ -43,7 +43,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
   // An exhibition stakes nothing, so it isn't a win or a loss.
   const result = m.exhibition ? "Exh" : net === 0 ? "Level" : net > 0 ? "Won" : "Lost";
   return (
-    <li className="border-b border-line px-3 py-2.5 last:border-b-0">
+    <li className="border-b border-line px-4 py-3 last:border-b-0">
       <div className="flex items-baseline gap-2 text-[13px]">
         <span
           className={`w-10 shrink-0 font-mono text-[11px] uppercase ${
@@ -59,7 +59,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
           </Link>
         </span>
         {m.exhibition ? (
-          <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
+          <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
             exhibition
           </span>
         ) : null}
@@ -67,7 +67,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
       </div>
       <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 pl-12 text-[12px] leading-5">
         {m.beat === "bluff-worked" ? (
-          <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
+          <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
             bluff
           </span>
         ) : null}
@@ -109,7 +109,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   if (found.status === "unavailable") {
     return (
       <Page>
-        <p className="max-w-3xl border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
+        <p className="rounded-panel max-w-3xl border border-line bg-panel px-3 py-3 text-[14px] leading-6 text-muted">
           This agent is temporarily unavailable. The link is fine; try again in a moment.
         </p>
       </Page>
@@ -122,18 +122,18 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const worst = agent.worstMatch ?? { A: 20, B: 40, C: 60 }[agent.band];
   return (
     <Page>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
-      <section className="border border-line bg-panel lg:sticky lg:top-8">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
+      <section className="rounded-panel border border-line bg-panel lg:sticky lg:top-8">
         <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
           <h1 className="min-w-0 truncate text-[15px]">
             <AgentName name={agent.name} preset={agent.presetName} />
           </h1>
           {agent.retired ? (
-            <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
+            <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
               retired
             </span>
           ) : (
-            <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
+            <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
               active
             </span>
           )}
@@ -160,8 +160,8 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         </div>
       </section>
 
-      <section className="min-w-0 border border-line bg-panel">
-        <h2 className="border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+      <section className="rounded-panel min-w-0 border border-line bg-panel">
+        <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
           Recent matches
           {total > matches.length ? (
             <>

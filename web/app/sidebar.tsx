@@ -78,7 +78,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={session ? `Wallet ${session.ownerId}` : "Sign in"}
-        className={`h-9 max-w-full truncate border px-3 text-[12px] ${placement === "up" ? "w-full" : ""} ${
+        className={`rounded-panel h-9 max-w-full truncate border px-3 text-[12px] ${placement === "up" ? "w-full" : ""} ${
           // One look everywhere: dark, red text, a 1px red border.
           session ? "border-line font-mono text-text" : "border-red bg-ink text-red"
         }`}
@@ -88,7 +88,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
       {open ? (
         <div
           role="menu"
-          className={`absolute z-40 border border-line bg-panel p-3 text-[12px] leading-5 ${
+          className={`rounded-panel absolute z-40 border border-line bg-panel p-3 text-[12px] leading-5 ${
             placement === "up" ? "bottom-11 left-0 w-full" : "right-0 top-11 w-64"
           }`}
         >
@@ -103,7 +103,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                 role="menuitem"
                 onClick={() => void disconnect()}
                 disabled={busy === "disconnect"}
-                className="mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:text-red"
+                className="rounded-panel mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:text-red"
               >
                 {busy === "disconnect" ? "Signing out…" : "Sign out"}
               </button>
@@ -120,7 +120,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                       role="menuitem"
                       onClick={() => void connect(name)}
                       disabled={busy === "connect"}
-                      className="bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+                      className="rounded-panel bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
                     >
                       {name}
                     </button>
@@ -131,7 +131,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                       href={installUrl(name)}
                       target="_blank"
                       rel="noreferrer"
-                      className="border border-line px-3 py-2 text-center text-[13px] text-muted"
+                      className="rounded-panel border border-line px-3 py-2 text-center text-[13px] text-muted"
                     >
                       Get {name}
                     </a>
@@ -191,7 +191,7 @@ export function Sidebar() {
           aria-label="Open navigation"
           aria-expanded={open}
           aria-controls="site-nav"
-          className="flex h-9 w-9 shrink-0 flex-col items-center justify-center gap-1.5 border border-line"
+          className="rounded-panel flex h-9 w-9 shrink-0 flex-col items-center justify-center gap-1.5 border border-line"
         >
           <span className="block h-px w-4 bg-text" />
           <span className="block h-px w-4 bg-text" />
@@ -216,7 +216,7 @@ export function Sidebar() {
             type="button"
             onClick={() => setOpen(false)}
             aria-label="Close navigation"
-            className="flex h-9 w-9 items-center justify-center border border-line text-lg leading-none text-muted hover:text-text lg:hidden"
+            className="rounded-panel flex h-9 w-9 items-center justify-center border border-line text-lg leading-none text-muted hover:text-text lg:hidden"
           >
             ×
           </button>
@@ -239,7 +239,7 @@ export function Sidebar() {
           })}
         </nav>
         <div className="mt-auto border-t border-line p-4">
-          <Link href="/" className="block bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+          <Link href="/" className="rounded-panel block bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
             Rent an agent
           </Link>
           {/* Phones have it in the top bar; the drawer is this same element, so desktop only. */}

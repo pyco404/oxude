@@ -23,7 +23,7 @@ export function SeasonLine() {
   if (!season) return null;
   const left = new Date(season.endsAt).getTime() - now;
   return (
-    <p className="border border-line bg-panel-2 px-3 py-2 text-[12px] leading-4 text-muted">
+    <p className="rounded-panel border border-line bg-panel-2 px-3 py-2 text-[12px] leading-4 text-muted">
       <span className="text-text">
         Season <span className="font-mono">{season.number}</span> ·{" "}
         {left > 0 ? `${duration(left)} left` : "ending now"}

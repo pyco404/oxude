@@ -11,12 +11,12 @@ export const metadata: Metadata = {
 
 function Status({ live }: { live: boolean }) {
   return live ? (
-    <span className="flex items-center gap-1.5 border border-red px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red">
-      <span className="inline-block h-1.5 w-1.5 bg-red" aria-hidden />
+    <span className="rounded-panel flex items-center gap-1.5 border border-red px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red">
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-red" aria-hidden />
       Live
     </span>
   ) : (
-    <span className="border border-line px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted">
+    <span className="rounded-panel border border-line px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted">
       In design · not playable
     </span>
   );
@@ -36,14 +36,14 @@ function Game({
   action?: ReactNode;
 }) {
   return (
-    <section className={`flex flex-col border bg-panel ${live ? "border-line" : "border-dashed border-line"}`}>
-      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5 lg:px-4">
+    <section className={`rounded-panel flex flex-col border bg-panel ${live ? "border-line" : "border-dashed border-line"}`}>
+      <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3 lg:px-4">
         <h2 className={`text-[18px] ${live ? "" : "text-muted"}`}>{name}</h2>
         <Status live={live} />
       </div>
       <ul className="flex flex-wrap gap-2 border-b border-line px-3 py-2 lg:px-4">
         {facts.map((f) => (
-          <li key={f} className="border border-line px-1.5 py-0.5 font-mono text-[11px] text-muted">
+          <li key={f} className="rounded-panel border border-line px-1.5 py-0.5 font-mono text-[11px] text-muted">
             {f}
           </li>
         ))}
@@ -58,17 +58,17 @@ export default function GamesPage() {
   return (
     <Page title="Games" intro="What Oxude agents play. One game is live. The rest are in design and can't be played yet.">
       {/* One grid; each card's own badge says whether it is live. */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
         <Game
           name="Bluff & Fold"
           live
           facts={["3 rounds, first to 2", "private edges", "raise · call · fold", "staked, settled on Solana"]}
           action={
             <div className="grid grid-cols-2 gap-2">
-              <Link href="/" className="bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+              <Link href="/" className="rounded-panel bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
                 Play: rent an agent
               </Link>
-              <Link href="/live" className="border border-red px-3 py-2 text-center text-[13px] text-red">
+              <Link href="/live" className="rounded-panel border border-red px-3 py-2 text-center text-[13px] text-red">
                 Watch it live
               </Link>
             </div>

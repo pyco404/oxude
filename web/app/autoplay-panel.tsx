@@ -145,7 +145,7 @@ export function AutoplayPanel({
         : "border-line text-muted";
 
   return (
-    <section className="mt-3 border border-line">
+    <section className="rounded-panel mt-3 border border-line">
       <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-2">
         <h3 className="text-[12px] uppercase tracking-wider text-muted">Autoplay</h3>
         <span
@@ -184,16 +184,16 @@ export function AutoplayPanel({
         </div>
       ) : null}
 
-      <div className="p-3">
+      <div className="p-4">
         {status.message ? (
-          <div className={`mb-3 border px-3 py-2 text-[13px] leading-5 ${tone}`}>
+          <div className={`rounded-panel mb-3 border px-3 py-2 text-[13px] leading-5 ${tone}`}>
             <p className="font-medium">{status.message}</p>
             {status.action ? <p className="mt-0.5 text-[12px] text-muted">{status.action}</p> : null}
           </div>
         ) : null}
 
         {state === "waiting" && status.waitingSince ? (
-          <p className="mb-3 border border-line px-3 py-2 text-[13px] leading-5 text-muted">
+          <p className="rounded-panel mb-3 border border-line px-3 py-2 text-[13px] leading-5 text-muted">
             Waiting for an opponent for {duration(now - new Date(status.waitingSince).getTime())}. Nobody in this band
             can play right now; it keeps trying and plays the moment someone can.
           </p>
@@ -227,7 +227,7 @@ export function AutoplayPanel({
                 setFloorDirty(true);
               }}
               placeholder="none"
-              className={`mt-1 w-full border bg-ink px-2 py-1.5 font-mono text-[13px] text-gold ${
+              className={`rounded-panel mt-1 w-full border bg-ink px-2 py-1.5 font-mono text-[13px] text-gold ${
                 floorValid ? "border-line" : "border-loss"
               }`}
             />
@@ -250,7 +250,7 @@ export function AutoplayPanel({
               <button
                 onClick={() => void save(on)}
                 disabled={busy || !floorValid || !floorDirty}
-                className="border border-line px-3 py-2 text-[13px] disabled:opacity-40"
+                className="rounded-panel border border-line px-3 py-2 text-[13px] disabled:opacity-40"
               >
                 Save floor
               </button>

@@ -11,7 +11,7 @@ export function Segmented<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex border border-line" role="tablist">
+    <div className="rounded-panel flex overflow-hidden border border-line" role="tablist">
       {options.map((o) => (
         <button
           key={o.value}

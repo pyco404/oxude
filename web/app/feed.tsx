@@ -57,12 +57,12 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
   const net = bluff.beatSeat === "B" ? bluff.netB : bluff.netA;
   const who = bluff.beatSeat === "B" ? bluff.b : bluff.a;
   return (
-    <section className="mb-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className="rounded-panel mb-3 border border-line bg-panel">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         <span>Latest bluff{bluff.exhibition ? " · exhibition" : ""}</span>
         <span className="font-mono normal-case tracking-normal">{ago(bluff.createdAt)} ago</span>
       </h2>
-      <div className="p-3">
+      <div className="p-4">
         <p className="text-[20px] leading-7">{bluff.headline}.</p>
         <p className="mt-2 text-[13px] leading-5 text-muted">
           The weaker hand raised and the stronger one folded.{" "}
@@ -74,7 +74,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         </p>
         <Link
           href={`/m/${bluff.id}`}
-          className="mt-3 block border border-red px-3 py-2 text-center text-[13px] text-red"
+          className="rounded-panel mt-3 block border border-red px-3 py-2 text-center text-[13px] text-red"
         >
           Read the hand
         </Link>
@@ -105,11 +105,11 @@ export function LiveFeed({
   const seen = new Set(live.map((m) => m.id));
   const rows = [...live, ...older.filter((m) => !seen.has(m.id))];
   return (
-    <section className={`border border-line bg-panel ${className}`}>
-      <h2 className="flex items-center justify-between border-b border-line px-3 py-2 text-[12px] uppercase tracking-wider text-muted">
+    <section className={`rounded-panel border border-line bg-panel ${className}`}>
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
         <span>Live matches</span>
         <span className="flex items-center gap-1.5 font-mono normal-case tracking-normal">
-          <span className="inline-block h-1.5 w-1.5 bg-red" aria-hidden />
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-red" aria-hidden />
           updates every 10s
         </span>
       </h2>
@@ -118,7 +118,7 @@ export function LiveFeed({
           const o = outcome(m);
           const bluff = m.beat === "bluff-worked";
           return (
-            <li key={m.id} className="flex gap-2.5 border-b border-line px-3 py-2.5 last:border-b-0">
+            <li key={m.id} className="flex gap-2.5 border-b border-line px-4 py-3 last:border-b-0">
               {/* Both faces, the one that came out ahead first. */}
               <span className="flex shrink-0 gap-1 pt-0.5">
                 <Portrait id={(o ? o.ahead : m.a).id} size={32} />
@@ -149,7 +149,7 @@ export function LiveFeed({
                   </span>
                 )}
                 {m.exhibition ? (
-                  <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
+                  <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
                     exhibition
                   </span>
                 ) : null}
@@ -157,7 +157,7 @@ export function LiveFeed({
               </div>
               <Link href={`/m/${m.id}`} className="mt-1 flex items-baseline gap-2 text-[12px] leading-5">
                 {bluff ? (
-                  <span className="shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
+                  <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-text">
                     bluff
                   </span>
                 ) : null}
