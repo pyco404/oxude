@@ -853,7 +853,7 @@ function AgentCard({
           </div>
         ) : null}
 
-        <dl className="mt-3 grid grid-cols-3 gap-2 border border-line">
+        <dl className="mt-3 grid grid-cols-3 border border-line">
           <Stat
             label="balance"
             value={String(agent.balance ?? 0)}
@@ -869,9 +869,21 @@ function AgentCard({
             money, but don&apos;t rank.
           </p>
         ) : null}
-        <dl className="mt-2 grid grid-cols-2 gap-2 border border-line">
+        <dl className="mt-2 grid grid-cols-2 border border-line">
           <Stat label="recent form" value={money(agent.recentForm ?? 0)} tone={netTone(agent.recentForm ?? 0)} />
-          <Stat label="band" value={`${agent.band ?? "B"} · up to ${agent.worstMatch ?? bandByName(agent.band ?? "B").worstMatch}`} />
+          <Stat
+            label="band"
+            value={agent.band ?? "B"}
+            sub={
+              <>
+                up to{" "}
+                <span className="font-mono text-gold">
+                  {agent.worstMatch ?? bandByName(agent.band ?? "B").worstMatch}
+                </span>{" "}
+                a match
+              </>
+            }
+          />
         </dl>
 
         {retired ? (
@@ -994,15 +1006,30 @@ function AgentCard({
 }
 
 /**
- * One figure in the agent card. `tone` is the colour its number earns: gold for
- * money, plain ivory otherwise. The caller decides, because only it knows what
- * the number is.
+ * One figure in the agent card: the number large, its label small and quiet
+ * above it. `tone` is the colour the number earns - gold for money, green or
+ * red for a result - and the caller decides, because only it knows what the
+ * number is. `sub` carries anything the figure needs said about it, so the
+ * figure itself stays a figure.
  */
-function Stat({ label, value, tone = "text-text" }: { label: string; value: string; tone?: string }) {
+function Stat({
+  label,
+  value,
+  tone = "text-text",
+  sub,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  sub?: React.ReactNode;
+}) {
   return (
-    <div className="border-r border-line px-3 py-2 last:border-r-0">
+    <div className="border-r border-line px-3.5 py-3.5 last:border-r-0">
       <dt className="text-[11px] uppercase tracking-wider text-muted">{label}</dt>
-      <dd className={`mt-0.5 font-mono text-[15px] ${tone}`}>{value}</dd>
+      <dd className="mt-2">
+        <span className={`font-mono text-[22px] leading-none ${tone}`}>{value}</span>
+        {sub ? <span className="mt-2 block text-[11px] leading-4 text-muted">{sub}</span> : null}
+      </dd>
     </div>
   );
 }

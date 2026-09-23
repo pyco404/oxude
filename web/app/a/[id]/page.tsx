@@ -81,9 +81,9 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
 /** One figure of the record. `tone` is the colour the number earns; see the agent card. */
 function Stat({ label, value, tone = "text-text" }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="border-line px-3 py-2 odd:border-r [&:nth-child(-n+2)]:border-b">
+    <div className="border-line px-4 py-4 odd:border-r [&:nth-child(-n+2)]:border-b">
       <p className="text-[11px] uppercase tracking-wider text-muted">{label}</p>
-      <p className={`mt-0.5 font-mono text-lg ${tone}`}>{value}</p>
+      <p className={`mt-2 font-mono text-[24px] leading-none ${tone}`}>{value}</p>
     </div>
   );
 }

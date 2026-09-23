@@ -30,10 +30,10 @@ const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: ReactNode }) {
   return (
-    <div className="border border-line bg-panel px-3 py-3">
+    <div className="border border-line bg-panel px-4 py-4">
       <p className="text-[11px] uppercase tracking-wider text-muted">{label}</p>
-      <p className="mt-1 font-mono text-2xl text-gold">{value}</p>
-      {sub ? <div className="mt-1 text-[12px] leading-5 text-muted">{sub}</div> : null}
+      <p className="mt-2 font-mono text-[28px] leading-none text-gold">{value}</p>
+      {sub ? <div className="mt-2.5 text-[12px] leading-5 text-muted">{sub}</div> : null}
     </div>
   );
 }
