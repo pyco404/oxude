@@ -32,7 +32,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: React
   return (
     <div className="border border-line bg-panel px-3 py-3">
       <p className="text-[10px] uppercase tracking-wider text-muted">{label}</p>
-      <p className="mt-1 font-mono text-2xl">{value}</p>
+      <p className="mt-1 font-mono text-2xl text-gold">{value}</p>
       {sub ? <div className="mt-1 text-[12px] leading-5 text-muted">{sub}</div> : null}
     </div>
   );
@@ -120,7 +120,7 @@ function RewardsSection({ r }: { r: Rewards }) {
                       )}
                     </td>
                     <td className="px-3 py-2">{p.to ? <Address address={p.to} cluster={r.cluster} /> : "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono">{n(p.amount)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gold">{n(p.amount)}</td>
                     <td className="px-3 py-2 lg:px-4">
                       <a href={explorer("tx", p.signature, r.cluster)} className="text-red" target="_blank" rel="noreferrer">
                         view

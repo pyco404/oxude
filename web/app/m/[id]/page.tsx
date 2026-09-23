@@ -102,7 +102,15 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
           </p>
           <p className="mt-1 text-[13px] leading-5 text-muted">
             {summary.winnerName ? `${summary.winnerName} took it` : "Level"} over {summary.rounds}{" "}
-            {summary.rounds === 1 ? "round" : "rounds"}, {match.exhibition ? "nothing staked" : `staked ${summary.stake}`}.
+            {summary.rounds === 1 ? "round" : "rounds"},{" "}
+            {match.exhibition ? (
+              "nothing staked"
+            ) : (
+              <>
+                staked <span className="font-mono text-gold">{summary.stake}</span>
+              </>
+            )}
+            .
           </p>
           {summary.headline ? <p className="mt-2 text-[14px] leading-6 text-red">{summary.headline}.</p> : null}
           {!match.exhibition && match.ranked === false ? (
@@ -118,7 +126,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
               : data.settlement.status === "confirmed" && data.settlement.signature
                 ? (
                   <>
-                    Settled on Solana: {data.settlement.amount} moved.{" "}
+                    Settled on Solana: <span className="text-gold">{data.settlement.amount}</span> moved.{" "}
                     <a href={explorerUrl(data.settlement.signature)} className="text-red" target="_blank" rel="noreferrer">
                       view transaction
                     </a>

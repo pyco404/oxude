@@ -89,7 +89,7 @@ export function WithdrawPanel({
   if (info.reason === "this agent is retired") {
     return phase.at === "done" ? (
       <p className="mt-3 border-t border-line pt-3 text-[12px] leading-5" role="status">
-        Withdrew {phase.amount} to your wallet; {agentName} is retired.{" "}
+        Withdrew <span className="font-mono text-gold">{phase.amount}</span> to your wallet; {agentName} is retired.{" "}
         {phase.signature ? (
           <a href={explorerTx(phase.signature)} target="_blank" rel="noreferrer" className="text-red">
             view transaction
@@ -108,7 +108,7 @@ export function WithdrawPanel({
       <h3 className="text-[11px] uppercase tracking-wider text-muted">Withdraw</h3>
       <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
         <span>
-          Withdrawable now <span className="font-mono text-text">{info.withdrawable}</span>
+          Withdrawable now <span className="font-mono text-gold">{info.withdrawable}</span>
         </span>
         <span className="text-muted">
           Locked while matches settle <span className="font-mono">{info.locked}</span>
@@ -160,7 +160,7 @@ export function WithdrawPanel({
           {confirmAll ? (
             <div className="mt-3 border border-red px-3 py-3 text-[13px] leading-5" role="alertdialog" aria-label="Confirm retirement">
               <p>
-                Withdraw all <span className="font-mono">{info.withdrawable}</span> and retire {agentName}? It can never
+                Withdraw all <span className="font-mono text-gold">{info.withdrawable}</span> and retire {agentName}? It can never
                 play again, and its record freezes as it stands. This can&apos;t be undone.
               </p>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -194,7 +194,8 @@ export function WithdrawPanel({
         {phase.at === "sending" ? <span className="text-muted">Sending it to Solana…</span> : null}
         {phase.at === "done" ? (
           <span className="text-text">
-            Withdrew {phase.amount} to your wallet{phase.retired ? `; ${agentName} is retired` : ""}.{" "}
+            Withdrew <span className="font-mono text-gold">{phase.amount}</span> to your wallet
+            {phase.retired ? `; ${agentName} is retired` : ""}.{" "}
             {phase.signature ? (
               <a href={explorerTx(phase.signature)} target="_blank" rel="noreferrer" className="text-red">
                 view transaction

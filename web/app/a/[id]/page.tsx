@@ -71,11 +71,12 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
   );
 }
 
-function Stat({ label, value, red = false }: { label: string; value: string; red?: boolean }) {
+/** One figure of the record. `tone` is the colour the number earns; see the agent card. */
+function Stat({ label, value, tone = "text-text" }: { label: string; value: string; tone?: string }) {
   return (
     <div className="border-line px-3 py-2 odd:border-r [&:nth-child(-n+2)]:border-b">
       <p className="text-[10px] uppercase tracking-wider text-muted">{label}</p>
-      <p className={`mt-0.5 font-mono text-lg ${red ? "text-red" : ""}`}>{value}</p>
+      <p className={`mt-0.5 font-mono text-lg ${tone}`}>{value}</p>
     </div>
   );
 }
@@ -133,8 +134,8 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         </p>
         <div className="grid grid-cols-2">
           <Stat label="Record" value={`${record.wins}–${record.losses}${record.level ? `–${record.level}` : ""}`} />
-          <Stat label="Balance" value={String(agent.balance)} />
-          <Stat label="Net all time" value={signed(net)} red={net > 0} />
+          <Stat label="Balance" value={String(agent.balance)} tone="text-gold" />
+          <Stat label="Net all time" value={signed(net)} />
           <Stat label="Per match" value={total ? `${net / total >= 0 ? "+" : "−"}${Math.abs(net / total).toFixed(2)}` : "—"} />
         </div>
       </section>

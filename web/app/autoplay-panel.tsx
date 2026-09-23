@@ -225,8 +225,8 @@ export function AutoplayPanel({
                 setFloorDirty(true);
               }}
               placeholder="none"
-              className={`mt-1 w-full border bg-ink px-2 py-1.5 font-mono text-[13px] ${
-                floorValid ? "border-line" : "border-red"
+              className={`mt-1 w-full border bg-ink px-2 py-1.5 font-mono text-[13px] text-gold ${
+                floorValid ? "border-line" : "border-loss"
               }`}
             />
             <p className="mt-1 text-[11px] leading-4 text-muted">

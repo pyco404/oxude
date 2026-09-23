@@ -587,17 +587,19 @@ function RentPanel(props: {
                   aria-pressed={chosen}
                   className={`border px-2 py-2 text-left ${chosen ? "border-red bg-panel-2" : "border-line"}`}
                 >
-                  <div className="font-mono text-[13px] text-red">{b.label}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted">
+                  <div className="font-mono text-[13px]">{b.label}</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-gold">
                     {b.ante}/{b.baseBet}/{b.raisedBet}
                   </div>
-                  <div className="mt-1 text-[11px] leading-4 text-muted">up to {b.worstMatch} a match</div>
+                  <div className="mt-1 text-[11px] leading-4 text-muted">
+                    up to <span className="font-mono text-gold">{b.worstMatch}</span> a match
+                  </div>
                 </button>
               );
             })}
           </div>
           <p className="mt-2 text-[11px] leading-4 text-muted">
-            {bandBlurb(props.bandRows, props.band, props.presetName)} It starts with {SEED_BALANCE} to play with, and is
+            {bandBlurb(props.bandRows, props.band, props.presetName)} It starts with <span className="font-mono text-gold">{SEED_BALANCE}</span> to play with, and is
             only matched against agents on the same scale.
           </p>
         </div>
@@ -739,7 +741,7 @@ function RosterPanel({
                 </span>
                 <span className="w-14 shrink-0 font-mono text-[10px] text-muted">{a.presetName ?? "brief"}</span>
                 <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
-                <span className="w-12 shrink-0 text-right font-mono text-[11px]">{a.balance}</span>
+                <span className="w-12 shrink-0 text-right font-mono text-[11px] text-gold">{a.balance}</span>
               </li>
             ))}
           </ul>
@@ -789,7 +791,7 @@ function YourAgents({
                 {a.retired ? (
                   <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted">retired</span>
                 ) : (
-                  <span className="shrink-0 font-mono text-[12px]">{a.balance ?? 0}</span>
+                  <span className="shrink-0 font-mono text-[12px] text-gold">{a.balance ?? 0}</span>
                 )}
                 <span className="shrink-0 font-mono text-[11px] text-muted">
                   {a.matchesPlayed ?? 0} {a.matchesPlayed === 1 ? "match" : "matches"}
@@ -848,7 +850,11 @@ function AgentCard({
         ) : null}
 
         <dl className="mt-3 grid grid-cols-3 gap-2 border border-line">
-          <Stat label="balance" value={String(agent.balance ?? 0)} accent={(agent.balance ?? 0) <= 20} />
+          <Stat
+            label="balance"
+            value={String(agent.balance ?? 0)}
+            tone={(agent.balance ?? 0) <= 20 ? "text-loss" : "text-gold"}
+          />
           <Stat label="net won" value={whole(agent.cumulativeNet ?? 0)} />
           <Stat label="matches" value={String(agent.matchesPlayed ?? 0)} />
         </dl>
@@ -866,7 +872,8 @@ function AgentCard({
 
         {retired ? (
           <p className="mt-3 border border-red/50 px-3 py-2 text-[13px] leading-5 text-red">
-            Retired with {agent.balance ?? 0} left: it can&apos;t play again. Its record is frozen at{" "}
+            Retired with <span className="font-mono text-gold">{agent.balance ?? 0}</span> left: it can&apos;t play
+            again. Its record is frozen at{" "}
             {whole(agent.cumulativeNet ?? 0)} over {agent.matchesPlayed ?? 0} matches, and it stays on the ladder.
           </p>
         ) : (
@@ -902,7 +909,7 @@ function AgentCard({
                     }`}
                   >
                     <div className="font-mono text-[12px]">{b.name}</div>
-                    <div className="font-mono text-[10px] text-muted">≤{b.worstMatch}</div>
+                    <div className="font-mono text-[10px] text-gold">≤{b.worstMatch}</div>
                   </button>
                 );
               })}
@@ -932,7 +939,7 @@ function AgentCard({
           <p className="mt-2 font-mono text-[11px] leading-4 text-muted">
             vs{" "}
             <AgentName name={lastPlay.opponent.name} preset={lastPlay.opponent.presetName} /> ·{" "}
-            {lastPlay.result.rounds} rounds · staked {lastPlay.stake} ·{" "}
+            {lastPlay.result.rounds} rounds · staked <span className="text-gold">{lastPlay.stake}</span> ·{" "}
             <span className={lastPlay.result.net >= 0 ? "text-text" : "text-red"}>{whole(lastPlay.result.net)}</span>
             {lastPlay.result.net !== lastPlay.result.uncappedNet
               ? ` (capped from ${whole(lastPlay.result.uncappedNet)})`
@@ -982,11 +989,16 @@ function AgentCard({
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+/**
+ * One figure in the agent card. `tone` is the colour its number earns: gold for
+ * money, plain ivory otherwise. The caller decides, because only it knows what
+ * the number is.
+ */
+function Stat({ label, value, tone = "text-text" }: { label: string; value: string; tone?: string }) {
   return (
     <div className="border-r border-line px-3 py-2 last:border-r-0">
       <dt className="text-[10px] uppercase tracking-wider text-muted">{label}</dt>
-      <dd className={`mt-0.5 font-mono text-[15px] ${accent ? "text-red" : "text-text"}`}>{value}</dd>
+      <dd className={`mt-0.5 font-mono text-[15px] ${tone}`}>{value}</dd>
     </div>
   );
 }

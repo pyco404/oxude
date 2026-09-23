@@ -108,7 +108,7 @@ export function LadderPanel({
               <span className={`${col} w-32 shrink-0 truncate text-[12px] text-muted`}>
                 {row.presetName ? `${row.presetName} preset` : "Custom brief"}
               </span>
-              <span className={`${col} w-20 shrink-0 text-right font-mono text-[12px] text-muted`}>{row.balance}</span>
+              <span className={`${col} w-20 shrink-0 text-right font-mono text-[12px] text-gold`}>{row.balance}</span>
               <span className={`w-12 shrink-0 text-right font-mono text-[11px] text-muted ${wide ? "lg:hidden" : ""}`}>
                 {row.matchesPlayed}m
               </span>
