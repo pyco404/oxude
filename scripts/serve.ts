@@ -103,6 +103,33 @@ if (rpc) {
   chain = new SeedChainClient(new Connection(rpc, "confirmed"), settler);
 }
 
+// The devnet faucet, when there is a treasury to hand out from. It refuses any
+// cluster but devnet, and says so rather than starting quietly: a faucet is
+// only ever a devnet convenience, and the check is on the chain's own genesis
+// hash rather than on a variable naming it.
+let faucet: import("../src/db/faucet.js").FaucetChain | undefined;
+if (rpc && process.env["CHAIN_STAKE_MINT"]) {
+  const { Connection, Keypair, PublicKey } = await import("@solana/web3.js");
+  const { devnetFaucet, NotDevnetError } = await import("../src/chain/faucet.js");
+  const { loadKeypair } = await import("../src/chain/common.js");
+  const secret = process.env["CHAIN_TREASURY_SECRET"];
+  const treasuryPath = process.env["CHAIN_TREASURY_KEYPAIR"] ?? ".keys/treasury.json";
+  try {
+    const treasury = secret
+      ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[]))
+      : loadKeypair(treasuryPath);
+    faucet = await devnetFaucet(
+      new Connection(rpc, "confirmed"),
+      new PublicKey(process.env["CHAIN_STAKE_MINT"]),
+      treasury,
+    );
+    console.log(`Faucet: on, from treasury ${treasury.publicKey.toBase58()}`);
+  } catch (error) {
+    if (error instanceof NotDevnetError) console.log(`Faucet: off - ${error.message}`);
+    else console.log(`Faucet: off - no treasury key (${String(error).slice(0, 120)})`);
+  }
+}
+
 // A host sets PORT and needs every interface; locally, loopback only.
 // Characters check chosen names and write bios for brief-written agents with
 // a small model, when there is a key to call one with.
@@ -114,6 +141,7 @@ const { url } = await listen({
   port: Number(process.env["PORT"] ?? arg("--port", 8787)),
   host: process.env["HOST"],
   ...(chain ? { chain } : {}),
+  ...(faucet ? { faucet } : {}),
   ...(characterModel ? { character: characterModel } : {}),
 });
 // Chosen names that could not be checked at rent: checked again until the model answers.

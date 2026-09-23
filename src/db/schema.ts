@@ -624,6 +624,41 @@ export function outflowBudget(balance: number): number {
 export const FREE_ELICITATIONS = 1;
 
 /**
+ * Devnet only: stake tokens handed out so somebody can try the game without
+ * buying anything. There is no equivalent on mainnet, where the supply is
+ * fixed and every token has an owner.
+ *
+ * A row is written before the transfer and marked failed if it never lands, so
+ * a grant that did not arrive does not use up a wallet's turn. A row that is
+ * still pending counts against the wait, which is what stops two requests
+ * arriving together from paying out twice.
+ */
+export const faucetGrants = pgTable(
+  "faucet_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The wallet that asked, which is the only one it can pay. */
+    wallet: text("wallet").notNull(),
+    /** Base units sent. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    status: text("status").$type<"pending" | "sent" | "failed">().notNull().default("pending"),
+    signature: text("signature"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("faucet_grants_wallet_idx").on(t.wallet, t.createdAt)],
+);
+
+/**
+ * What one grant hands out, in chips. Enough to rent at the 200-chip fee and
+ * still fund an agent well past the 900 the old free seed gave, so a tester can
+ * see a deposit make a difference rather than only afford the minimum.
+ */
+export const FAUCET_GRANT_CHIPS = 2_000;
+/** How long a wallet waits between grants. */
+export const FAUCET_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
  * Stake bands: money scales, not ceilings. Every amount in a match is multiplied
  * by the band's factor, so the decision each agent faces is identical in all
  * three - a fold costs the same fraction of the pot everywhere - and the

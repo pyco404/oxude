@@ -68,6 +68,9 @@ These are real, and would each need fixing before anything of value were at stak
 2. **The admin key can upgrade the program**, and so could replace every rule above. It should move to a multisig, or the program should be made immutable.
 3. **Still partly custodial.** Owners can withdraw, but only with the server's co-signature, so the server can refuse or delay a withdrawal. There is no way to deposit back into a vault.
 4. **The settler key is a hot key on the server.** Locally it lives in a file (`.keys/settler.json`); on the deployed site it is a Railway service variable (`CHAIN_SETTLER_SECRET`), readable by anyone with access to that Railway project. There is no HSM, no signing service, and no way to rotate the settler key without upgrading the program — so the only response to a theft is an upgrade by the admin key.
+
+   On devnet the faucet's treasury key is a second hot key, holding the whole devnet stake supply. That supply is worth nothing, and the faucet that spends it refuses any cluster but devnet by the chain's own genesis hash rather than by a variable naming it, so no configuration mistake can point it at real money. There is no faucet on mainnet and there cannot be one: the supply is fixed and every token already has an owner.
+
 5. **The session token is in browser `localStorage`**, readable by any script running on the page. It grants the app's actions, not wallet authority. Serving the API through Next.js on the same origin would allow an HttpOnly cookie instead.
 6. **Nonces and sessions are not garbage-collected.** Expired rows accumulate.
 7. **Rate limits are in memory**, per process. They reset on restart and are not shared across instances.

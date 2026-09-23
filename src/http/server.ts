@@ -42,6 +42,8 @@ import { SURVIVAL, SURVIVAL_HOURS, SURVIVAL_PACE_MINUTES, SURVIVAL_SEED_BALANCE,
 
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { settlementStatus } from "../chain/worker.js";
+import { DEVNET_CHIP_RATE } from "../chain/settlement.js";
+import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
 
 /**
@@ -76,6 +78,17 @@ export type AppOptions = {
   now?: () => number;
   /** The chain, for withdrawals: the settler builds and co-signs them. Without it they are unavailable. */
   chain?: WithdrawalChain;
+  /**
+   * The devnet faucet. Absent on every other cluster, and not by configuration:
+   * what builds it refuses any chain but devnet (src/chain/faucet.ts). Without
+   * it the faucet endpoints answer 503.
+   */
+  faucet?: FaucetChain;
+  /**
+   * Base units to one chip, as the settlement program's config carries it.
+   * Defaults to devnet's fixed rate of one chip to one whole token.
+   */
+  chipRate?: number;
   /**
    * How often autoplay plays one agent, so the panel's countdown matches the
    * loop that is actually running. Defaults to AUTOPLAY_INTERVAL_MS from the
@@ -122,6 +135,7 @@ export function createApp(options: AppOptions): Server {
   const autoplayIntervalMs =
     options.autoplayIntervalMs ?? (Number(process.env["AUTOPLAY_INTERVAL_MS"]) || AUTOPLAY_INTERVAL_MS);
   const elicit = options.elicit ?? defaultElicit;
+  const chipRate = options.chipRate ?? DEVNET_CHIP_RATE;
   // No model unless one is given: scripts/serve.ts passes Haiku when a key is set.
   const characterDeps = options.character ?? NO_MODEL;
   const limiter = new RateLimiter(options.rateLimit ?? { limit: 5, windowMs: 60_000 }, options.now);
@@ -173,6 +187,8 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
     ["GET", /^\/season$/, getSeason],
+    ["GET", /^\/faucet$/, getFaucet],
+    ["POST", /^\/faucet$/, postFaucet],
     ["POST", /^\/preview$/, postPreview],
   ];
 
@@ -643,6 +659,26 @@ export function createApp(options: AppOptions): Server {
   /** Public: platform-wide activity in staked matches. */
   async function getStats() {
     return { activity: await matchActivity(db) };
+  }
+
+  /** Devnet only: whether this wallet can be topped up, and when it can next ask. */
+  async function getFaucet(ctx: Ctx) {
+    const wallet = ctx.requireOwner();
+    if (!options.faucet) throw new HttpError(503, "there is no faucet on this network");
+    return { faucet: await faucetStatus(db, wallet, chipRate) };
+  }
+
+  /** Devnet only: hands this wallet one grant of stake tokens. */
+  async function postFaucet(ctx: Ctx) {
+    const wallet = ctx.requireOwner();
+    const faucet = options.faucet;
+    if (!faucet) throw new HttpError(503, "there is no faucet on this network");
+    try {
+      return { grant: await grantFaucet(db, faucet, wallet, chipRate) };
+    } catch (error) {
+      if (error instanceof FaucetError) throw new HttpError(error.status, error.message);
+      throw error;
+    }
   }
 
   /** Runs a withdrawal step, turning its refusals into HTTP answers. */
