@@ -11,6 +11,7 @@ import { balanceOf } from "../src/db/ledger.js";
 import { affordableBands, agents, chainOps, ledger, MIN_STAKE, STAKE_BANDS, STARTING_BALANCE, withdrawals } from "../src/db/schema.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
 import type { SeedOpenVaultInput } from "../src/chain/seed-settlement.js";
+import { SEED_CHIP_RATE } from "../src/chips.js";
 import type { PreparedWithdrawal } from "../src/chain/common.js";
 
 // Withdrawals over real HTTP, against a fake chain that builds real Solana
@@ -267,7 +268,7 @@ describe("withdrawals", () => {
     const ok = await withdraw(agent.id, "erin", STARTING_BALANCE - floor);
     expect(ok.submitted!.body.withdrawal.status).toBe("confirmed");
     expect(await balanceOf(db, agent.id)).toBe(floor);
-    expect(affordableBands(floor)).toEqual(["A"]);
+    expect(affordableBands(floor, SEED_CHIP_RATE)).toEqual(["A"]);
     const state = await api(`/agents/${agent.id}/withdrawable`, { as: "erin" });
     expect(state.body.withdrawable.minStake).toBe(floor);
     expect(state.body.withdrawable.maxPartial).toBe(0);

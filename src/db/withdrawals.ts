@@ -99,10 +99,23 @@ export type Withdrawable = {
   reason: string | null;
 };
 
-/** What the owner can take now, and what is locked while matches settle. */
+/**
+ * What the owner can take now, and what is locked while matches settle.
+ *
+ * **Seed-funded agents only, for now.** Every figure here is a chip figure read
+ * against a balance, and for a seed-funded agent those are the same unit,
+ * because that flow's rate is one. For a deposit-funded agent they are not, and
+ * the boundary where an owner's chips become base units belongs with the
+ * deposit and top-up screens, which have to say which unit they mean. Until
+ * then this refuses rather than quietly comparing chips against base units -
+ * there is no such agent yet, so nothing is turned away that used to work.
+ */
 export async function withdrawable(db: Db, agentId: string): Promise<Withdrawable> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agent) throw new WithdrawalError(404, "no such agent");
+  if (agent.funding !== "seed") {
+    throw new WithdrawalError(503, "withdrawals from a deposit-funded agent are not wired up yet");
+  }
   const balance = await balanceOf(db, agentId);
   const pending = await unsettledOps(db, agentId);
   const locked = pending.filter((op) => op.kind === "settle").reduce((sum, op) => sum + op.amount, 0);

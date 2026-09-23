@@ -6,6 +6,7 @@ import { record } from "../src/db/ledger.js";
 import { createAgent, hasOutflowRoom, pickOpponent, setBand } from "../src/db/runner.js";
 import { autoplayStatus, checkAgent, dueAgents, isHold, markSeen, setAutoplay, sinceYouLeft, stopAgent, tick } from "../src/db/autoplay.js";
 import { someWallet } from "./helpers.js";
+import { SEED_CHIP_RATE } from "../src/chips.js";
 
 const fresh = async () => {
   const c = await connect();
@@ -249,7 +250,7 @@ describe("autoplay: the popular-opponent budget", () => {
     expect(await hasOutflowRoom(db, row.id, worst)).toBe(true);
 
     // Fill the window to one chip short of what a full loss needs.
-    const budget = outflowBudget(900);
+    const budget = outflowBudget(900, SEED_CHIP_RATE);
     await db.insert(chainOps).values({ kind: "settle", fromAgent: row.id, amount: budget - worst + 1 });
     expect(await hasOutflowRoom(db, row.id, worst)).toBe(false);
     await close();
@@ -260,7 +261,7 @@ describe("autoplay: the popular-opponent budget", () => {
     const row = await createAgent(db, { name: "Refused", presetName: "Anchor", ownerId: someWallet() });
     const worst = bandByName("B").worstMatch;
     // 'failed' is the one status that does not count: the chain never took it.
-    await db.insert(chainOps).values({ kind: "settle", fromAgent: row.id, amount: outflowBudget(900), status: "failed" });
+    await db.insert(chainOps).values({ kind: "settle", fromAgent: row.id, amount: outflowBudget(900, SEED_CHIP_RATE), status: "failed" });
     expect(await hasOutflowRoom(db, row.id, worst)).toBe(true);
     await close();
   });
@@ -271,7 +272,7 @@ describe("autoplay: the popular-opponent budget", () => {
     const spent = await createAgent(db, { name: "Spent", presetName: "Hammer" });
     const fresh2 = await createAgent(db, { name: "Fresh", presetName: "Mirage" });
     // Everyone else is out of window, so matchmaking has one legal choice.
-    await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900) });
+    await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900, SEED_CHIP_RATE) });
     const pick = await pickOpponent(db, me.id, { minCandidates: 1 });
     expect(pick.opponentId).toBe(fresh2.id);
     await close();
@@ -283,7 +284,7 @@ describe("autoplay: the popular-opponent budget", () => {
     // Two presets - too few for the closest-rating path, so the fallback decides.
     const spent = await createAgent(db, { name: "SpentPreset", presetName: "Hammer" });
     const room = await createAgent(db, { name: "RoomPreset", presetName: "Mirage" });
-    await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900) });
+    await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900, SEED_CHIP_RATE) });
     // Many draws, because the fallback chooses at random: a spent preset must never come up.
     for (let i = 0; i < 20; i++) {
       const pick = await pickOpponent(db, me.id);
@@ -297,7 +298,7 @@ describe("autoplay: the popular-opponent budget", () => {
     const { db, close } = await fresh();
     await house(db, 4);
     const row = await playerOn(db);
-    await db.insert(chainOps).values({ kind: "settle", fromAgent: row.id, amount: outflowBudget(900) });
+    await db.insert(chainOps).values({ kind: "settle", fromAgent: row.id, amount: outflowBudget(900, SEED_CHIP_RATE) });
     const result = await tick(db, { intervalMs: 0 });
     // Waiting, not paused: the window passes on its own.
     expect(result.waiting).toEqual([row.id]);

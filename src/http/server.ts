@@ -42,7 +42,7 @@ import { SURVIVAL, SURVIVAL_HOURS, SURVIVAL_PACE_MINUTES, SURVIVAL_SEED_BALANCE,
 
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { settlementStatus } from "../chain/worker.js";
-import { DEVNET_CHIP_RATE } from "../chain/settlement.js";
+import { DEVNET_CHIP_RATE, rateOf, type Funding } from "../chips.js";
 import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
 
@@ -342,21 +342,22 @@ export function createApp(options: AppOptions): Server {
    * balance can still play, what each would risk, and - when the agent can no
    * longer cover its own band - which cheaper band is still open to it.
    */
-  function bandStatus(row: { band: BandName; balance: number; presetName: string | null }) {
-    const open = affordableBands(row.balance);
+  function bandStatus(row: { band: BandName; balance: number; presetName: string | null; funding: Funding }) {
+    const rate = rateOf(row);
+    const open = affordableBands(row.balance, rate);
     return {
       band: row.band,
       worstMatch: bandByName(row.band).worstMatch,
-      canPlay: canAffordBand(row.balance, row.band),
+      canPlay: canAffordBand(row.balance, row.band, rate),
       /** Bands this balance covers, cheapest upward. Empty means nothing is left but withdrawing. */
       affordable: open,
       /** The best band still open, when the current one is not. Null when none is. */
-      fallback: canAffordBand(row.balance, row.band) ? null : (open.at(-1) ?? null),
+      fallback: canAffordBand(row.balance, row.band, rate) ? null : (open.at(-1) ?? null),
       bands: STAKE_BANDS.map((b) => ({
         name: b.name,
         stakes: { ante: b.ante, baseBet: b.baseBet, raisedBet: b.raisedBet },
         worstMatch: b.worstMatch,
-        affordable: row.balance >= b.worstMatch,
+        affordable: canAffordBand(row.balance, b.name, rate),
         survival: survivalFor(b.name, (row.presetName as PresetName | null) ?? null),
         medianHours: SURVIVAL[b.name].medianHours,
       })),

@@ -74,3 +74,11 @@ export function baseUnits(chips: number, rate: number): number {
 export function chips(amount: number, rate: number): number {
   return Math.trunc(amount / rate);
 }
+
+/**
+ * The rate for a particular agent, from the flow it was rented under. The usual
+ * way to get one: a row that carries `funding` carries its own unit with it.
+ */
+export function rateOf(agent: { funding: Funding }, seasonRate?: number): number {
+  return chipRate(agent.funding, seasonRate);
+}

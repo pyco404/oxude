@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
+import { baseUnits, DEVNET_CHIP_RATE, SEED_CHIP_RATE } from "../src/chips.js";
+const SEED = "seed" as const;
 import { connect, migrate, type Db } from "../src/db/client.js";
 import {
   agents,
@@ -62,30 +64,52 @@ describe("balances", () => {
 
 describe("stakes", () => {
   it("are the band's worst match, whatever either side holds beyond it", () => {
-    const rich = { name: "rich", balance: 5_000 };
+    const rich = { name: "rich", balance: 5_000, funding: SEED } as const;
     // No clamp any more: a band is a money scale, and both sides pay it in full.
     expect(stakeBetween(rich, rich, "A")).toBe(20);
     expect(stakeBetween(rich, rich, "B")).toBe(40);
     expect(stakeBetween(rich, rich, "C")).toBe(60);
     // A bigger balance buys nothing; the band alone decides.
-    expect(stakeBetween({ name: "just enough", balance: 60 }, rich, "C")).toBe(60);
+    expect(stakeBetween({ name: "just enough", balance: 60, funding: SEED }, rich, "C")).toBe(60);
   });
 
   it("refuse a side that cannot cover the band's worst match", () => {
-    const ok = { name: "ok", balance: 900 };
-    expect(() => stakeBetween({ name: "skint", balance: 59 }, ok, "C")).toThrow(StakeError);
-    expect(() => stakeBetween(ok, { name: "skint", balance: 39 }, "B")).toThrow(/cannot cover a band B match/);
+    const ok = { name: "ok", balance: 900, funding: SEED } as const;
+    expect(() => stakeBetween({ name: "skint", balance: 59, funding: SEED }, ok, "C")).toThrow(StakeError);
+    expect(() => stakeBetween(ok, { name: "skint", balance: 39, funding: SEED }, "B")).toThrow(/cannot cover a band B match/);
     // The same balance is fine one band down.
-    expect(stakeBetween({ name: "skint", balance: 39 }, ok, "A")).toBe(20);
+    expect(stakeBetween({ name: "skint", balance: 39, funding: SEED }, ok, "A")).toBe(20);
   });
 
   it("know which bands a balance can still afford", () => {
-    expect(affordableBands(900)).toEqual(["A", "B", "C"]);
-    expect(affordableBands(59)).toEqual(["A", "B"]);
-    expect(affordableBands(39)).toEqual(["A"]);
-    expect(affordableBands(19)).toEqual([]);
-    expect(canAffordBand(20, "A")).toBe(true);
-    expect(canAffordBand(19, "A")).toBe(false);
+    expect(affordableBands(900, SEED_CHIP_RATE)).toEqual(["A", "B", "C"]);
+    expect(affordableBands(59, SEED_CHIP_RATE)).toEqual(["A", "B"]);
+    expect(affordableBands(39, SEED_CHIP_RATE)).toEqual(["A"]);
+    expect(affordableBands(19, SEED_CHIP_RATE)).toEqual([]);
+    expect(canAffordBand(20, "A", SEED_CHIP_RATE)).toBe(true);
+    expect(canAffordBand(19, "A", SEED_CHIP_RATE)).toBe(false);
+  });
+
+  it("ask the same question of a deposit-funded balance, in its own units", () => {
+    // The same chip figures, six decimals down. What changes is the unit the
+    // balance is counted in, never what a band costs.
+    const rate = DEVNET_CHIP_RATE;
+    expect(affordableBands(baseUnits(900, rate), rate)).toEqual(["A", "B", "C"]);
+    expect(affordableBands(baseUnits(59, rate), rate)).toEqual(["A", "B"]);
+    expect(affordableBands(baseUnits(19, rate), rate)).toEqual([]);
+    expect(canAffordBand(baseUnits(20, rate), "A", rate)).toBe(true);
+    expect(canAffordBand(baseUnits(20, rate) - 1, "A", rate)).toBe(false);
+
+    // And a seed balance read at the deposit rate would be a millionth of what
+    // it is - which is why the rate is required rather than defaulted.
+    expect(canAffordBand(900, "A", rate)).toBe(false);
+    expect(canAffordBand(900, "A", SEED_CHIP_RATE)).toBe(true);
+
+    const rich = { name: "rich", balance: baseUnits(5_000, rate), funding: "deposit" } as const;
+    expect(stakeBetween(rich, rich, "C")).toBe(60);
+    expect(() => stakeBetween({ name: "skint", balance: baseUnits(59, rate), funding: "deposit" }, rich, "C")).toThrow(
+      /skint cannot cover a band C match: balance 59, needs 60/,
+    );
   });
 
   it("normalise a net onto band B's scale so bands compare", () => {
@@ -299,7 +323,7 @@ describe("running out", () => {
     expect(retiredAfter).toBeGreaterThan(0);
     // Retired only when no band at all is open to it, which may leave small change.
     expect(await balanceOf(d, doomed.id)).toBeLessThan(bandByName("A").worstMatch);
-    expect(affordableBands(await balanceOf(d, doomed.id))).toEqual([]);
+    expect(affordableBands(await balanceOf(d, doomed.id), SEED_CHIP_RATE)).toEqual([]);
 
     const [row] = await d.select().from(agents).where(eq(agents.id, doomed.id));
     expect(row!.retiredAt).not.toBeNull();

@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { pickOpponent, runMatch } from "./runner.js";
 import { balanceOf, StakeError } from "./ledger.js";
+import { chips, rateOf } from "../chips.js";
 import { recordEvent } from "./events.js";
 import { rentalOpen, rentalOpenSql } from "./rental.js";
 import { headlineFor } from "../transcript.js";
@@ -56,7 +57,11 @@ export async function checkAgent(db: Db, row: AgentRow): Promise<AutoplayCheck> 
     return { play: false, reason: "withdrawal", detail: "a withdrawal is settling" };
   }
 
-  const balance = await balanceOf(db, row.id);
+  // In chips from here down: the floor is the owner's figure and the band's
+  // worst match is a chip figure, so the balance meets them in their own unit.
+  // Rounding down is the conservative direction - a balance a fraction of a
+  // chip short of covering a match is treated as short, which it is.
+  const balance = chips(await balanceOf(db, row.id), rateOf(row));
   const worst = bandByName(row.band).worstMatch;
   if (balance < worst) {
     return {
@@ -373,7 +378,9 @@ export async function autoplayStatus(
 ): Promise<AutoplayStatus> {
   const intervalMs = options.intervalMs ?? AUTOPLAY_INTERVAL_MS;
   const now = options.now ?? new Date();
-  const balance = await balanceOf(db, row.id);
+  // Chips: this is what the owner's panel says, and it is read against the
+  // floor and the band's worst match, both of which are chips.
+  const balance = chips(await balanceOf(db, row.id), rateOf(row));
 
   const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const [today] = await db

@@ -12,6 +12,7 @@ import {
   type BandName,
   type LedgerReason,
 } from "./schema.js";
+import { chips, rateOf, type Funding } from "../chips.js";
 
 /**
  * Money. Balances are derived from the ledger, never accumulated in a column,
@@ -76,15 +77,16 @@ export class StakeError extends Error {}
  * bands play identically.
  */
 export function stakeBetween(
-  a: { name: string; balance: number },
-  b: { name: string; balance: number },
+  a: { name: string; balance: number; funding: Funding },
+  b: { name: string; balance: number; funding: Funding },
   band: BandName,
 ): number {
   const worst = bandByName(band).worstMatch;
   for (const side of [a, b]) {
-    if (!canAffordBand(side.balance, band)) {
+    const rate = rateOf(side);
+    if (!canAffordBand(side.balance, band, rate)) {
       throw new StakeError(
-        `${side.name} cannot cover a band ${band} match: balance ${side.balance}, needs ${worst}`,
+        `${side.name} cannot cover a band ${band} match: balance ${chips(side.balance, rate)}, needs ${worst}`,
       );
     }
   }
@@ -106,8 +108,10 @@ export const settle = (net: number): number => net;
  * owner's choice, so nothing here spends it on their behalf.
  */
 export async function retireIfBroke(db: Writable, agentId: string): Promise<boolean> {
+  const [row] = await db.select({ funding: agents.funding }).from(agents).where(eq(agents.id, agentId)).limit(1);
+  if (!row) return false;
   const balance = await balanceOf(db, agentId);
-  if (affordableBands(balance).length > 0) return false;
+  if (affordableBands(balance, rateOf(row)).length > 0) return false;
   await db.update(agents).set({ retiredAt: new Date(), retiredReason: "broke" }).where(eq(agents.id, agentId));
   return true;
 }

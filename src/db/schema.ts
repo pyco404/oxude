@@ -15,7 +15,7 @@ import {
 import type { MatchLog, Seat } from "../types.js";
 import type { Policy } from "../agents/policy.js";
 import type { Deal, Stakes, TurnOrder } from "../round.js";
-import type { Funding } from "../chips.js";
+import { baseUnits, type Funding } from "../chips.js";
 
 /**
  * Everything needed to replay a match: the rules it was played under, plus the
@@ -635,9 +635,13 @@ export const OUTFLOW_BUDGET_FLOOR = 120;
  */
 export const OUTFLOW_WINDOW_MS = 15 * 60 * 1000;
 
-/** The most this vault should be asked to pay out inside one window. */
-export function outflowBudget(balance: number): number {
-  return Math.max(OUTFLOW_BUDGET_FLOOR, Math.floor(balance / OUTFLOW_BUDGET_DIVISOR));
+/**
+ * The most this vault should be asked to pay out inside one window, in base
+ * units. `rate` converts the chip floor; the proportional part is already in
+ * whatever unit the balance is.
+ */
+export function outflowBudget(balance: number, rate: number): number {
+  return Math.max(baseUnits(OUTFLOW_BUDGET_FLOOR, rate), Math.floor(balance / OUTFLOW_BUDGET_DIVISOR));
 }
 
 /** Each owner's first elicitation costs them nothing. */
@@ -720,20 +724,26 @@ export function bandStakes(name: BandName): Stakes {
 }
 
 /**
- * Whether a balance can cover this band's worst match. With no clamp, a match
- * that cannot be paid cannot be played, so this is what decides both
- * matchmaking and retirement.
+ * Whether a balance in base units can cover this band's worst match. With no
+ * clamp, a match that cannot be paid cannot be played, so this is what decides
+ * both matchmaking and retirement.
+ *
+ * The band's figures are chips, the balance is base units, and `rate` is what
+ * joins them - the agent's, from the flow it was rented under (src/chips.ts).
+ * It is required rather than defaulted, so that a caller reaching a
+ * deposit-funded agent cannot quietly get the seed flow's answer.
  */
-export function canAffordBand(balance: number, name: BandName): boolean {
-  return balance >= bandByName(name).worstMatch;
+export function canAffordBand(balance: number, name: BandName, rate: number): boolean {
+  return balance >= baseUnits(bandByName(name).worstMatch, rate);
 }
 
 /**
- * The bands a balance could play, richest first. Used to tell an owner what is
- * still open to them once they are down, never to move an agent on its own.
+ * The bands a balance in base units could play, richest first. Used to tell an
+ * owner what is still open to them once they are down, never to move an agent
+ * on its own.
  */
-export function affordableBands(balance: number): BandName[] {
-  return STAKE_BANDS.filter((b) => balance >= b.worstMatch).map((b) => b.name);
+export function affordableBands(balance: number, rate: number): BandName[] {
+  return STAKE_BANDS.filter((b) => balance >= baseUnits(b.worstMatch, rate)).map((b) => b.name);
 }
 
 /**

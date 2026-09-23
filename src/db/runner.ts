@@ -39,6 +39,7 @@ import {
 } from "./schema.js";
 import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, StakeError } from "./ledger.js";
 import { recordEvent } from "./events.js";
+import { baseUnits, chips, rateOf } from "../chips.js";
 import { rentalEndFor, rentalOpen, rentalOpenSql } from "./rental.js";
 import { seasonAt } from "../season.js";
 import { bandFactor, standings, type Standing } from "./standings.js";
@@ -242,8 +243,8 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   // The band's worst match, which both sides must be able to cover outright.
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, funding: rowA.funding },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, funding: rowB.funding },
     band,
   );
   const seed = options.seed ?? newSeed();
@@ -343,8 +344,8 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
   const rules = bandRules(band);
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
   const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0 },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0 },
+    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, funding: rowA.funding },
+    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, funding: rowB.funding },
     band,
   );
   const seed = options.seed ?? newSeed();
@@ -541,13 +542,16 @@ const committedOutflow = (agentId: unknown) => sql<number>`coalesce((
  * walking into it.
  */
 export async function hasOutflowRoom(db: Db, agentId: string, worstMatch: number): Promise<boolean> {
+  const [agent] = await db.select({ funding: agents.funding }).from(agents).where(eq(agents.id, agentId)).limit(1);
+  if (!agent) return false;
+  const rate = rateOf(agent);
   const [row] = await db
     .select({ balance: sql<number>`coalesce(sum(${ledger.amount})::bigint, 0)`, spent: committedOutflow(agentId) })
     .from(ledger)
     .where(eq(ledger.agentId, agentId));
   const balance = Number(row?.balance ?? 0);
   const spent = Number(row?.spent ?? 0);
-  return spent + worstMatch <= outflowBudget(balance);
+  return spent + baseUnits(worstMatch, rate) <= outflowBudget(balance, rate);
 }
 
 /**
@@ -581,6 +585,9 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
       presetName: agents.presetName,
       rating: agents.trueRating,
       balance: solvent.balance,
+      // Each candidate's own unit: its funding flow decides how many base
+      // units a chip of its balance is.
+      funding: agents.funding,
       spent: committedOutflow(agents.id),
     })
     .from(agents)
@@ -602,7 +609,10 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   // Drop anyone whose vault could not pay a full loss inside the chain's
   // window. Both sides are checked: this agent can lose too, and its own vault
   // is under exactly the same cap.
-  const candidates = all.filter((c) => Number(c.spent) + worstMatch <= outflowBudget(Number(c.balance)));
+  const candidates = all.filter((c) => {
+    const rate = rateOf(c);
+    return Number(c.spent) + baseUnits(worstMatch, rate) <= outflowBudget(Number(c.balance), rate);
+  });
   if (!(await hasOutflowRoom(db, agentId, worstMatch))) {
     throw new StakeError(
       `${me.name} has settled as much as its vault can pay out in one window. It plays again within fifteen minutes.`,
@@ -816,7 +826,9 @@ const publicAgentColumns = {
   rankedNet: ratings.rankedNet,
   recentForm: ratings.rollingNet50,
   band: agents.band,
+  /** Base units. The unit is `funding`'s to say, so it travels beside it. */
   balance: sql<number>`coalesce((select sum(${ledger.amount})::bigint from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`,
+  funding: agents.funding,
   retired: sql<boolean>`${agents.retiredAt} is not null`,
   /** A house agent: unowned, seeded so a first player has someone to meet. */
   house: sql<boolean>`${agents.ownerId} is null`,
@@ -908,9 +920,10 @@ export async function setBand(db: Db, agentId: string, ownerId: string | null, b
   const row = await ownerAgent(db, agentId, ownerId);
   if (!row) throw new Error(`no agent ${agentId}`);
   const balance = await balanceOf(db, agentId);
-  if (!canAffordBand(balance, band)) {
+  const rate = rateOf(row);
+  if (!canAffordBand(balance, band, rate)) {
     throw new StakeError(
-      `${row.name} holds ${balance} and cannot cover a band ${band} match, which can move ${bandByName(band).worstMatch}`,
+      `${row.name} holds ${chips(balance, rate)} and cannot cover a band ${band} match, which can move ${bandByName(band).worstMatch}`,
     );
   }
   await db.update(agents).set({ band }).where(eq(agents.id, agentId));
