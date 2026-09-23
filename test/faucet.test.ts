@@ -123,8 +123,11 @@ describe("the devnet faucet", () => {
     const who = wallet();
     await grantFaucet(db, chain, who, RATE);
     await expect(grantFaucet(db, chain, who, RATE)).rejects.toBeInstanceOf(FaucetError);
-    const error = await grantFaucet(db, chain, who, RATE).catch((e: unknown) => e as FaucetError);
-    expect(error.status).toBe(429);
+    const error = await grantFaucet(db, chain, who, RATE).then(
+      () => null,
+      (e: unknown) => e as FaucetError,
+    );
+    expect(error?.status).toBe(429);
   });
 
   describe("the cluster gate", () => {
