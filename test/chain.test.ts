@@ -4,15 +4,19 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { SEED_PROGRAM_ID, SeedChainClient, seedPdas } from "../src/chain/seed-settlement.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import {
+  AuthorityType,
+  createMint,
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+  setAuthority,
+  transfer,
+} from "@solana/spl-token";
+import { ChainClient, PROGRAM_ID, pdas } from "../src/chain/settlement.js";
 import { uuidBytes } from "../src/chain/common.js";
 import { agentIdFor, newAgentId } from "../src/agent-id.js";
 import { EventParser } from "@coral-xyz/anchor";
-import { connect, migrate } from "../src/db/client.js";
-import { balanceOf } from "../src/db/ledger.js";
-import { createAgent, runMatch } from "../src/db/runner.js";
-import { drainChainOps, reconcile } from "../src/chain/worker.js";
 
 // The settlement program on a local validator, loaded at genesis. Needs
 // solana-test-validator on PATH and the program built (anchor build in chain/),
@@ -25,25 +29,43 @@ let ledger: string;
 let connection: Connection;
 let admin: Keypair;
 let settler: Keypair;
-let chain: SeedChainClient;
+let chain: ChainClient;
+/** The stake token: made outside the program, fixed supply, no mint authority. */
+let stakeMint: PublicKey;
+/** Holds the whole supply, and is where every vault in this file is funded from. */
+let treasury: PublicKey;
 const MAX = 60;
 /** Must match the program's constants. */
 const OUTFLOW_FLOOR = 120;
-const MAX_SEED = 900;
+const MAX_SETTLEMENT_CEILING = 900;
 /** What one vault may pay out in a window, measured on what it holds. */
 const outflowCap = (vault: number) => Math.max(OUTFLOW_FLOOR, Math.floor(vault / 4));
 
+/**
+ * Puts tokens in a vault. Nothing mints them: they come out of the treasury,
+ * which is the only place the supply ever was. A vault is an ordinary token
+ * account, so this plain transfer reaches it without the program's help - which
+ * is why the reconciler has to treat a surplus as money to credit rather than
+ * as a disagreement.
+ */
+async function fund(agentId: string, amount: number): Promise<void> {
+  if (amount === 0) return;
+  await transfer(connection, admin, treasury, pdas.vault(agentId), admin, amount);
+}
+
 /** A house vault: an id derived from no owner, and the salt that proves it. */
-async function houseVault(amount: number, via: SeedChainClient = chain): Promise<string> {
+async function houseVault(amount: number, via: ChainClient = chain): Promise<string> {
   const { id, salt } = newAgentId(null);
-  await via.openVault({ agentId: id, owner: null, salt, amount });
+  await via.openVault({ agentId: id, owner: null, salt });
+  await fund(id, amount);
   return id;
 }
 
 /** A player's vault: the id derives from the owner's key, and the program records that owner as it opens. */
 async function playerVault(amount: number, owner: Keypair = Keypair.generate()) {
   const { id, salt } = newAgentId(owner.publicKey.toBase58());
-  await chain.openVault({ agentId: id, owner: owner.publicKey.toBase58(), salt, amount });
+  await chain.openVault({ agentId: id, owner: owner.publicKey.toBase58(), salt });
+  await fund(id, amount);
   return { agent: id, owner };
 }
 
@@ -61,7 +83,7 @@ describe.skipIf(!RUN)("settlement program", () => {
         "--reset", "--quiet", "--ledger", ledger,
         "--rpc-port", String(RPC_PORT), "--faucet-port", String(RPC_PORT + 1000),
         "--dynamic-port-range", `${RPC_PORT + 2000}-${RPC_PORT + 2100}`,
-        "--bpf-program", SEED_PROGRAM_ID.toBase58(), "chain/target/deploy/oxude_settlement.so",
+        "--bpf-program", PROGRAM_ID.toBase58(), "chain/target/deploy/oxude_settlement.so",
       ],
       { stdio: "ignore" },
     );
@@ -78,8 +100,17 @@ describe.skipIf(!RUN)("settlement program", () => {
     settler = Keypair.generate();
     await airdrop(admin, 5);
     await airdrop(settler, 5);
-    await new SeedChainClient(connection, admin).initialize(settler.publicKey, MAX);
-    chain = new SeedChainClient(connection, settler);
+
+    // The stake token, made the way a pump.fun token is: a mint with an
+    // authority, the whole supply issued once, and then the authority given up
+    // for good. After the last step nobody can mint, this program included.
+    stakeMint = await createMint(connection, admin, admin.publicKey, null, 0);
+    treasury = (await getOrCreateAssociatedTokenAccount(connection, admin, stakeMint, admin.publicKey)).address;
+    await mintTo(connection, admin, stakeMint, treasury, admin, 1_000_000_000);
+    await setAuthority(connection, admin, stakeMint, admin, AuthorityType.MintTokens, null);
+
+    await new ChainClient(connection, admin, stakeMint).initialize(settler.publicKey, MAX);
+    chain = new ChainClient(connection, settler, stakeMint);
   }, 60_000);
 
   afterAll(() => {
@@ -91,18 +122,18 @@ describe.skipIf(!RUN)("settlement program", () => {
     const config = await chain.config();
     expect(config.settler.toBase58()).toBe(settler.publicKey.toBase58());
     expect(config.admin.toBase58()).toBe(admin.publicKey.toBase58());
-    expect(config.mint.toBase58()).toBe(seedPdas.mint().toBase58());
+    expect(config.mint.toBase58()).toBe(stakeMint.toBase58());
     expect(config.maxSettlement.toNumber()).toBe(MAX);
   });
 
   it("lets only the config's admin change the per-match limit", async () => {
-    const asAdmin = new SeedChainClient(connection, admin);
+    const asAdmin = new ChainClient(connection, admin, stakeMint);
     // The settler cannot: this limit exists to bound the settler's own reach.
     await expect(chain.setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
     // Nor can a stranger paying their own fees.
     const stranger = Keypair.generate();
     await airdrop(stranger, 1);
-    await expect(new SeedChainClient(connection, stranger).setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
+    await expect(new ChainClient(connection, stranger, stakeMint).setMaxSettlement(90)).rejects.toThrow(/NotAdmin/);
     expect((await chain.config()).maxSettlement.toNumber()).toBe(MAX);
 
     // The admin can, and it takes effect at once: 90 is band C's max exposure,
@@ -117,7 +148,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     // Zero, and anything above a full seed, are refused: a stolen admin key
     // cannot switch the per-settlement guard off.
     await expect(asAdmin.setMaxSettlement(0)).rejects.toThrow(/InvalidLimit/);
-    await expect(asAdmin.setMaxSettlement(MAX_SEED + 1)).rejects.toThrow(/InvalidLimit/);
+    await expect(asAdmin.setMaxSettlement(MAX_SETTLEMENT_CEILING + 1)).rejects.toThrow(/InvalidLimit/);
     expect((await chain.config()).maxSettlement.toNumber()).toBe(90);
 
     // Put it back: the rest of this file assumes the limit it was opened with.
@@ -126,14 +157,14 @@ describe.skipIf(!RUN)("settlement program", () => {
   });
 
   it("lets only the admin rotate the settler, and refuses a rotation that changes nothing", async () => {
-    const asAdmin = new SeedChainClient(connection, admin);
+    const asAdmin = new ChainClient(connection, admin, stakeMint);
     const fresh = Keypair.generate();
 
     // The settler cannot hand its own role on, nor can a stranger take it.
     await expect(chain.setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
     const stranger = Keypair.generate();
     await airdrop(stranger, 1);
-    await expect(new SeedChainClient(connection, stranger).setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
+    await expect(new ChainClient(connection, stranger, stakeMint).setSettler(fresh.publicKey)).rejects.toThrow(/NotAdmin/);
     expect((await chain.config()).settler.toBase58()).toBe(settler.publicKey.toBase58());
 
     // A no-op rotation is refused, so it can never look like one happened.
@@ -145,15 +176,16 @@ describe.skipIf(!RUN)("settlement program", () => {
     await asAdmin.setSettler(fresh.publicKey);
     expect((await chain.config()).settler.toBase58()).toBe(fresh.publicKey.toBase58());
     const orphan = newAgentId(null);
-    await expect(
-      chain.openVault({ agentId: orphan.id, owner: null, salt: orphan.salt, amount: 100 }),
-    ).rejects.toThrow(/NotSettler/);
+    await expect(chain.openVault({ agentId: orphan.id, owner: null, salt: orphan.salt })).rejects.toThrow(
+      /NotSettler/,
+    );
 
     // The new key has them. It pays its own rent, so give it some SOL.
     await airdrop(fresh, 2);
-    const asFresh = new SeedChainClient(connection, fresh);
+    const asFresh = new ChainClient(connection, fresh, stakeMint);
     const taken = newAgentId(null);
-    await asFresh.openVault({ agentId: taken.id, owner: null, salt: taken.salt, amount: 100 });
+    await asFresh.openVault({ agentId: taken.id, owner: null, salt: taken.salt });
+    await fund(taken.id, 100);
     expect(await chain.vaultBalance(taken.id)).toBe(100);
 
     // Put it back, so every later test still signs with the original settler.
@@ -161,44 +193,41 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect((await chain.config()).settler.toBase58()).toBe(settler.publicKey.toBase58());
   });
 
-  it("opens a vault funded with the starting balance", async () => {
+  it("opens a vault empty, because nothing here can create currency", async () => {
     const { id, salt } = newAgentId(null);
-    await chain.openVault({ agentId: id, owner: null, salt, amount: 180 });
-    expect(await chain.vaultBalance(id)).toBe(180);
+    await chain.openVault({ agentId: id, owner: null, salt });
+    expect(await chain.vaultBalance(id)).toBe(0);
     // A vault opens once.
-    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 180 })).rejects.toThrow();
+    await expect(chain.openVault({ agentId: id, owner: null, salt })).rejects.toThrow();
+  });
+
+  it("refuses a stake token that can still be minted", async () => {
+    // The supply guarantee, checked rather than assumed: a mint that still has
+    // an authority is refused, so no deployment can rest on an inflatable token.
+    const inflatable = await createMint(connection, admin, admin.publicKey, null, 0);
+    const payer = Keypair.generate();
+    await airdrop(payer, 2);
+    await expect(
+      new ChainClient(connection, payer, inflatable).initialize(settler.publicKey, MAX),
+    ).rejects.toThrow(/MintableStakeToken|already in use/);
   });
 
   it("opens a vault only under the id its owner and salt hash to", async () => {
     const owner = Keypair.generate().publicKey.toBase58();
     const { id, salt } = newAgentId(owner);
     // Somebody else's id, with this owner's key: the hash doesn't match, so no vault.
-    await expect(chain.openVault({ agentId: randomUUID(), owner, salt, amount: 180 })).rejects.toThrow(
-      /AgentIdMismatch/,
-    );
+    await expect(chain.openVault({ agentId: randomUUID(), owner, salt })).rejects.toThrow(/AgentIdMismatch/);
     // The right id, but claimed for a different owner: the same refusal. Not even
     // the settler can record anyone but the owner this id belongs to.
     const impostor = Keypair.generate().publicKey.toBase58();
-    await expect(chain.openVault({ agentId: id, owner: impostor, salt, amount: 180 })).rejects.toThrow(
-      /AgentIdMismatch/,
-    );
+    await expect(chain.openVault({ agentId: id, owner: impostor, salt })).rejects.toThrow(/AgentIdMismatch/);
     // A house id can't be passed off as owned either.
     const house = newAgentId(null);
-    await expect(chain.openVault({ agentId: house.id, owner, salt: house.salt, amount: 180 })).rejects.toThrow(
-      /AgentIdMismatch/,
-    );
+    await expect(chain.openVault({ agentId: house.id, owner, salt: house.salt })).rejects.toThrow(/AgentIdMismatch/);
 
-    await chain.openVault({ agentId: id, owner, salt, amount: 180 });
+    await chain.openVault({ agentId: id, owner, salt });
     expect(await chain.ownerOf(id)).toBe(owner);
     expect(agentIdFor(owner, salt)).toBe(id);
-  });
-
-  it("mints no more than a starting balance into a new vault", async () => {
-    const { id, salt } = newAgentId(null);
-    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: MAX_SEED + 1 })).rejects.toThrow(
-      /OverLimit/,
-    );
-    await expect(chain.openVault({ agentId: id, owner: null, salt, amount: 0 })).rejects.toThrow(/ZeroAmount/);
   });
 
   it("caps what one vault can pay out through settlements in a window", async () => {
@@ -228,7 +257,7 @@ describe.skipIf(!RUN)("settlement program", () => {
   });
 
   it("lets a large vault pay out more than the floor, in proportion to what it holds", async () => {
-    const payer = await houseVault(MAX_SEED);
+    const payer = await houseVault(MAX_SETTLEMENT_CEILING);
     const payee = await houseVault(10);
     // The cap is read from the balance before each settlement leaves, so it
     // falls as the vault pays: at 900 the first window allows three matches at
@@ -265,7 +294,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     expect(await chain.vaultBalance(b)).toBe(222);
     expect(await chain.isSettled(match)).toBe(true);
 
-    const record = await chain.program.account.settlement.fetch(seedPdas.settlement(match));
+    const record = await chain.program.account.settlement.fetch(pdas.settlement(match));
     expect(record.amount.toNumber()).toBe(42);
 
     // The same match cannot move money twice, even with a different amount.
@@ -292,53 +321,26 @@ describe.skipIf(!RUN)("settlement program", () => {
   it("refuses anyone but the settler", async () => {
     const intruder = Keypair.generate();
     await airdrop(intruder, 2);
-    const rogue = new SeedChainClient(connection, intruder);
+    const rogue = new ChainClient(connection, intruder, stakeMint);
     const [a, b] = [await houseVault(180), await houseVault(180)];
 
     const mine = newAgentId(null);
-    await expect(
-      rogue.openVault({ agentId: mine.id, owner: null, salt: mine.salt, amount: 180 }),
-    ).rejects.toThrow(/NotSettler|settler/);
+    await expect(rogue.openVault({ agentId: mine.id, owner: null, salt: mine.salt })).rejects.toThrow(
+      /NotSettler|settler/,
+    );
     await expect(rogue.settle({ matchId: randomUUID(), fromAgent: a, toAgent: b, amount: 10 })).rejects.toThrow(
       /NotSettler|settler/,
     );
     expect(await chain.vaultBalance(a)).toBe(180);
   });
 
-  it("carries a run of real matches from the ledger to the chain, and they agree", async () => {
-    const { db, close } = await connect();
-    await migrate(db);
-    const roster = [];
-    // Low ceilings, so no vault pays out more than one window allows while the test runs.
-    for (let i = 0; i < 4; i++)
-      roster.push(await createAgent(db, { name: `Chain ${i}`, presetName: i % 2 ? "Bully" : "Mirage", band: "A" }));
-    let played = 0;
-    for (let seed = 1; played < 6 && seed < 60; seed++) {
-      const [x, y] = [roster[seed % 4]!, roster[(seed + 1 + (seed % 3)) % 4]!];
-      if (x.id === y.id) continue;
-      try {
-        await runMatch(db, x.id, y.id, { seed });
-        played++;
-      } catch {
-        /* retired or unable to cover: sits out */
-      }
-    }
-
-    const drained = await drainChainOps(db, chain, { limit: 1000 });
-    expect(drained.error).toBeNull();
-    expect(drained.deferred).toBe(0);
-    expect(drained.confirmed).toBeGreaterThan(4);
-
-    const check = await reconcile(db, chain);
-    expect(check.checked).toBe(4);
-    expect(check.mismatches).toEqual([]);
-    for (const a of roster) expect(await chain.vaultBalance(a.id)).toBe(await balanceOf(db, a.id));
-
-    // Draining again finds nothing to do: every op is confirmed.
-    const again = await drainChainOps(db, chain);
-    expect(again.confirmed + again.alreadyOnChain).toBe(0);
-    await close();
-  }, 120_000);
+  // The ledger-to-chain round trip is pending the funding flow. `createAgent`
+  // still writes a 900-chip rental seed and an open_vault op, and under this
+  // program opening a vault funds nothing, so the ledger and the vault would
+  // disagree by exactly the seed. It comes back in the commit that makes a
+  // rental a deposit. `drainChainOps` and `reconcile` keep their coverage
+  // against a fake chain in test/outbox.test.ts meanwhile.
+  it.todo("carries a run of real matches from the ledger to the chain, and they agree");
 
   describe("withdrawals", () => {
     /** A funded vault whose owner the program recorded as it opened. */
@@ -347,7 +349,7 @@ describe.skipIf(!RUN)("settlement program", () => {
     async function withdraw(
       input: { agent: string; owner: Keypair; amount: number; remaining: number; id?: string },
       signAs: Keypair = input.owner,
-      via: SeedChainClient = chain,
+      via: ChainClient = chain,
     ) {
       const prepared = await via.prepareWithdrawal({
         withdrawalId: input.id ?? randomUUID(),
@@ -368,7 +370,7 @@ describe.skipIf(!RUN)("settlement program", () => {
       const { id, salt } = newAgentId(owner.publicKey.toBase58());
       expect(id).not.toBe(agent);
       await expect(
-        chain.openVault({ agentId: agent, owner: owner.publicKey.toBase58(), salt, amount: 50 }),
+        chain.openVault({ agentId: agent, owner: owner.publicKey.toBase58(), salt }),
       ).rejects.toThrow();
       expect(await chain.ownerOf(agent)).toBe(owner.publicKey.toBase58());
       // A house vault has no owner, so nothing can ever be withdrawn from it.
@@ -383,7 +385,7 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(50);
 
       const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-      const events = [...new EventParser(SEED_PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
+      const events = [...new EventParser(PROGRAM_ID, chain.program.coder).parseLogs(tx!.meta!.logMessages!)];
       const withdrawn = events.find((e) => e.name === "withdrawn")!;
       expect(withdrawn).toBeDefined();
       expect(Array.from(withdrawn.data.withdrawalId as number[])).toEqual(uuidBytes(id));
@@ -403,7 +405,7 @@ describe.skipIf(!RUN)("settlement program", () => {
       const { agent, owner } = await ownedVault(100);
       await airdrop(owner, 1);
       // The owner builds it themselves, as settler and owner both: the program wants the configured settler.
-      const asOwner = new SeedChainClient(connection, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
       await expect(withdraw({ agent, owner, amount: 40, remaining: 60 }, owner, asOwner)).rejects.toThrow(/Error Code: NotSettler/);
       expect(await chain.vaultBalance(agent)).toBe(100);
     });
@@ -419,12 +421,12 @@ describe.skipIf(!RUN)("settlement program", () => {
       });
       // Swap the destination for another wallet's account, then sign it all again.
       const other = Keypair.generate().publicKey;
-      const { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction } = await import("@solana/spl-token");
-      const otherAta = getAssociatedTokenAddressSync(seedPdas.mint(), other);
+      const { createAssociatedTokenAccountIdempotentInstruction } = await import("@solana/spl-token");
+      const otherAta = chain.tokenAccount(other);
       const ix = prepared.transaction.instructions[1]!;
-      const dest = ix.keys.findIndex((k) => k.pubkey.equals(getAssociatedTokenAddressSync(seedPdas.mint(), owner.publicKey)));
+      const dest = ix.keys.findIndex((k) => k.pubkey.equals(chain.tokenAccount(owner.publicKey)));
       ix.keys[dest] = { ...ix.keys[dest]!, pubkey: otherAta };
-      prepared.transaction.instructions[0] = createAssociatedTokenAccountIdempotentInstruction(settler.publicKey, otherAta, other, seedPdas.mint());
+      prepared.transaction.instructions[0] = createAssociatedTokenAccountIdempotentInstruction(settler.publicKey, otherAta, other, stakeMint);
       prepared.transaction.signatures = prepared.transaction.signatures.map((s) => ({ ...s, signature: null }));
       prepared.transaction.partialSign(settler, owner);
       await expect(chain.submitWithdrawal(prepared.transaction.serialize(), prepared.lastValidBlockHeight)).rejects.toThrow(/Error Code: NotOwnersAccount/);

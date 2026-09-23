@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-oxude_settlement = "EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir"
+oxude_settlement = "HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy"
 
 [programs.devnet]
-oxude_settlement = "EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir"
+oxude_settlement = "HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy"
 
 [provider]
 cluster = "localnet"

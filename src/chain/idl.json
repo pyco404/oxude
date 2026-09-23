@@ -1,0 +1,1322 @@
+{
+  "address": "HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy",
+  "metadata": {
+    "name": "oxude_settlement",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Oxude devnet settlement: game currency, agent vaults, match settlement records"
+  },
+  "instructions": [
+    {
+      "name": "initialize",
+      "docs": [
+        "One-time setup: the config, pointed at the stake token.",
+        "",
+        "The mint is passed in rather than created here, and it is refused unless",
+        "its mint authority is already `None`. That is the whole of the supply",
+        "guarantee: this program holds no authority to mint, and neither does",
+        "anyone else, so the currency cannot be inflated after this call."
+      ],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The stake token: an ordinary mint made outside this program, whose mint",
+            "authority has already been given up. Checked in `initialize`."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "settler",
+          "type": "pubkey"
+        },
+        {
+          "name": "max_settlement",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "open_owned_vault",
+      "docs": [
+        "Opens a player's agent's empty vault and records its owner, together.",
+        "The agent id must be the hash of that owner's key and the salt, so this",
+        "is the only owner the agent can ever have: whoever sends it, the settler",
+        "included, can't record another, and the record can't be created twice.",
+        "",
+        "The money arrives separately, through `deposit`, which the renting",
+        "transaction carries in the same instruction list."
+      ],
+      "discriminator": [
+        3,
+        231,
+        93,
+        105,
+        192,
+        1,
+        220,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_owner",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "salt",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "open_vault",
+      "docs": [
+        "Opens a house agent's empty vault. It is funded by `deposit`, like any",
+        "other, because there is nothing here that can create currency."
+      ],
+      "discriminator": [
+        181,
+        248,
+        228,
+        67,
+        6,
+        175,
+        37,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "salt",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_max_settlement",
+      "docs": [
+        "Raises or lowers the most a single settlement can move. The admin",
+        "recorded at initialize is the only key that can call it - not the",
+        "settler, whose reach this value is there to limit in the first place.",
+        "It exists so a band with bigger stakes can be priced in without another",
+        "program upgrade, and it is bounded by `MAX_SETTLEMENT_CEILING` so that a",
+        "stolen admin key cannot turn the per-settlement guard off altogether."
+      ],
+      "discriminator": [
+        31,
+        159,
+        143,
+        234,
+        236,
+        242,
+        90,
+        117
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "max_settlement",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_settler",
+      "docs": [
+        "Points the config at a new settler key. The admin recorded at initialize",
+        "is the only key that can call it.",
+        "",
+        "Without this a compromised settler could only be answered by upgrading",
+        "the program, which is slow at exactly the moment speed matters. It",
+        "refuses the key already in place, so a call that would change nothing",
+        "fails loudly rather than looking like a rotation that happened. It also",
+        "refuses the admin's own key: one key holding both roles would undo the",
+        "separation every other check here depends on."
+      ],
+      "discriminator": [
+        18,
+        138,
+        23,
+        84,
+        226,
+        204,
+        94,
+        86
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "The admin recorded on the config, and nobody else."
+          ],
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "settler",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "settle",
+      "docs": [
+        "Moves a match's settled net from the loser's vault to the winner's, and",
+        "records it. The amount was decided and validated off chain; this checks",
+        "the bounds again and refuses to settle the same match twice."
+      ],
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "from_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "from_agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "to_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "to_agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "outflow",
+          "docs": [
+            "The paying vault's outflow window, made the first time it pays."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  117,
+                  116,
+                  102,
+                  108,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "from_agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settlement",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  116,
+                  116,
+                  108,
+                  101,
+                  109,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "match_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "from_agent",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "to_agent",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "docs": [
+        "Moves tokens from an agent's vault to its owner. The owner must sign,",
+        "and must be the owner recorded on chain; the settler co-signs to say",
+        "nothing is in flight. `remaining` is what the ledger says the vault",
+        "holds afterwards: if the vault disagrees, a settlement hasn't landed yet",
+        "and this refuses. The vault is left empty or playable, never between."
+      ],
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "docs": [
+            "Co-signs to say nothing is in flight, and pays the fees and rent."
+          ],
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "Must be the owner recorded on chain for this agent."
+          ],
+          "signer": true,
+          "relations": [
+            "agent_owner"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_owner",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agent_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The owner's own token account for the game currency, and nobody else's."
+          ],
+          "writable": true
+        },
+        {
+          "name": "withdrawal",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  105,
+                  116,
+                  104,
+                  100,
+                  114,
+                  97,
+                  119,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "withdrawal_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "withdrawal_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "agent_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "remaining",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentOwner",
+      "discriminator": [
+        190,
+        101,
+        239,
+        64,
+        153,
+        105,
+        28,
+        196
+      ]
+    },
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "Outflow",
+      "discriminator": [
+        243,
+        63,
+        238,
+        64,
+        255,
+        74,
+        205,
+        145
+      ]
+    },
+    {
+      "name": "Settlement",
+      "discriminator": [
+        55,
+        11,
+        219,
+        33,
+        36,
+        136,
+        40,
+        182
+      ]
+    },
+    {
+      "name": "Withdrawal",
+      "discriminator": [
+        10,
+        45,
+        211,
+        182,
+        129,
+        235,
+        90,
+        82
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "MaxSettlementChanged",
+      "discriminator": [
+        29,
+        218,
+        12,
+        51,
+        181,
+        238,
+        14,
+        95
+      ]
+    },
+    {
+      "name": "Settled",
+      "discriminator": [
+        232,
+        210,
+        40,
+        17,
+        142,
+        124,
+        145,
+        238
+      ]
+    },
+    {
+      "name": "SettlerChanged",
+      "discriminator": [
+        33,
+        54,
+        1,
+        21,
+        216,
+        157,
+        170,
+        61
+      ]
+    },
+    {
+      "name": "VaultOpened",
+      "discriminator": [
+        198,
+        250,
+        195,
+        25,
+        26,
+        107,
+        197,
+        16
+      ]
+    },
+    {
+      "name": "Withdrawn",
+      "discriminator": [
+        20,
+        89,
+        223,
+        198,
+        194,
+        124,
+        219,
+        13
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotSettler",
+      "msg": "Only the configured settler can do this"
+    },
+    {
+      "code": 6001,
+      "name": "NotAdmin",
+      "msg": "Only the configured admin can do this"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidSettler",
+      "msg": "The new settler must differ from the current settler and the admin, and cannot be the default key"
+    },
+    {
+      "code": 6003,
+      "name": "ZeroAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6004,
+      "name": "OverLimit",
+      "msg": "Settlement exceeds the per-match limit"
+    },
+    {
+      "code": 6005,
+      "name": "SameAgent",
+      "msg": "A match cannot settle an agent against itself"
+    },
+    {
+      "code": 6006,
+      "name": "InsufficientVault",
+      "msg": "The paying vault cannot cover this settlement"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidLimit",
+      "msg": "Limit must be greater than zero"
+    },
+    {
+      "code": 6008,
+      "name": "NotOwner",
+      "msg": "Only the agent's recorded owner can withdraw"
+    },
+    {
+      "code": 6009,
+      "name": "NotOwnersAccount",
+      "msg": "Withdrawals go only to the owner's own token account"
+    },
+    {
+      "code": 6010,
+      "name": "LedgerMismatch",
+      "msg": "The vault doesn't match the ledger: a settlement is still in flight"
+    },
+    {
+      "code": 6011,
+      "name": "Unplayable",
+      "msg": "A withdrawal must leave the vault empty or with at least the minimum stake"
+    },
+    {
+      "code": 6012,
+      "name": "AgentIdMismatch",
+      "msg": "The agent id isn't the hash of this owner and salt"
+    },
+    {
+      "code": 6013,
+      "name": "OutflowLimit",
+      "msg": "This vault has paid out all it can in this window"
+    },
+    {
+      "code": 6014,
+      "name": "MintableStakeToken",
+      "msg": "The stake token still has a mint authority: its supply is not fixed"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentOwner",
+      "docs": [
+        "One per agent with an owner: who may withdraw from its vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "settler",
+            "docs": [
+              "The only key that can open vaults and settle."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "max_settlement",
+            "docs": [
+              "The most a single settlement can move."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MaxSettlementChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "u64"
+          },
+          {
+            "name": "max_settlement",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Outflow",
+      "docs": [
+        "One per agent that has paid out through a settlement: its current window."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "window_start",
+            "type": "u64"
+          },
+          {
+            "name": "spent",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Settled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "from_agent",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "to_agent",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Settlement",
+      "docs": [
+        "One per match: its existence is what stops a match settling twice."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "from_agent",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "to_agent",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettlerChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "pubkey"
+          },
+          {
+            "name": "settler",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultOpened",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "docs": [
+              "None for a house agent."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Withdrawal",
+      "docs": [
+        "One per withdrawal: its existence is what stops a withdrawal paying twice."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "withdrawal_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Withdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "withdrawal_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

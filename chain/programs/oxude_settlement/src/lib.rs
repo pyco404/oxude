@@ -8,12 +8,15 @@
 //! - only the configured settler key can open vaults or settle, and only the
 //!   admin can point the config at a different one;
 //! - a single settlement can never move more than `max_settlement`, which only
-//!   the admin key can change and never above `MAX_SEED`; and no
+//!   the admin key can change and never above `MAX_SETTLEMENT_CEILING`; and no
 //!   vault can pay out more than `outflow_cap` of its own balance through
-//!   settlements in one window of `WINDOW_SLOTS`; a vault opens with at most
-//!   `MAX_SEED`, and all vaults opened in one window mint at most `MINT_CAP`
-//!   between them - so a stolen settler key drains and mints slowly enough to
-//!   be stopped;
+//!   settlements in one window of `WINDOW_SLOTS` - so a stolen settler key
+//!   drains slowly enough to be stopped;
+//! - nothing here can create currency. The stake token is an ordinary mint made
+//!   outside this program and handed to `initialize`, which refuses it unless
+//!   its mint authority has already been given up. Every balance therefore
+//!   traces to a deposit somebody made from their own wallet, or to a match
+//!   won from another vault;
 //! - an agent id is bound to its owner: it is the hash of the owner's key and
 //!   a salt, checked as the vault opens, and the owner is recorded in that same
 //!   instruction. No key - the settler's included - can record anyone else as
@@ -37,18 +40,16 @@
 
 use anchor_lang::prelude::*;
 use solana_sha256_hasher::hashv;
-use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir");
+declare_id!("HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy");
 
 pub const CONFIG_SEED: &[u8] = b"config";
-pub const MINT_SEED: &[u8] = b"mint";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const SETTLEMENT_SEED: &[u8] = b"settlement";
 pub const OWNER_SEED: &[u8] = b"owner";
 pub const WITHDRAWAL_SEED: &[u8] = b"withdrawal";
 pub const OUTFLOW_SEED: &[u8] = b"outflow";
-pub const MINT_BUDGET_SEED: &[u8] = b"mint_budget";
 /// Mixed into every agent id, so an id can't be confused with any other hash.
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
@@ -56,10 +57,11 @@ pub const WINDOW_SLOTS: u64 = 1_500;
 /// The least one vault can pay out through settlements in one window. A small
 /// vault is allowed this much even though a quarter of it is less.
 pub const OUTFLOW_FLOOR: u64 = 120;
-/// The most a vault can be opened with: the starting balance.
-pub const MAX_SEED: u64 = 900;
-/// The most all vaults opened in one window can mint between them.
-pub const MINT_CAP: u64 = 20 * MAX_SEED;
+/// The hard ceiling on `max_settlement`, so that even a stolen admin key cannot
+/// turn the per-settlement guard off. Vaults are funded by deposit and have no
+/// ceiling of their own, which is why this one is written out rather than
+/// borrowed from a seed amount that no longer exists.
+pub const MAX_SETTLEMENT_CEILING: u64 = 900;
 /// The smallest stake a match can have. A vault left with less than this
 /// could never play again, so a withdrawal must leave nothing or at least this.
 pub const MIN_STAKE: u64 = 10;
@@ -68,17 +70,22 @@ pub const MIN_STAKE: u64 = 10;
 pub mod oxude_settlement {
     use super::*;
 
-    /// One-time setup: the config, and the game currency's mint (0 decimals,
-    /// minted only by the config PDA).
+    /// One-time setup: the config, pointed at the stake token.
+    ///
+    /// The mint is passed in rather than created here, and it is refused unless
+    /// its mint authority is already `None`. That is the whole of the supply
+    /// guarantee: this program holds no authority to mint, and neither does
+    /// anyone else, so the currency cannot be inflated after this call.
     pub fn initialize(ctx: Context<Initialize>, settler: Pubkey, max_settlement: u64) -> Result<()> {
         require!(max_settlement > 0, OxudeError::InvalidLimit);
+        require!(max_settlement <= MAX_SETTLEMENT_CEILING, OxudeError::InvalidLimit);
+        require!(ctx.accounts.mint.mint_authority.is_none(), OxudeError::MintableStakeToken);
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
         config.settler = settler;
         config.mint = ctx.accounts.mint.key();
         config.max_settlement = max_settlement;
         config.bump = ctx.bumps.config;
-        config.mint_bump = ctx.bumps.mint;
         Ok(())
     }
 
@@ -86,11 +93,11 @@ pub mod oxude_settlement {
     /// recorded at initialize is the only key that can call it - not the
     /// settler, whose reach this value is there to limit in the first place.
     /// It exists so a band with bigger stakes can be priced in without another
-    /// program upgrade, and it is bounded by `MAX_SEED` so that a stolen admin
-    /// key cannot turn the per-settlement guard off altogether.
+    /// program upgrade, and it is bounded by `MAX_SETTLEMENT_CEILING` so that a
+    /// stolen admin key cannot turn the per-settlement guard off altogether.
     pub fn set_max_settlement(ctx: Context<SetMaxSettlement>, max_settlement: u64) -> Result<()> {
         require!(max_settlement > 0, OxudeError::InvalidLimit);
-        require!(max_settlement <= MAX_SEED, OxudeError::InvalidLimit);
+        require!(max_settlement <= MAX_SETTLEMENT_CEILING, OxudeError::InvalidLimit);
         let config = &mut ctx.accounts.config;
         let previous = config.max_settlement;
         config.max_settlement = max_settlement;
@@ -118,36 +125,34 @@ pub mod oxude_settlement {
         Ok(())
     }
 
-    /// Opens an agent's vault and funds it with its starting balance. Called
-    /// when an agent is rented.
-    pub fn open_vault(mut ctx: Context<OpenVault>, agent_id: [u8; 16], salt: [u8; 16], amount: u64) -> Result<()> {
+    /// Opens a house agent's empty vault. It is funded by `deposit`, like any
+    /// other, because there is nothing here that can create currency.
+    pub fn open_vault(_ctx: Context<OpenVault>, agent_id: [u8; 16], salt: [u8; 16]) -> Result<()> {
         require!(agent_id == agent_id_for(&Pubkey::default(), &salt), OxudeError::AgentIdMismatch);
-        let accounts = &mut ctx.accounts;
-        fund_vault(&accounts.config, &mut accounts.mint_budget, ctx.bumps.mint_budget, &accounts.mint, &accounts.vault, &accounts.token_program, amount)?;
-        emit!(VaultOpened { agent_id, owner: None, amount });
+        emit!(VaultOpened { agent_id, owner: None });
         Ok(())
     }
 
-    /// Opens a player's agent's vault and records its owner, together. The
-    /// agent id must be the hash of that owner's key and the salt, so this is
-    /// the only owner the agent can ever have: whoever sends it, the settler
+    /// Opens a player's agent's empty vault and records its owner, together.
+    /// The agent id must be the hash of that owner's key and the salt, so this
+    /// is the only owner the agent can ever have: whoever sends it, the settler
     /// included, can't record another, and the record can't be created twice.
+    ///
+    /// The money arrives separately, through `deposit`, which the renting
+    /// transaction carries in the same instruction list.
     pub fn open_owned_vault(
-        mut ctx: Context<OpenOwnedVault>,
+        ctx: Context<OpenOwnedVault>,
         agent_id: [u8; 16],
         salt: [u8; 16],
         owner: Pubkey,
-        amount: u64,
     ) -> Result<()> {
         require!(owner != Pubkey::default(), OxudeError::AgentIdMismatch);
         require!(agent_id == agent_id_for(&owner, &salt), OxudeError::AgentIdMismatch);
-        let accounts = &mut ctx.accounts;
-        fund_vault(&accounts.config, &mut accounts.mint_budget, ctx.bumps.mint_budget, &accounts.mint, &accounts.vault, &accounts.token_program, amount)?;
-        let record = &mut accounts.agent_owner;
+        let record = &mut ctx.accounts.agent_owner;
         record.agent_id = agent_id;
         record.owner = owner;
         record.bump = ctx.bumps.agent_owner;
-        emit!(VaultOpened { agent_id, owner: Some(owner), amount });
+        emit!(VaultOpened { agent_id, owner: Some(owner) });
         Ok(())
     }
 
@@ -256,17 +261,20 @@ pub fn agent_id_for(owner: &Pubkey, salt: &[u8; 16]) -> [u8; 16] {
 
 /// The most this vault can pay out through settlements in one window: a quarter
 /// of what it holds, but never less than `OUTFLOW_FLOOR`. Proportional so that
-/// a large vault is not held to a small one's limit, and so that the seed can
-/// grow without loosening the cap on every vault below it.
+/// a large vault is not held to a small one's limit.
 ///
 /// `settle` reads this from the balance before each payment leaves, so the cap
 /// falls as the vault pays and what it has already spent chases a falling
 /// target. A window therefore closes at a fifth of the balance it opened with,
 /// not a quarter: spending stops once `spent > (start - spent) / 4`, which is
-/// `spent > start / 5`. A vault seeded at `MAX_SEED` pays out 180 in a window
-/// and keeps 720. That is deliberate - the declining cap is the conservative
-/// reading, and it only bites when one agent is being farmed by a crowd, which
-/// the ledger throttles first. Above the floor, no snapshot is stored.
+/// `spent > start / 5`. A vault holding 900 pays out 180 in a window and keeps
+/// 720. That is deliberate - the declining cap is the conservative reading, and
+/// it only bites when one agent is being farmed by a crowd, which the ledger
+/// throttles first. Above the floor, no snapshot is stored.
+///
+/// Note that with deposits there is no ceiling on what a vault may hold, so a
+/// quarter of a large one is a large number. An absolute per-window ceiling
+/// alongside this proportional one is on the pre-mainnet list (docs/security.md).
 pub fn outflow_cap(vault: u64) -> u64 {
     OUTFLOW_FLOOR.max(vault / 4)
 }
@@ -280,32 +288,6 @@ pub fn charge(window_start: u64, spent: u64, slot: u64, amount: u64, cap: u64) -
     (spent <= cap).then_some((start, spent))
 }
 
-/// Mints a new vault's starting balance, within the per-vault and per-window limits.
-fn fund_vault<'info>(
-    config: &Account<'info, Config>,
-    budget: &mut Account<'info, MintBudget>,
-    budget_bump: u8,
-    mint: &Account<'info, Mint>,
-    vault: &Account<'info, TokenAccount>,
-    token_program: &Program<'info, Token>,
-    amount: u64,
-) -> Result<()> {
-    require!(amount > 0, OxudeError::ZeroAmount);
-    require!(amount <= MAX_SEED, OxudeError::OverLimit);
-    budget.bump = budget_bump;
-    (budget.window_start, budget.spent) =
-        charge(budget.window_start, budget.spent, Clock::get()?.slot, amount, MINT_CAP).ok_or(OxudeError::MintLimit)?;
-    let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config.bump]]];
-    token::mint_to(
-        CpiContext::new_with_signer(
-            token_program.to_account_info(),
-            MintTo { mint: mint.to_account_info(), to: vault.to_account_info(), authority: config.to_account_info() },
-            signer,
-        ),
-        amount,
-    )
-}
-
 #[account]
 #[derive(InitSpace)]
 pub struct Config {
@@ -316,7 +298,6 @@ pub struct Config {
     /// The most a single settlement can move.
     pub max_settlement: u64,
     pub bump: u8,
-    pub mint_bump: u8,
 }
 
 /// One per match: its existence is what stops a match settling twice.
@@ -362,15 +343,6 @@ pub struct Outflow {
     pub bump: u8,
 }
 
-/// One for the program: how much new vaults have minted in the current window.
-#[account]
-#[derive(InitSpace)]
-pub struct MintBudget {
-    pub window_start: u64,
-    pub spent: u64,
-    pub bump: u8,
-}
-
 #[derive(Accounts)]
 pub struct SetSettler<'info> {
     /// The admin recorded on the config, and nobody else.
@@ -393,10 +365,10 @@ pub struct Initialize<'info> {
     pub admin: Signer<'info>,
     #[account(init, payer = admin, space = 8 + Config::INIT_SPACE, seeds = [CONFIG_SEED], bump)]
     pub config: Account<'info, Config>,
-    #[account(init, payer = admin, mint::decimals = 0, mint::authority = config, seeds = [MINT_SEED], bump)]
+    /// The stake token: an ordinary mint made outside this program, whose mint
+    /// authority has already been given up. Checked in `initialize`.
     pub mint: Account<'info, Mint>,
     pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -406,16 +378,7 @@ pub struct OpenVault<'info> {
     pub settler: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler, has_one = mint)]
     pub config: Account<'info, Config>,
-    #[account(mut)]
     pub mint: Account<'info, Mint>,
-    #[account(
-        init_if_needed,
-        payer = settler,
-        space = 8 + MintBudget::INIT_SPACE,
-        seeds = [MINT_BUDGET_SEED],
-        bump
-    )]
-    pub mint_budget: Account<'info, MintBudget>,
     #[account(
         init,
         payer = settler,
@@ -436,16 +399,7 @@ pub struct OpenOwnedVault<'info> {
     pub settler: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = settler @ OxudeError::NotSettler, has_one = mint)]
     pub config: Account<'info, Config>,
-    #[account(mut)]
     pub mint: Account<'info, Mint>,
-    #[account(
-        init_if_needed,
-        payer = settler,
-        space = 8 + MintBudget::INIT_SPACE,
-        seeds = [MINT_BUDGET_SEED],
-        bump
-    )]
-    pub mint_budget: Account<'info, MintBudget>,
     #[account(
         init,
         payer = settler,
@@ -546,7 +500,6 @@ pub struct VaultOpened {
     pub agent_id: [u8; 16],
     /// None for a house agent.
     pub owner: Option<Pubkey>,
-    pub amount: u64,
 }
 
 #[event]
@@ -599,8 +552,8 @@ pub enum OxudeError {
     AgentIdMismatch,
     #[msg("This vault has paid out all it can in this window")]
     OutflowLimit,
-    #[msg("New vaults have minted all they can in this window")]
-    MintLimit,
+    #[msg("The stake token still has a mint authority: its supply is not fixed")]
+    MintableStakeToken,
 }
 
 #[cfg(test)]
@@ -630,9 +583,8 @@ mod tests {
         // The floor and the quarter meet at four times the floor.
         assert_eq!(outflow_cap(4 * OUTFLOW_FLOOR), OUTFLOW_FLOOR);
         assert_eq!(outflow_cap(4 * OUTFLOW_FLOOR + 4), OUTFLOW_FLOOR + 1);
-        // Above that it is proportional: a full seed can pay out a quarter.
-        assert_eq!(outflow_cap(MAX_SEED), MAX_SEED / 4);
-        assert_eq!(outflow_cap(MAX_SEED), 225);
+        // Above that it is proportional: a vault of 900 can pay out a quarter.
+        assert_eq!(outflow_cap(900), 225);
         // No overflow at the top of the range.
         assert_eq!(outflow_cap(u64::MAX), u64::MAX / 4);
     }
