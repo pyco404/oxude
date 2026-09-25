@@ -165,6 +165,70 @@ export class ChainClient {
       .instruction();
   }
 
+  /**
+   * The whole of renting, as one transaction for the owner to sign: the fee
+   * burned, the vault and owner record opened, and the deposit moved in.
+   *
+   * One transaction because the three cannot be allowed to come apart. A fee
+   * burned for a rental that never happened is money taken for nothing; a vault
+   * opened without a fee is a free agent. Solana applies a transaction whole or
+   * not at all, so there is no half-state to recover from and no ordering to
+   * get right - if the owner's balance cannot cover fee plus deposit, all three
+   * fail together and nothing was charged.
+   *
+   * The settler co-signs and pays the account rent, as it does everywhere else
+   * here. The owner's signature is the one thing still missing, and giving it
+   * is what makes renting prove consent: until now the server created agents
+   * for wallets that had signed nothing.
+   */
+  async prepareRental(input: {
+    rentalId: string;
+    agentId: string;
+    owner: string;
+    salt: string;
+    /** Base units to burn. Must equal the price the config carries. */
+    fee: number;
+    /** Base units to move from the owner's wallet into the new vault. */
+    deposit: number;
+  }): Promise<PreparedWithdrawal> {
+    const owner = new PublicKey(input.owner);
+    const salt = Array.from(Buffer.from(input.salt, "hex"));
+    const source = this.tokenAccount(owner);
+
+    const fee = await this.payRentInstruction({ rentalId: input.rentalId, renter: owner, amount: input.fee });
+    const open = await this.program.methods
+      .openOwnedVault(uuidBytes(input.agentId), salt, owner)
+      .accountsPartial({
+        settler: this.signer.publicKey,
+        config: pdas.config(),
+        mint: this.mint,
+        vault: pdas.vault(input.agentId),
+        agentOwner: pdas.owner(input.agentId),
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .instruction();
+    const fund = await this.depositInstruction({ agentId: input.agentId, depositor: owner, amount: input.deposit });
+
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash("confirmed");
+    const transaction = new Transaction({ feePayer: this.signer.publicKey, blockhash, lastValidBlockHeight })
+      // The owner may not have an account for the stake token yet if they were
+      // sent tokens by some other route; opening it here is idempotent.
+      .add(createAssociatedTokenAccountIdempotentInstruction(this.signer.publicKey, source, owner, this.mint))
+      .add(fee, open, fund);
+    transaction.partialSign(this.signer);
+    return { transaction, lastValidBlockHeight };
+  }
+
+  /**
+   * Sends a fully signed rental and waits for it. The same bytes twice are
+   * harmless: the rental record and the vault can each be created once, so the
+   * second attempt is the same transaction and lands or fails as one.
+   */
+  async submitRental(raw: Uint8Array, lastValidBlockHeight: number): Promise<string> {
+    return this.submitWithdrawal(raw, lastValidBlockHeight);
+  }
+
   /** Whether this rental's fee has been paid. Its record exists at most once. */
   async isRentPaid(rentalId: string): Promise<boolean> {
     return (await this.connection.getAccountInfo(pdas.rental(rentalId), "confirmed")) !== null;

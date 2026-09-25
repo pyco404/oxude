@@ -660,6 +660,111 @@ describe.skipIf(!RUN)("settlement program", () => {
     });
   });
 
+  describe("renting, as one transaction", () => {
+    /** Builds the rental, adds the owner's signature to the settler's, sends. */
+    async function rent(
+      owner: Keypair,
+      input: { deposit: number; fee?: number; rentalId?: string; agentId?: string; salt?: string },
+    ) {
+      const made = newAgentId(owner.publicKey.toBase58());
+      const prepared = await chain.prepareRental({
+        rentalId: input.rentalId ?? randomUUID(),
+        agentId: input.agentId ?? made.id,
+        owner: owner.publicKey.toBase58(),
+        salt: input.salt ?? made.salt,
+        fee: input.fee ?? RENT,
+        deposit: input.deposit,
+      });
+      prepared.transaction.partialSign(owner);
+      const signature = await chain.submitRental(prepared.transaction.serialize(), prepared.lastValidBlockHeight);
+      return { agent: input.agentId ?? made.id, signature };
+    }
+
+    /** A wallet holding tokens, ready to rent. */
+    async function walletWith(holding: number): Promise<Keypair> {
+      const key = Keypair.generate();
+      await airdrop(key, 1);
+      const ata = (await getOrCreateAssociatedTokenAccount(connection, admin, stakeMint, key.publicKey)).address;
+      await transfer(connection, admin, treasury, ata, admin, holding);
+      return key;
+    }
+
+    it("burns the fee, opens the vault and moves the deposit, in one go", async () => {
+      const owner = await walletWith(3_000 * CHIP);
+      const supply = Number((await getMint(connection, stakeMint)).supply);
+
+      const { agent } = await rent(owner, { deposit: 2_000 * CHIP });
+
+      // The deposit is in the vault, the fee has left the supply, and the
+      // owner paid exactly the two together.
+      expect(await chain.vaultBalance(agent)).toBe(2_000 * CHIP);
+      expect(Number((await getMint(connection, stakeMint)).supply)).toBe(supply - RENT);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(3_000 * CHIP - 2_000 * CHIP - RENT);
+      // And the owner is recorded, which is what lets them withdraw later.
+      expect(await chain.ownerOf(agent)).toBe(owner.publicKey.toBase58());
+    });
+
+    it("charges nothing at all when the owner cannot cover the fee and the deposit", async () => {
+      // Enough for the deposit alone, or the fee alone, but not both.
+      const owner = await walletWith(RENT + 500 * CHIP);
+      const before = await chain.tokenBalance(owner.publicKey.toBase58());
+      const supply = Number((await getMint(connection, stakeMint)).supply);
+      const made = newAgentId(owner.publicKey.toBase58());
+
+      await expect(
+        rent(owner, { deposit: 600 * CHIP, agentId: made.id, salt: made.salt }),
+      ).rejects.toThrow();
+
+      // This is the whole reason the three travel together: no fee was burned,
+      // no vault was opened, and the owner is exactly as they were.
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(before);
+      expect(Number((await getMint(connection, stakeMint)).supply)).toBe(supply);
+      expect(await chain.vaultBalance(made.id)).toBeNull();
+      expect(await chain.ownerOf(made.id)).toBeNull();
+    });
+
+    it("refuses without the owner's signature, so renting cannot happen behind their back", async () => {
+      const owner = await walletWith(3_000 * CHIP);
+      const made = newAgentId(owner.publicKey.toBase58());
+      const prepared = await chain.prepareRental({
+        rentalId: randomUUID(),
+        agentId: made.id,
+        owner: owner.publicKey.toBase58(),
+        salt: made.salt,
+        fee: RENT,
+        deposit: 1_000 * CHIP,
+      });
+      // The settler has signed; nobody else has. The network will not take it.
+      await expect(
+        chain.submitRental(prepared.transaction.serialize({ requireAllSignatures: false }), prepared.lastValidBlockHeight),
+      ).rejects.toThrow();
+      expect(await chain.vaultBalance(made.id)).toBeNull();
+    });
+
+    it("rents once: the same rental id cannot be charged again", async () => {
+      const owner = await walletWith(4_000 * CHIP);
+      const rentalId = randomUUID();
+      await rent(owner, { deposit: 1_000 * CHIP, rentalId });
+      const spent = await chain.tokenBalance(owner.publicKey.toBase58());
+      // A second rental reusing the id: its record already exists, so the whole
+      // transaction fails - including the fee and the deposit.
+      await expect(rent(owner, { deposit: 1_000 * CHIP, rentalId })).rejects.toThrow();
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(spent);
+    });
+
+    it("refuses an agent id that is not this owner's", async () => {
+      const owner = await walletWith(3_000 * CHIP);
+      const before = await chain.tokenBalance(owner.publicKey.toBase58());
+      // An id derived from somebody else's key: the program checks the hash, so
+      // the vault cannot be opened and the fee is not burned either.
+      const notTheirs = newAgentId(Keypair.generate().publicKey.toBase58());
+      await expect(
+        rent(owner, { deposit: 500 * CHIP, agentId: notTheirs.id, salt: notTheirs.salt }),
+      ).rejects.toThrow(/AgentIdMismatch/);
+      expect(await chain.tokenBalance(owner.publicKey.toBase58())).toBe(before);
+    });
+  });
+
   describe("the season rate", () => {
     /** Mirrors the program's ceiling on tokens per chip. */
     const MAX_CHIP_RATE = 1_000 * CHIP;
