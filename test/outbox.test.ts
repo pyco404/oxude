@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { chainOps, STARTING_BALANCE } from "../src/db/schema.js";
+import { agents, chainOps, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
 import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
 import type { SeedOpenVaultInput } from "../src/chain/seed-settlement.js";
 import { agentIdFor } from "../src/agent-id.js";
+import { someWallet } from "./helpers.js";
 
 /** An in-memory stand-in for the program, with the same guarantees it enforces. */
 class FakeChain implements ChainPort {
@@ -297,3 +298,85 @@ describe("the worker", () => {
     await c();
   });
 });
+
+describe("two programs, side by side", () => {
+  // A vault is a token account for one mint under one program, so an op has to
+  // reach the program that holds its agent's. These check it does, and that a
+  // flow with no client waits rather than being asked of the wrong program.
+  async function fresh() {
+    const { db } = await connect();
+    await migrate(db);
+    return db;
+  }
+
+  it("sends each agent's ops to the program its flow belongs to", async () => {
+    const db = await fresh();
+    const seed = new FakeChain();
+    const deposit = new FakeChain();
+
+    const a = await createAgent(db, { name: "Seeded", presetName: "Anchor", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Deposited", presetName: "Hammer", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, b.id));
+
+    const result = await drainChainOps(db, { seed, deposit });
+    expect(result.error).toBeNull();
+    expect(result.confirmed).toBe(2);
+
+    // Each vault opened on its own program, and neither knows the other's agent.
+    expect(seed.vaults.has(a.id)).toBe(true);
+    expect(seed.vaults.has(b.id)).toBe(false);
+    expect(deposit.vaults.has(b.id)).toBe(true);
+    expect(deposit.vaults.has(a.id)).toBe(false);
+  });
+
+  it("makes a deposit-flow op wait when no deposit client is configured", async () => {
+    const db = await fresh();
+    const seed = new FakeChain();
+    const agent = await createAgent(db, { name: "Deposited", presetName: "Bully", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, agent.id));
+
+    // A bare ChainPort means "everything is the seed flow", so there is no
+    // deposit client at all.
+    const result = await drainChainOps(db, seed);
+    expect(result.confirmed).toBe(0);
+    expect(result.deferred).toBe(1);
+    expect(result.error).toMatch(/no deposit settlement client/);
+    // Nothing was asked of the seed program about an agent it does not hold.
+    expect(seed.calls).toEqual([]);
+    expect(seed.vaults.has(agent.id)).toBe(false);
+
+    // The op is still pending, so it lands once the client exists.
+    const [op] = await db.select().from(chainOps).where(eq(chainOps.agentId, agent.id));
+    expect(op!.status).toBe("pending");
+    const deposit = new FakeChain();
+    const after = await drainChainOps(db, { seed, deposit });
+    expect(after.confirmed).toBe(1);
+    expect(deposit.vaults.has(agent.id)).toBe(true);
+  });
+
+  it("reconciles each agent against its own program, and stays silent about one it cannot reach", async () => {
+    const db = await fresh();
+    const seed = new FakeChain();
+    const deposit = new FakeChain();
+    await createAgent(db, { name: "Seeded", presetName: "Anchor", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Deposited", presetName: "Mirage", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, b.id));
+    await drainChainOps(db, { seed, deposit });
+
+    // Both agree with their own program.
+    const both = await reconcile(db, { seed, deposit });
+    expect(both.checked).toBe(2);
+    expect(both.mismatches).toEqual([]);
+
+    // With no deposit client, the deposit-funded agent is skipped rather than
+    // reported as disagreeing: nothing was compared, so nothing can be said.
+    const seedOnly = await reconcile(db, seed);
+    expect(seedOnly.mismatches).toEqual([]);
+
+    // A real disagreement on its own program is still reported.
+    deposit.vaults.set(b.id, 1);
+    const broken = await reconcile(db, { seed, deposit });
+    expect(broken.mismatches.map((m) => m.name)).toEqual(["Deposited"]);
+  });
+});
+

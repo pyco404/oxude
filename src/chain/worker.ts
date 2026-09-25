@@ -1,12 +1,21 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import type { SeedOpenVaultInput } from "./seed-settlement.js";
 import { balancesOf } from "../db/ledger.js";
 import { agents, chainOps, withdrawals, type ChainOpRow } from "../db/schema.js";
+import type { Funding } from "../chips.js";
 import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
 
 /**
  * Drains the outbox into the settlement program, in order.
+ *
+ * There are two programs while the funding flows run side by side, and an op
+ * has to reach the one that holds its agent's vault. A vault is a token account
+ * for one mint under one program, so sending a deposit-funded agent's op to the
+ * seed program would not merely fail - it would be asking the wrong program
+ * about an account it has never heard of. Which one an op belongs to is decided
+ * by the flow its agent was rented under (`agents.funding`), read alongside the
+ * op rather than stored on it, because an agent never changes flow.
  *
  * Order matters: an agent's vault must open before its first settlement, and
  * settlements should land in the order the ledger recorded them. The worker
@@ -22,6 +31,18 @@ import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
  * its confirmation was lost, the vault or the settlement record already exists,
  * and the op is marked confirmed instead of being sent again.
  */
+
+/**
+ * The clients to route between, by funding flow. Passing a single ChainPort is
+ * shorthand for "everything is the seed flow", which is what every test and
+ * every deployment does until the deposit program is live.
+ */
+export type ChainPorts = { seed: ChainPort; deposit?: ChainPort };
+
+/** Normalises either shape into a lookup, and says when a flow has no client. */
+function portsOf(chain: ChainPort | ChainPorts): ChainPorts {
+  return "seed" in chain ? chain : { seed: chain };
+}
 
 export type ChainPort = {
   openVault(input: SeedOpenVaultInput): Promise<string>;
@@ -83,6 +104,32 @@ function unsendable(op: ChainOpRow, vaultless: ReadonlySet<string>): string | nu
   return null;
 }
 
+/**
+ * The funding flow behind each op, keyed by op id.
+ *
+ * An op names its agent in one of three columns depending on its kind, so this
+ * resolves whichever is set. A settle names two agents, but both are always on
+ * the same flow: they share a band and a mint, and a match between different
+ * mints could not be staked in the first place - so the paying side decides.
+ *
+ * An op whose agent cannot be found falls back to the seed flow, which is what
+ * every op written before flows existed is.
+ */
+async function fundingOf(db: Db, ops: readonly ChainOpRow[]): Promise<Map<string, Funding>> {
+  const wanted = new Map<string, string>();
+  for (const op of ops) {
+    const agentId = op.agentId ?? op.fromAgent ?? op.toAgent;
+    if (agentId) wanted.set(op.id, agentId);
+  }
+  const ids = [...new Set(wanted.values())];
+  if (ids.length === 0) return new Map();
+  const rows = await db.select({ id: agents.id, funding: agents.funding }).from(agents).where(inArray(agents.id, ids));
+  const byAgent = new Map(rows.map((r) => [r.id, r.funding]));
+  const byOp = new Map<string, Funding>();
+  for (const [opId, agentId] of wanted) byOp.set(opId, byAgent.get(agentId) ?? "seed");
+  return byOp;
+}
+
 /** Agents whose vault op failed for good: nothing involving them can reach the chain. */
 async function vaultlessAgents(db: Db): Promise<Set<string>> {
   const rows = await db
@@ -130,18 +177,36 @@ async function settleWithdrawal(db: Db, chain: ChainPort, op: ChainOpRow): Promi
   }
 }
 
-export async function drainChainOps(db: Db, chain: ChainPort, options: { limit?: number } = {}): Promise<DrainResult> {
+export async function drainChainOps(
+  db: Db,
+  chain: ChainPort | ChainPorts,
+  options: { limit?: number } = {},
+): Promise<DrainResult> {
+  const ports = portsOf(chain);
   const pending = await db
     .select()
     .from(chainOps)
     .where(eq(chainOps.status, "pending"))
     .orderBy(asc(chainOps.seq))
     .limit(options.limit ?? 100);
+  // The flow of every agent these ops touch, in one query rather than one per op.
+  const flows = await fundingOf(db, pending);
 
   const vaultless = await vaultlessAgents(db);
   const result: DrainResult = { confirmed: 0, alreadyOnChain: 0, deferred: 0, stoppedAt: null, error: null };
   for (const op of pending) {
     try {
+      const funding = flows.get(op.id) ?? "seed";
+      const chain = ports[funding];
+      if (!chain) {
+        // No client for this flow: defer rather than send it to the other
+        // program, which holds none of this agent's accounts.
+        const why = `no ${funding} settlement client is configured on this server`;
+        await db.update(chainOps).set({ lastError: why, updatedAt: new Date() }).where(eq(chainOps.id, op.id));
+        result.error ??= why;
+        result.deferred++;
+        continue;
+      }
       if (op.kind === "withdraw") {
         const outcome = await settleWithdrawal(db, chain, op);
         if (outcome === "done") result.confirmed++;
@@ -198,9 +263,13 @@ export type Mismatch = { agentId: string; name: string; ledger: number; chain: n
  * have all been confirmed. The ledger is authoritative; a mismatch is a bug to
  * investigate, never something to "fix" by overwriting either side.
  */
-export async function reconcile(db: Db, chain: ChainPort): Promise<{ checked: number; mismatches: Mismatch[] }> {
+export async function reconcile(
+  db: Db,
+  chain: ChainPort | ChainPorts,
+): Promise<{ checked: number; mismatches: Mismatch[] }> {
+  const ports = portsOf(chain);
   const involved = await db
-    .select({ id: agents.id, name: agents.name })
+    .select({ id: agents.id, name: agents.name, funding: agents.funding })
     .from(agents)
     .where(
       and(
@@ -215,7 +284,11 @@ export async function reconcile(db: Db, chain: ChainPort): Promise<{ checked: nu
   );
   const mismatches: Mismatch[] = [];
   for (const agent of involved) {
-    const onChain = await chain.vaultBalance(agent.id);
+    const port = ports[agent.funding];
+    // An agent whose program this server cannot reach is not a disagreement:
+    // nothing has been compared, so nothing can be said about it.
+    if (!port) continue;
+    const onChain = await port.vaultBalance(agent.id);
     const ledger = balances.get(agent.id) ?? 0;
     if (onChain !== ledger) mismatches.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain });
   }
@@ -228,7 +301,7 @@ export async function reconcile(db: Db, chain: ChainPort): Promise<{ checked: nu
  */
 export function startChainWorker(
   db: Db,
-  chain: ChainPort,
+  chain: ChainPort | ChainPorts,
   options: { intervalMs?: number; onPass?: (result: DrainResult) => void } = {},
 ): { stop: () => void } {
   let stopped = false;
