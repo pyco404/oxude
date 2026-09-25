@@ -160,8 +160,11 @@ const count = async (agentId: string, reason: "withdrawal" | "withdrawal-reverse
 beforeAll(async () => {
   ({ db, close: closeDb } = await connect());
   await migrate(db);
-  // Opponents for the matches below: house agents with vaults.
-  for (let i = 0; i < 3; i++) await createAgent(db, { name: `House ${i}`, presetName: "Anchor" });
+  // Opponents for the matches below, owned by wallets of their own: a match
+  // against a house agent stakes nothing now, so it would settle nothing and
+  // there would be nothing in flight to test against.
+  for (let i = 0; i < 3; i++)
+    await createAgent(db, { name: `House ${i}`, presetName: "Anchor", ownerId: walletOf(`rival${i}`) });
   await drainChainOps(db, chain);
   ({ url, close: closeServer } = await listen({
     db,

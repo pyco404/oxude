@@ -98,9 +98,15 @@ const api = async (path: string, init: RequestInit & { owner?: string | null } =
 beforeAll(async () => {
   ({ db, close: closeDb } = await connect());
   await migrate(db);
-  // A roster to play against and rate against.
+  // A roster to play against and rate against, owned by wallets of their own.
+  // They have to be players: a match against a house agent stakes nothing, so
+  // the cover rule would not apply to it and the feed would not carry it.
   for (let i = 0; i < 8; i++) {
-    await createAgent(db, { name: `Roster-${i}`, presetName: PRESET_NAMES[i % PRESET_NAMES.length]! });
+    await createAgent(db, {
+      name: `Roster-${i}`,
+      presetName: PRESET_NAMES[i % PRESET_NAMES.length]!,
+      ownerId: someWallet(),
+    });
   }
   await refreshTrueRatings(db);
   ({ url, close: closeServer } = await listen({
@@ -849,8 +855,10 @@ describe("portraits over HTTP", () => {
   });
 
   it("draws a face for an agent with no character yet, and 404s one that does not exist", async () => {
-    const [house] = await db.select().from(agents).where(sql`${agents.ownerId} is null`).limit(1);
-    const res = await api(`/agents/${house!.id}/portrait.svg`, { owner: null });
+    // An agent with no character of its own: a house agent is the convenient
+    // one, and made here rather than found, since the roster is all players.
+    const faceless = await createAgent(db, { name: "Faceless", presetName: "Anchor" });
+    const res = await api(`/agents/${faceless.id}/portrait.svg`, { owner: null });
     expect(res.status).toBe(200);
     expect(await res.text()).toMatch(/^<svg /);
     expect((await api("/agents/00000000-0000-4000-8000-000000000000/portrait.svg", { owner: null })).status).toBe(404);

@@ -23,7 +23,25 @@ const playerOn = async (db: Awaited<ReturnType<typeof fresh>>["db"], opts: Overr
   return row;
 };
 
-/** House opponents, so a player agent has someone to meet. */
+/**
+ * Opponents for a player agent to meet, each owned by a wallet of its own.
+ *
+ * They have to be players: autoplay will not pair against a house agent, since
+ * a match against one stakes nothing and counts for nothing, and filling an
+ * owner's week with those would be a week that earned nothing.
+ */
+const opponents = async (db: Awaited<ReturnType<typeof fresh>>["db"], n: number, band: "A" | "B" | "C" = "B") => {
+  for (let i = 0; i < n; i++) {
+    await createAgent(db, {
+      name: `O${i}-${Math.random().toString(36).slice(2, 6)}`,
+      presetName: (["Anchor", "Hammer", "Mirage", "Bully"] as const)[i % 4]!,
+      ownerId: someWallet(),
+      band,
+    });
+  }
+};
+
+/** Unowned agents, for the tests that are about house behaviour itself. */
 const house = async (db: Awaited<ReturnType<typeof fresh>>["db"], n: number, band: "A" | "B" | "C" = "B") => {
   for (let i = 0; i < n; i++) {
     await createAgent(db, { name: `H${i}-${Math.random().toString(36).slice(2, 6)}`, presetName: (["Anchor", "Hammer", "Mirage", "Bully"] as const)[i % 4]!, band });
@@ -139,7 +157,7 @@ describe("autoplay: safety", () => {
 describe("autoplay: the tick", () => {
   it("plays one match for a due agent and schedules the next from that moment", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     const result = await tick(db, { intervalMs: 0 });
     expect(result.played).toEqual([row.id]);
@@ -171,7 +189,7 @@ describe("autoplay: the tick", () => {
     expect(again!.autoplayWaitingSince?.getTime()).toBe(started?.getTime());
 
     // An opponent appears: it plays, and the wait is cleared.
-    await house(db, 4, "C");
+    await opponents(db, 4, "C");
     const played = await tick(db, { intervalMs: 0 });
     expect(played.played).toEqual([row.id]);
     const [done] = await db.select().from(agents).where(eq(agents.id, row.id));
@@ -194,7 +212,7 @@ describe("autoplay: the tick", () => {
     expect(lines.some((l) => l.includes("tick played"))).toBe(false);
 
     lines.length = 0;
-    await house(db, 4, "C");
+    await opponents(db, 4, "C");
     await tick(db, { intervalMs: 0, onLog });
     expect(lines[0]).toMatch(/stopped waiting after \d+m/);
     expect(lines[1]).toMatch(/^autoplay: tick played 1, stopped 0, waiting 0 - .* in band C$/);
@@ -203,7 +221,7 @@ describe("autoplay: the tick", () => {
 
   it("logs a stop with its kind and detail, and summarises the tick", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     await db.update(agents).set({ autoplayFloor: 5_000 }).where(eq(agents.id, row.id));
     const lines: string[] = [];
@@ -217,7 +235,7 @@ describe("autoplay: the tick", () => {
 
   it("stops a due agent that cannot play, and records which kind of stop", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     await db.update(agents).set({ autoplayFloor: 5_000 }).where(eq(agents.id, row.id));
     const result = await tick(db, { intervalMs: 0 });
@@ -227,16 +245,28 @@ describe("autoplay: the tick", () => {
     await close();
   });
 
-  it("plays player against house: an autoplayer is not stranded by an empty player pool", async () => {
+  it("waits rather than taking a house opponent when no player is free", async () => {
     const { db, close } = await fresh();
+    // Four house agents, all free, all in band. None of them will do.
     await house(db, 4);
     const row = await playerOn(db);
-    await tick(db, { intervalMs: 0 });
+
+    const result = await tick(db, { intervalMs: 0 });
+    // A match against a house agent stakes nothing and counts for nothing, so a
+    // week of them would be a week that earned nothing. Autoplay holds out for
+    // a real opponent instead, and keeps its place while it does.
+    expect(result.played).toEqual([]);
+    expect(result.waiting).toEqual([row.id]);
+    expect(await db.select().from(matches)).toHaveLength(0);
+    const [after] = await db.select().from(agents).where(eq(agents.id, row.id));
+    expect(after!.autoplay).toBe(true);
+    expect(after!.autoplayWaitingSince).not.toBeNull();
+
+    // And it plays the moment one appears.
+    await opponents(db, 1);
+    const second = await tick(db, { intervalMs: 0 });
+    expect(second.played).toEqual([row.id]);
     const [match] = await db.select().from(matches);
-    const other = match!.agentA === row.id ? match!.agentB : match!.agentA;
-    const [opponent] = await db.select().from(agents).where(eq(agents.id, other));
-    expect(opponent!.ownerId).toBeNull();
-    // It still settles for money: a house opponent is not an exhibition.
     expect(match!.exhibition).toBe(false);
     await close();
   });
@@ -269,8 +299,8 @@ describe("autoplay: the popular-opponent budget", () => {
   it("leaves a spent opponent out of matchmaking rather than pairing into a refusal", async () => {
     const { db, close } = await fresh();
     const me = await createAgent(db, { name: "Me", presetName: "Anchor", ownerId: someWallet() });
-    const spent = await createAgent(db, { name: "Spent", presetName: "Hammer" });
-    const fresh2 = await createAgent(db, { name: "Fresh", presetName: "Mirage" });
+    const spent = await createAgent(db, { name: "Spent", presetName: "Hammer", ownerId: someWallet() });
+    const fresh2 = await createAgent(db, { name: "Fresh", presetName: "Mirage", ownerId: someWallet() });
     // Everyone else is out of window, so matchmaking has one legal choice.
     await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900, SEED_CHIP_RATE) });
     const pick = await pickOpponent(db, me.id, { minCandidates: 1 });
@@ -282,8 +312,8 @@ describe("autoplay: the popular-opponent budget", () => {
     const { db, close } = await fresh();
     const me = await createAgent(db, { name: "Me", presetName: "Anchor", ownerId: someWallet() });
     // Two presets - too few for the closest-rating path, so the fallback decides.
-    const spent = await createAgent(db, { name: "SpentPreset", presetName: "Hammer" });
-    const room = await createAgent(db, { name: "RoomPreset", presetName: "Mirage" });
+    const spent = await createAgent(db, { name: "SpentPreset", presetName: "Hammer", ownerId: someWallet() });
+    const room = await createAgent(db, { name: "RoomPreset", presetName: "Mirage", ownerId: someWallet() });
     await db.insert(chainOps).values({ kind: "settle", fromAgent: spent.id, amount: outflowBudget(900, SEED_CHIP_RATE) });
     // Many draws, because the fallback chooses at random: a spent preset must never come up.
     for (let i = 0; i < 20; i++) {
@@ -296,7 +326,7 @@ describe("autoplay: the popular-opponent budget", () => {
 
   it("refuses to play an agent whose own vault has no room left", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     await db.insert(chainOps).values({ kind: "settle", fromAgent: row.id, amount: outflowBudget(900, SEED_CHIP_RATE) });
     const result = await tick(db, { intervalMs: 0 });
@@ -390,7 +420,7 @@ describe("autoplay: what the panel says", () => {
 
   it("totals today's matches and net as money, house opponents included", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     await tick(db, { intervalMs: 0 });
     const [m] = await db.select().from(matches);
@@ -411,7 +441,7 @@ describe("since you left", () => {
 
   it("counts matches since the owner was last seen, their net, and the best win", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     await markSeen(db, row.id, new Date(Date.now() - 60_000));
     for (let i = 0; i < 4; i++) {
@@ -432,7 +462,7 @@ describe("since you left", () => {
 
   it("starts again from the moment the owner dismisses it", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const row = await playerOn(db);
     await markSeen(db, row.id, new Date(Date.now() - 60_000));
     await tick(db, { intervalMs: 0 });

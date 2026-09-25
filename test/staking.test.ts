@@ -143,8 +143,8 @@ describe("stakes", () => {
 describe("settlement", () => {
   it("moves money between balances and records both sides against the match", async () => {
     const { db: d, close: c } = await fresh();
-    const a = await createAgent(d, { name: "A", presetName: "Bully" });
-    const b = await createAgent(d, { name: "B", presetName: "Mirage" });
+    const a = await createAgent(d, { name: "A", presetName: "Bully", ownerId: someWallet() });
+    const b = await createAgent(d, { name: "B", presetName: "Mirage", ownerId: someWallet() });
 
     const { match, log, stake, settled } = await runMatch(d, a.id, b.id, { seed: 5 });
     // Both agents default to band B, whose worst match is 60.
@@ -191,8 +191,8 @@ describe("settlement", () => {
     const cautious = await createAgent(d, { name: "Cautious", presetName: "Anchor", ownerId: owner, band: "A" });
     // Four on the cheap scale, four on the dear one.
     const low = [];
-    for (let i = 0; i < 4; i++) low.push(await createAgent(d, { name: `Low ${i}`, presetName: "Bully", band: "A" }));
-    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Hammer", band: "C" });
+    for (let i = 0; i < 4; i++) low.push(await createAgent(d, { name: `Low ${i}`, presetName: "Bully", band: "A", ownerId: someWallet() }));
+    for (let i = 0; i < 4; i++) await createAgent(d, { name: `High ${i}`, presetName: "Hammer", band: "C", ownerId: someWallet() });
     await refreshTrueRatings(d);
 
     for (let i = 0; i < 20; i++) {
@@ -291,7 +291,7 @@ describe("rating across bands", () => {
   it("keeps net won equal to the ledger's settlements in a band that is not B", async () => {
     const { db: d, close: c } = await fresh();
     const me = await createAgent(d, { name: "Banded", presetName: "Mirage", band: "A", ownerId: someWallet() });
-    const opp = await createAgent(d, { name: "Opp", presetName: "Anchor", band: "A" });
+    const opp = await createAgent(d, { name: "Opp", presetName: "Anchor", band: "A", ownerId: someWallet() });
     for (let seed = 1; seed <= 12; seed++) await runMatch(d, me.id, opp.id, { seed });
     const [rating] = await d.select().from(ratings).where(eq(ratings.agentId, me.id));
     const [settled] = await d

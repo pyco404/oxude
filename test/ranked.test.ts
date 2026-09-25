@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { connect, migrate } from "../src/db/client.js";
-import { matches, ratings } from "../src/db/schema.js";
+import { chainOps, ledger, matches, ratings } from "../src/db/schema.js";
 import { createAgent, leaderboard, runMatch, runExhibition } from "../src/db/runner.js";
 import { someWallet } from "./helpers.js";
+import { balanceOf } from "../src/db/ledger.js";
 
 const fresh = async () => {
   const c = await connect();
@@ -15,23 +16,30 @@ const ratingOf = async (db: Awaited<ReturnType<typeof fresh>>["db"], agentId: st
   (await db.select().from(ratings).where(eq(ratings.agentId, agentId)))[0]!;
 
 describe("only player-versus-player matches are ranked", () => {
-  it("marks a match against a house agent unranked, and it still settles", async () => {
+  it("plays a match against a house agent for nothing: no stake, no ladder, no money", async () => {
     const { db, close } = await fresh();
     const mine = await createAgent(db, { name: "Mine", presetName: "Anchor", ownerId: someWallet() });
     const houseAgent = await createAgent(db, { name: "House", presetName: "Hammer" });
+    const mineBefore = await balanceOf(db, mine.id);
+    const houseBefore = await balanceOf(db, houseAgent.id);
 
-    const { match, settled } = await runMatch(db, mine.id, houseAgent.id, { seed: 7 });
+    const { match } = await runMatch(db, mine.id, houseAgent.id, { seed: 7 });
     const [row] = await db.select().from(matches).where(eq(matches.id, match.id));
+    // A house agent's money is the platform's, so a staked match against one is
+    // the platform gambling with itself against its own customers. The match is
+    // still played and still has a transcript; nothing moves.
     expect(row!.ranked).toBe(false);
-    expect(row!.exhibition).toBe(false);
+    expect(row!.exhibition).toBe(true);
+    expect(await balanceOf(db, mine.id)).toBe(mineBefore);
+    expect(await balanceOf(db, houseAgent.id)).toBe(houseBefore);
+    // Nothing was queued for the chain either, because nothing moved.
+    expect(await db.select().from(chainOps).where(eq(chainOps.matchId, match.id))).toHaveLength(0);
 
     const r = await ratingOf(db, mine.id);
-    // The money moved and is counted; the ladder's figures are untouched.
-    expect(r.matchesPlayed).toBe(1);
-    expect(r.cumulativeNet).toBe(settled.A);
+    // Counted nowhere: not the ladder's figures, and not the total beside them.
+    expect(r.matchesPlayed).toBe(0);
+    expect(r.cumulativeNet).toBe(0);
     expect(r.rankedMatches).toBe(0);
-    expect(r.rankedNet).toBe(0);
-    expect(r.rankedStaked).toBe(0);
     await close();
   });
 
@@ -65,28 +73,35 @@ describe("only player-versus-player matches are ranked", () => {
     await close();
   });
 
-  it("the ladder sorts on ranked winnings and carries the total beside it", async () => {
+  it("leaves nothing to farm: playing the house earns nothing at all", async () => {
     const { db, close } = await fresh();
     const farmer = await createAgent(db, { name: "Farmer", presetName: "Hammer", ownerId: someWallet() });
     const honest = await createAgent(db, { name: "Honest", presetName: "Anchor", ownerId: someWallet() });
     const rival = await createAgent(db, { name: "Rival", presetName: "Bully", ownerId: someWallet() });
     const houseA = await createAgent(db, { name: "HouseA", presetName: "Mirage" });
+    const farmerBefore = await balanceOf(db, farmer.id);
 
     // The farmer only ever plays the house; the other two play each other.
     for (let seed = 1; seed <= 6; seed++) await runMatch(db, farmer.id, houseA.id, { seed });
     for (let seed = 20; seed <= 25; seed++) await runMatch(db, honest.id, rival.id, { seed });
 
     const rows = await leaderboard(db, 50, "winnings");
-    // Players only: the house agent the farmer beat is not listed at all.
+    // Players only: the house agent is not listed at all.
     expect(rows.find((r) => r.name === "HouseA")).toBeUndefined();
+
     const farmerRow = rows.find((r) => r.name === "Farmer")!;
-    // Nothing the farmer did against the house reaches the ladder's figure.
+    // The ladder's figures were already immune to this. What is new is that
+    // there is no money either: six matches against the house move nothing, so
+    // the farmer's own balance is exactly where it started. The weakness of a
+    // fixed preset is computable, so beating one was never evidence of
+    // anything - now it is not even profitable.
     expect(farmerRow.matchesPlayed).toBe(0);
     expect(Number(farmerRow.cumulativeNet)).toBe(0);
-    // But the money it actually won is still reported, so it has not vanished.
-    expect(farmerRow.totalMatches).toBe(6);
-    expect(Number(farmerRow.totalNet)).not.toBe(0);
+    expect(farmerRow.totalMatches).toBe(0);
+    expect(Number(farmerRow.totalNet)).toBe(0);
+    expect(await balanceOf(db, farmer.id)).toBe(farmerBefore);
 
+    // Two players against each other is the only thing that counts.
     const honestRow = rows.find((r) => r.name === "Honest")!;
     expect(honestRow.matchesPlayed).toBe(6);
     expect(honestRow.totalMatches).toBe(6);
@@ -104,4 +119,30 @@ describe("only player-versus-player matches are ranked", () => {
     expect(rows.find((r) => r.name === "Farmer")).toBeUndefined();
     await close();
   });
+
+  it("stakes only when both sides belong to players, which is the same question as ranked", async () => {
+    const { db, close } = await fresh();
+    const p1 = await createAgent(db, { name: "P1", presetName: "Anchor", ownerId: someWallet() });
+    const p2 = await createAgent(db, { name: "P2", presetName: "Bully", ownerId: someWallet() });
+    const houseAgent = await createAgent(db, { name: "House", presetName: "Mirage" });
+
+    // Every combination, and the two answers never disagree: a match is played
+    // for money exactly when it is played for the ladder.
+    for (const [x, y] of [
+      [p1, p2],
+      [p1, houseAgent],
+      [houseAgent, p1],
+    ] as const) {
+      const { match } = await runMatch(db, x.id, y.id, { seed: 11 });
+      const [row] = await db.select().from(matches).where(eq(matches.id, match.id));
+      const bothPlayers = x.ownerId !== null && y.ownerId !== null;
+      expect(row!.ranked).toBe(bothPlayers);
+      expect(row!.exhibition).toBe(!bothPlayers);
+      // And the ledger agrees with the flag, rather than being decided separately.
+      const moved = await db.select().from(ledger).where(eq(ledger.matchId, match.id));
+      expect(moved.length > 0).toBe(bothPlayers);
+    }
+    await close();
+  });
+
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { agentEvents, agents, ledger, matches, ratings, seasonStandings, seasons } from "../src/db/schema.js";
 import { createAgent, DEFAULT_RULES, leaderboard, pickOpponent, runMatch } from "../src/db/runner.js";
@@ -16,10 +16,33 @@ const fresh = async () => {
   return c;
 };
 
-const house = async (db: Db, n: number) => {
+/**
+ * Opponents for a player agent, owned by wallets of their own. They have to be
+ * players: a match against a house agent stakes nothing and is recorded as an
+ * exhibition, so it would neither settle nor reach a standing.
+ */
+const opponents = async (db: Db, n: number) => {
+  const made = [];
   for (let i = 0; i < n; i++) {
-    await createAgent(db, { name: `H${i}-${Math.random().toString(36).slice(2, 6)}`, presetName: (["Anchor", "Hammer", "Mirage", "Bully"] as const)[i % 4]! });
+    made.push(
+      await createAgent(db, {
+        name: `H${i}-${Math.random().toString(36).slice(2, 6)}`,
+        presetName: (["Anchor", "Hammer", "Mirage", "Bully"] as const)[i % 4]!,
+        ownerId: someWallet(),
+      }),
+    );
   }
+  return made;
+};
+
+/** Ends an agent's rental a minute ago, as the season boundary would. */
+/** Unowned agents, for the tests that need one to play against. */
+const house = async (db: Db, n: number) => {
+  const made = [];
+  for (let i = 0; i < n; i++) {
+    made.push(await createAgent(db, { name: `House${i}-${Math.random().toString(36).slice(2, 6)}`, presetName: "Anchor" }));
+  }
+  return made;
 };
 
 /** Ends an agent's rental a minute ago, as the season boundary would. */
@@ -42,9 +65,8 @@ describe("rentals end at the season boundary", () => {
 
   it("records each match in the season it was played in", async () => {
     const { db, close } = await fresh();
-    await house(db, 1);
+    const [opp] = await opponents(db, 1);
     const player = await createAgent(db, { name: "P", presetName: "Anchor", ownerId: someWallet() });
-    const [opp] = await db.select().from(agents).where(isNull(agents.ownerId));
     const { match } = await runMatch(db, player.id, opp!.id, { seed: 3 });
     expect(match.season).toBe(seasonAt(match.createdAt).key);
     await close();
@@ -52,7 +74,7 @@ describe("rentals end at the season boundary", () => {
 
   it("refuses to record a match for an agent whose rental has ended, and moves nothing", async () => {
     const { db, close } = await fresh();
-    await house(db, 1);
+    await opponents(db, 1);
     const [h] = await db.select().from(agents);
     const player = await createAgent(db, { name: "P", presetName: "Anchor", ownerId: someWallet() });
     await expire(db, player.id);
@@ -65,7 +87,7 @@ describe("rentals end at the season boundary", () => {
 
   it("leaves an expired agent out of matchmaking and out of the scheduler", async () => {
     const { db, close } = await fresh();
-    await house(db, 4);
+    await opponents(db, 4);
     const me = await createAgent(db, { name: "Me", presetName: "Anchor", ownerId: someWallet() });
     const gone = await createAgent(db, { name: "Gone", presetName: "Bully", ownerId: someWallet() });
     await db.update(agents).set({ autoplay: true }).where(eq(agents.id, gone.id));
@@ -82,7 +104,7 @@ describe("the season boundary", () => {
   /** Two players who have played each other, and a house agent they have both played. */
   const season = async (db: Db) => {
     await house(db, 4);
-    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const [h] = await house(db, 1);
     const a = await createAgent(db, { name: "A", presetName: "Hammer", ownerId: someWallet() });
     const b = await createAgent(db, { name: "B", presetName: "Mirage", ownerId: someWallet() });
     for (let seed = 1; seed <= 6; seed++) await runMatch(db, a.id, b.id, { seed });
@@ -108,8 +130,11 @@ describe("the season boundary", () => {
       expect(row.totalMatches).toBe(r!.matchesPlayed);
       expect(row.totalNet).toBe(r!.cumulativeNet);
     }
-    // Ranked excludes the house match each played; the totals include it.
-    expect(frozen.every((r) => r.totalMatches === r.rankedMatches + 1)).toBe(true);
+    // The house match each played counts in neither. Staked and ranked are the
+    // same question now: a match against a house agent stakes nothing, so it is
+    // an exhibition and reaches no figure at all - where it used to reach the
+    // totals but not the ranked ones.
+    expect(frozen.every((r) => r.totalMatches === r.rankedMatches)).toBe(true);
     expect(new Set(frozen.map((r) => r.agentId))).toEqual(new Set([a.id, b.id]));
     // The next season exists, and this one is closed.
     const [row] = await db.select().from(seasons).where(eq(seasons.key, current.key));
@@ -220,7 +245,7 @@ describe("renewal", () => {
     const { db, close } = await fresh();
     await house(db, 4);
     const { row, ownerId, current } = await owned(db);
-    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const [h] = await house(db, 1);
     await runMatch(db, row.id, h!.id, { seed: 5 });
     const [record] = await db.select().from(ratings).where(eq(ratings.agentId, row.id));
     // It expired at the start of this season: the boundary passed without a renewal.
@@ -255,7 +280,7 @@ describe("renewal", () => {
 describe("ladder views", () => {
   const played = async (db: Db) => {
     await house(db, 4);
-    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const [h] = await house(db, 1);
     const a = await createAgent(db, { name: "A", presetName: "Hammer", ownerId: someWallet() });
     const b = await createAgent(db, { name: "B", presetName: "Mirage", ownerId: someWallet() });
     const idle = await createAgent(db, { name: "Idle", presetName: "Anchor", ownerId: someWallet() });
@@ -303,15 +328,27 @@ describe("ladder views", () => {
     await close();
   });
 
-  it("per match needs a ranked match to divide by", async () => {
+  it("per match needs a ranked match to divide by, and a house match is not one", async () => {
     const { db, close } = await fresh();
     await house(db, 4);
-    const [h] = await db.select().from(agents).where(isNull(agents.ownerId));
+    const [h] = await house(db, 1);
     const solo = await createAgent(db, { name: "Solo", presetName: "Hammer", ownerId: someWallet() });
     await runMatch(db, solo.id, h!.id, { seed: 2 });
     const current = seasonAt(new Date());
-    expect((await leaderboard(db, 50, "winnings", { period: "season", season: current.key })).map((r) => r.agentId)).toEqual([solo.id]);
+
+    // Solo has played, but only the house - which stakes nothing and is
+    // recorded as an exhibition. So it has no ranked match to divide by, and
+    // nothing to be ranked on either: it appears in neither view. There is no
+    // longer a "staked but unranked" middle for it to sit in.
+    expect(await leaderboard(db, 50, "winnings", { period: "season", season: current.key })).toEqual([]);
     expect(await leaderboard(db, 50, "per-match", { period: "season", season: current.key })).toEqual([]);
+
+    // A real opponent puts it in both.
+    const rival = await createAgent(db, { name: "Rival", presetName: "Mirage", ownerId: someWallet() });
+    await runMatch(db, solo.id, rival.id, { seed: 3 });
+    const winnings = await leaderboard(db, 50, "winnings", { period: "season", season: current.key });
+    expect(winnings.map((r) => r.agentId).sort()).toEqual([solo.id, rival.id].sort());
+    expect((await leaderboard(db, 50, "per-match", { period: "season", season: current.key })).length).toBe(2);
     await close();
   });
 });

@@ -631,7 +631,10 @@ export function createApp(options: AppOptions): Server {
     let pick;
     let played;
     try {
-      pick = await pickOpponent(db, id);
+      // Pressing play may practise against a house agent: that match is an
+      // exhibition, stakes nothing and counts for nothing, and trying an agent
+      // out is what this button is for. Autoplay asks for players only.
+      pick = await pickOpponent(db, id, { allowHouse: true });
       played = await runMatch(db, id, pick.opponentId);
     } catch (error) {
       // Cannot cover a stake, or the opponent pool is empty: not a server fault.

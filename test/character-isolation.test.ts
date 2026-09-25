@@ -76,7 +76,14 @@ describe("a character cannot affect a match", () => {
 
   it("pairs the same opponent whatever the characters are", async () => {
     const { db, close } = await fresh();
-    for (let i = 0; i < 6; i++) await createAgent(db, { name: `H${i}`, presetName: (["Anchor", "Hammer", "Mirage"] as const)[i % 3]! });
+    // Players: matchmaking will not offer a house agent, since a match against
+    // one stakes nothing.
+    for (let i = 0; i < 6; i++)
+      await createAgent(db, {
+        name: `H${i}`,
+        presetName: (["Anchor", "Hammer", "Mirage"] as const)[i % 3]!,
+        ownerId: someWallet(),
+      });
     const me = await createAgent(db, { name: "Me", presetName: "Anchor", ownerId: someWallet() });
     const before = await pickOpponent(db, me.id);
     for (const row of await db.select().from(agents)) await giveCharacter(db, row.id, "changed");

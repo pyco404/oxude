@@ -271,14 +271,30 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
     if (!rentalOpen(row)) throw new StakeError(`${row.name}'s rental ended with the season; renew it to play`);
   }
 
-  // The band's worst match, which both sides must be able to cover outright.
+  /**
+   * A match is played for money only when both agents belong to players.
+   *
+   * A house agent's money is the platform's, so a staked match against one is
+   * the platform gambling with itself against its customers - it can lose, and
+   * the house presets are fixed and exactly computable, so it is not a contest
+   * either. Against a house agent the match is still played, still recorded and
+   * still has a transcript; nothing moves.
+   *
+   * This makes "staked" and "ranked" the same question, which they always
+   * should have been: both sides player-owned, or neither counts.
+   */
+  const staked = rowA.ownerId !== null && rowB.ownerId !== null;
   const balances = await balancesOf(db, [rowA.id, rowB.id]);
-  const stake = stakeBetween(
-    { name: rowA.name, balance: balances.get(rowA.id) ?? 0, funding: rowA.funding },
-    { name: rowB.name, balance: balances.get(rowB.id) ?? 0, funding: rowB.funding },
-    band,
-  );
-  assertSameFlow(rowA, rowB);
+  // The band's worst match, which both sides must be able to cover outright -
+  // asked only of a match that will actually move money.
+  const stake = staked
+    ? stakeBetween(
+        { name: rowA.name, balance: balances.get(rowA.id) ?? 0, funding: rowA.funding },
+        { name: rowB.name, balance: balances.get(rowB.id) ?? 0, funding: rowB.funding },
+        band,
+      )
+    : bandByName(band).worstMatch;
+  if (staked) assertSameFlow(rowA, rowB);
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
   // name-free log is exactly what a replay reproduces.
@@ -323,8 +339,10 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
         stake,
         band,
         // Both sides player-rented, decided here and stored, so a later sale
-        // cannot change what this match counted for.
-        ranked: rowA.ownerId !== null && rowB.ownerId !== null,
+        // cannot change what this match counted for. The same question decides
+        // whether it was played for money at all.
+        ranked: staked,
+        exhibition: !staked,
         season: seasonAt(now).key,
         log,
         createdAt: now,
@@ -336,12 +354,15 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
     // chips. The match row keeps the chips, because that is what a transcript,
     // a rating and the ladder are all in.
     const rate = rateOf(rowA);
-    const movedA = baseUnits(settledA, rate);
-    await record(tx, [
-      { agentId: rowA.id, amount: movedA, reason: "match-settlement", matchId: inserted!.id },
-      { agentId: rowB.id, amount: -movedA, reason: "match-settlement", matchId: inserted!.id },
-    ]);
-    // Queue the same movement for the chain. A level match moves nothing.
+    const movedA = staked ? baseUnits(settledA, rate) : 0;
+    if (staked) {
+      await record(tx, [
+        { agentId: rowA.id, amount: movedA, reason: "match-settlement", matchId: inserted!.id },
+        { agentId: rowB.id, amount: -movedA, reason: "match-settlement", matchId: inserted!.id },
+      ]);
+    }
+    // Queue the same movement for the chain. A level match moves nothing, and
+    // an exhibition never had any to move.
     if (movedA !== 0) {
       const [loser, winner] = movedA > 0 ? [rowB.id, rowA.id] : [rowA.id, rowB.id];
       await tx.insert(chainOps).values({
@@ -527,6 +548,16 @@ export async function playableBands(
 }
 
 export type PickOpponentOptions = {
+  /**
+   * Whether a house agent will do when no player is free.
+   *
+   * Autoplay says no and waits. A match against a house agent is an exhibition
+   * now - nothing is staked and nothing counts - so filling the queue with them
+   * would give an owner a week of matches that earned nothing and meant
+   * nothing, which is not what autoplay promises. Pressing play says yes,
+   * because trying an agent out against the house is the point of that button.
+   */
+  allowHouse?: boolean;
   /** Below this many candidates, fall back to a preset agent. Default 4. */
   minCandidates?: number;
   onLog?: (pick: OpponentPick & { agentId: string }) => void;
@@ -635,6 +666,9 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
   // Same band: a match has one money scale, so both agents must be on it.
   const band = me.band;
   const inBand = eq(agents.band, band);
+  // A player looking for a staked match needs another player. A house opponent
+  // stakes nothing, so it is only ever offered when the caller asked for one.
+  const houseAllowed = options.allowHouse === true || me.ownerId === null;
 
   const worstMatch = bandByName(band).worstMatch;
   const all = await db
@@ -663,6 +697,9 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
         // Only agents whose vault is under the same program. Different programs
         // hold different mints, so a match across them could never settle.
         eq(agents.funding, me.funding),
+        // House agents only when the caller asked for one: a match against one
+        // stakes nothing and counts for nothing.
+        houseAllowed ? sql`true` : isNotNull(agents.ownerId),
         // Not one with a withdrawal on its way: it can't play until that lands.
         sql`not exists (select 1 from ${withdrawals} where ${withdrawals.agentId} = ${agents.id} and ${withdrawals.status} = 'submitted')`,
       ),

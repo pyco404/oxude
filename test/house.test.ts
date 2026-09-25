@@ -45,12 +45,19 @@ describe("house exhibitions", () => {
     const a = await createAgent(db, { name: "HouseA", presetName: "Mirage" });
     const b = await createAgent(db, { name: "HouseB", presetName: "Bully" });
     for (let seed = 1; seed <= 4; seed++) await runExhibition(db, a.id, b.id, { seed });
-    const { settled } = await runMatch(db, a.id, b.id, { seed: 99 });
+    // A real match needs two players: a house agent stakes nothing, so it would
+    // be another exhibition and would count for nothing either.
+    const p1 = await createAgent(db, { name: "P1", presetName: "Anchor", ownerId: someWallet() });
+    const p2 = await createAgent(db, { name: "P2", presetName: "Hammer", ownerId: someWallet() });
+    const { settled } = await runMatch(db, p1.id, p2.id, { seed: 99 });
 
-    const [rating] = await db.select().from(ratings).where(eq(ratings.agentId, a.id));
+    const [rating] = await db.select().from(ratings).where(eq(ratings.agentId, p1.id));
     expect(rating!.matchesPlayed).toBe(1);
     expect(rating!.cumulativeNet).toBe(settled.A);
-    const record = await agentRecord(db, a.id);
+    // The four exhibitions left the house agents' records untouched.
+    const houseRecord = await agentRecord(db, a.id);
+    expect(houseRecord.wins + houseRecord.losses + houseRecord.level).toBe(0);
+    const record = await agentRecord(db, p1.id);
     expect(record.wins + record.losses + record.level).toBe(1);
     await close();
   });
@@ -172,7 +179,12 @@ describe("house exhibitions", () => {
     for (let seed = 1; seed <= 3; seed++) await runExhibition(db, a.id, b.id, { seed });
     expect(await matchActivity(db)).toEqual({ stakedMatches: 0, totalStaked: 0, largestPot: 0, exhibitions: 3 });
 
-    const played = await runMatch(db, a.id, b.id, { seed: 5 });
+    // A staked match needs two players. Between house agents there is nothing at
+    // stake, so it would be a fourth exhibition rather than the platform's first
+    // pot.
+    const p1 = await createAgent(db, { name: "P1", presetName: "Anchor", ownerId: someWallet() });
+    const p2 = await createAgent(db, { name: "P2", presetName: "Hammer", ownerId: someWallet() });
+    const played = await runMatch(db, p1.id, p2.id, { seed: 5 });
     const activity = await matchActivity(db);
     expect(activity.stakedMatches).toBe(1);
     expect(activity.totalStaked).toBe(played.stake * 2);

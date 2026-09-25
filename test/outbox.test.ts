@@ -100,8 +100,8 @@ const fresh = async () => {
 describe("the outbox", () => {
   it("is written in the same transaction as renting and settling", async () => {
     const { db: d, close: c } = await fresh();
-    const a = await createAgent(d, { name: "A", presetName: "Bully" });
-    const b = await createAgent(d, { name: "B", presetName: "Mirage" });
+    const a = await createAgent(d, { name: "A", presetName: "Bully", ownerId: someWallet() });
+    const b = await createAgent(d, { name: "B", presetName: "Mirage", ownerId: someWallet() });
     const opens = await d.select().from(chainOps).where(eq(chainOps.kind, "open_vault"));
     expect(opens.map((o) => o.amount)).toEqual([STARTING_BALANCE, STARTING_BALANCE]);
 
@@ -151,8 +151,8 @@ describe("the worker", () => {
 
   it("stops at the first failure instead of skipping ahead, and resumes from it", async () => {
     const { db: d, close: c } = await fresh();
-    await createAgent(d, { name: "First", presetName: "Anchor" });
-    await createAgent(d, { name: "Second", presetName: "Anchor" });
+    await createAgent(d, { name: "First", presetName: "Anchor", ownerId: someWallet() });
+    await createAgent(d, { name: "Second", presetName: "Anchor", ownerId: someWallet() });
 
     const chain = new FakeChain();
     chain.failNext = "rpc unavailable";
@@ -172,8 +172,8 @@ describe("the worker", () => {
 
   it("sets aside an op the program refuses and carries on, rather than holding up every other vault", async () => {
     const { db: d, close: c } = await fresh();
-    const throttled = await createAgent(d, { name: "Throttled", presetName: "Bully" });
-    const rival = await createAgent(d, { name: "Rival", presetName: "Anchor" });
+    const throttled = await createAgent(d, { name: "Throttled", presetName: "Bully", ownerId: someWallet() });
+    const rival = await createAgent(d, { name: "Rival", presetName: "Anchor", ownerId: someWallet() });
     const chain = new FakeChain();
     expect((await drainChainOps(d, chain)).confirmed).toBe(2); // both vaults open
 
@@ -228,8 +228,9 @@ describe("the worker", () => {
 
   it("gives up on settlements for a vault that can never open, instead of refusing them for ever", async () => {
     const { db: d, close: c } = await fresh();
-    const stranded = await createAgent(d, { name: "Stranded", presetName: "Anchor" });
-    const rival = await createAgent(d, { name: "Rival", presetName: "Bully" });
+    // Players, so their matches stake and queue a settlement to be given up on.
+    const stranded = await createAgent(d, { name: "Stranded", presetName: "Anchor", ownerId: someWallet() });
+    const rival = await createAgent(d, { name: "Rival2", presetName: "Bully", ownerId: someWallet() });
     // As an old rental was: no salt, so its vault can never be opened.
     await d.update(chainOps).set({ salt: null }).where(eq(chainOps.agentId, stranded.id));
     let settled: string | null = null;
@@ -276,8 +277,8 @@ describe("the worker", () => {
 
   it("recovers the signature of a settlement found already on chain, so its page can link it", async () => {
     const { db: d, close: c } = await fresh();
-    const a = await createAgent(d, { name: "A", presetName: "Bully" });
-    const b = await createAgent(d, { name: "B", presetName: "Mirage" });
+    const a = await createAgent(d, { name: "A", presetName: "Bully", ownerId: someWallet() });
+    const b = await createAgent(d, { name: "B", presetName: "Mirage", ownerId: someWallet() });
     const chain = new FakeChain();
     await drainChainOps(d, chain);
     let matchId = "";

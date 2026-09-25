@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { connect, migrate } from "../src/db/client.js";
 import { matches } from "../src/db/schema.js";
 import { createAgent, runExhibition, runMatch } from "../src/db/runner.js";
+import { someWallet } from "./helpers.js";
 import { latestSeq, liveCounters, matchesAfter, recentMatches } from "../src/db/feed.js";
 import { renderTranscript } from "../src/transcript.js";
 import { listen } from "../src/http/server.js";
@@ -18,11 +19,16 @@ describe("the live tail", () => {
   it("reads every match after a seq, oldest first, exhibitions included", async () => {
     const { db, close } = await fresh();
     expect(await latestSeq(db)).toBe(0);
+    // Two pairs: a house pair for exhibitions, and a player pair for the staked
+    // match. They cannot be the same agents - an exhibition needs unowned
+    // agents, and only players stake against each other.
     const a = await createAgent(db, { name: "HouseA", presetName: "Mirage" });
     const b = await createAgent(db, { name: "HouseB", presetName: "Bully" });
+    const p1 = await createAgent(db, { name: "P1", presetName: "Anchor", ownerId: someWallet() });
+    const p2 = await createAgent(db, { name: "P2", presetName: "Hammer", ownerId: someWallet() });
     await runExhibition(db, a.id, b.id, { seed: 1 });
     const from = await latestSeq(db);
-    await runMatch(db, a.id, b.id, { seed: 2 });
+    await runMatch(db, p1.id, p2.id, { seed: 2 });
     await runExhibition(db, a.id, b.id, { seed: 3 });
 
     const after = await matchesAfter(db, from);
@@ -40,8 +46,8 @@ describe("the live tail", () => {
 
   it("plays out to the match's own result, with nothing the transcript does not show", async () => {
     const { db, close } = await fresh();
-    const a = await createAgent(db, { name: "Left", presetName: "Mirage" });
-    const b = await createAgent(db, { name: "Right", presetName: "Hammer" });
+    const a = await createAgent(db, { name: "Left", presetName: "Mirage", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Right", presetName: "Hammer", ownerId: someWallet() });
     for (let seed = 1; seed <= 8; seed++) await runMatch(db, a.id, b.id, { seed });
 
     for (const m of await matchesAfter(db, 0)) {
@@ -64,11 +70,13 @@ describe("the live tail", () => {
     const { db, close } = await fresh();
     const a = await createAgent(db, { name: "HouseA", presetName: "Mirage" });
     const b = await createAgent(db, { name: "HouseB", presetName: "Bully" });
+    const p1 = await createAgent(db, { name: "P1", presetName: "Anchor", ownerId: someWallet() });
+    const p2 = await createAgent(db, { name: "P2", presetName: "Hammer", ownerId: someWallet() });
     await runExhibition(db, a.id, b.id, { seed: 1 });
     expect(await liveCounters(db, new Date())).toEqual({ matchesToday: 0, totalStaked: 0 });
 
-    const first = await runMatch(db, a.id, b.id, { seed: 2 });
-    const second = await runMatch(db, a.id, b.id, { seed: 3 });
+    const first = await runMatch(db, p1.id, p2.id, { seed: 2 });
+    const second = await runMatch(db, p1.id, p2.id, { seed: 3 });
     // One of them yesterday: it still counts toward what was staked, not toward today.
     const yesterday = new Date(Date.now() - 86_400_000);
     await db.update(matches).set({ createdAt: yesterday }).where(eq(matches.id, first.match.id));
@@ -125,13 +133,20 @@ describe("GET /live", () => {
   const start = async (live: LiveOptions = {}) => {
     const { db, close: closeDb } = await fresh();
     const server = await listen({ db, live: { pollMs: 20, ...live } });
-    const a = await createAgent(db, { name: "HouseA", presetName: "Mirage" });
-    const b = await createAgent(db, { name: "HouseB", presetName: "Bully" });
+    // Players, so the matches these stream are staked ones: a house match is an
+    // exhibition and would move no money for the counters to count.
+    const a = await createAgent(db, { name: "Left", presetName: "Mirage", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Right", presetName: "Bully", ownerId: someWallet() });
+    // And a house pair, for the exhibition an exhibition needs.
+    const h1 = await createAgent(db, { name: "HouseA", presetName: "Anchor" });
+    const h2 = await createAgent(db, { name: "HouseB", presetName: "Hammer" });
     return {
       db,
       url: server.url,
       a,
       b,
+      h1,
+      h2,
       close: async () => {
         await server.close();
         await closeDb();
@@ -161,7 +176,7 @@ describe("GET /live", () => {
     expect(staked.data.counters).toEqual({ matchesToday: 1, totalStaked: played.stake * 2 });
 
     // An exhibition is streamed too, and changes no counter.
-    await runExhibition(t.db, t.a.id, t.b.id, { seed: 5 });
+    await runExhibition(t.db, t.h1.id, t.h2.id, { seed: 5 });
     const exhibition = await next();
     expect(exhibition.data.match.exhibition).toBe(true);
     expect(exhibition.data.counters).toBeUndefined();

@@ -198,8 +198,8 @@ describe("matchmaking", () => {
   it("falls back to a preset agent when the pool is thin, and logs which path it took", async () => {
     const { db: fresh, close: closeFresh } = await connect();
     await migrate(fresh);
-    const lonely = await createAgent(fresh, { name: "Lonely", presetName: "Anchor" });
-    const preset = await createAgent(fresh, { name: "Roster", presetName: "Mirage" });
+    const lonely = await createAgent(fresh, { name: "Lonely", presetName: "Anchor", ownerId: someWallet() });
+    const preset = await createAgent(fresh, { name: "Roster", presetName: "Mirage", ownerId: someWallet() });
 
     const picks: OpponentPick[] = [];
     const pick = await pickOpponent(fresh, lonely.id, { onLog: (p) => picks.push(p) });
@@ -363,8 +363,8 @@ describe("true rating", () => {
     // different amounts in each, and neither band sees the other's agents.
     for (let i = 0; i < 4; i++) await createAgent(fresh, { name: `A${i}`, presetName: "Anchor", band: "A" });
     for (let i = 0; i < 4; i++) await createAgent(fresh, { name: `C${i}`, presetName: "Bully", band: "C" });
-    const inA = await createAgent(fresh, { name: "MirageA", presetName: "Mirage", band: "A" });
-    const inC = await createAgent(fresh, { name: "MirageC", presetName: "Mirage", band: "C" });
+    const inA = await createAgent(fresh, { name: "MirageA", presetName: "Mirage", band: "A", ownerId: someWallet() });
+    const inC = await createAgent(fresh, { name: "MirageC", presetName: "Mirage", band: "C", ownerId: someWallet() });
     await refreshTrueRatings(fresh);
 
     const mirage = policyAgent(snapshotPreset("Mirage"));
@@ -402,13 +402,16 @@ describe("true rating", () => {
     }
     const busy = await createAgent(fresh, { name: "Busy", presetName: "Mirage", ownerId: someWallet() });
     await fresh.update(agents).set({ createdAt: longAgo }).where(eq(agents.id, busy.id));
-    const [house] = await fresh.select().from(agents).where(eq(agents.name, "H0"));
-    await runMatch(fresh, busy.id, house!.id, { seed: 1 });
+    // A real opponent, because a house match is an exhibition now and says
+    // nothing about whether an agent has been active.
+    const sparring = await createAgent(fresh, { name: "Sparring", presetName: "Anchor", ownerId: someWallet() });
+    await fresh.update(agents).set({ createdAt: longAgo }).where(eq(agents.id, sparring.id));
+    await runMatch(fresh, busy.id, sparring.id, { seed: 1 });
     // And one rented today, which has had no chance to play yet.
     const fresher = await createAgent(fresh, { name: "New", presetName: "Bully", ownerId: someWallet() });
 
     const profile = await rosterProfile(fresh, "B");
-    expect(profile.agentCount).toBe(6); // 4 house, Busy, New
+    expect(profile.agentCount).toBe(7); // 4 house, Busy, Sparring, New
     for (const id of dormant) expect(profile.members.has(id)).toBe(false);
     expect(profile.members.has(busy.id)).toBe(true);
     expect(profile.members.has(fresher.id)).toBe(true);
@@ -420,7 +423,10 @@ describe("true rating", () => {
 
     // Still matchable: idle is about ratings, not about who can be played.
     const pick = await pickOpponent(fresh, fresher.id);
-    expect(pick.candidates).toBe(7); // 4 house, both dormant, and Busy
+    // Players only: a house agent stakes nothing, so matchmaking will not offer
+    // one. Both dormant, Busy and Sparring - idle is about ratings, not about
+    // who can be played.
+    expect(pick.candidates).toBe(4);
     await closeFresh();
   });
 
