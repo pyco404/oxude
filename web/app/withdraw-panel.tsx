@@ -36,7 +36,7 @@ export function WithdrawPanel({
   refreshKey: string;
   onChanged: () => void;
 }) {
-  const { session, signWithdrawal } = useWallet();
+  const { session, signTransaction } = useWallet();
   const token = session?.token ?? null;
   const [info, setInfo] = useState<Withdrawable | null>(null);
   const [amount, setAmount] = useState("");
@@ -63,7 +63,7 @@ export function WithdrawPanel({
       setPhase({ at: "preparing" });
       const { withdrawal } = await api.prepareWithdrawal(token, agentId, what);
       setPhase({ at: "signing" });
-      const signed = await signWithdrawal(withdrawal.transaction);
+      const signed = await signTransaction(withdrawal.transaction);
       setPhase({ at: "sending" });
       let { status, signature } = (await api.submitWithdrawal(token, withdrawal.withdrawalId, signed)).withdrawal;
       // Recorded but not yet landed: it lands within a minute or two, or is put back.

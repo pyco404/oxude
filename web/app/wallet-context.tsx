@@ -78,7 +78,12 @@ type WalletState = {
   privyReason: string | null;
   connectPrivy: () => Promise<void>;
   /** Signs a prepared withdrawal (base64) with whichever wallet signed in; returns it signed, base64. */
-  signWithdrawal: (prepared: string) => Promise<string>;
+  /**
+   * Adds the owner's signature to a transaction the server prepared and
+   * co-signed. Used for withdrawals and for paying for a rental - the wallet
+   * does not care which, and neither does this.
+   */
+  signTransaction: (prepared: string) => Promise<string>;
 };
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -148,7 +153,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [privy]);
 
-  const signWithdrawal = useCallback(
+  const signTransaction = useCallback(
     async (prepared: string) => {
       if (!session) throw new Error("sign in first");
       if (session.wallet !== "Privy") return signTransactionWith(session, prepared);
@@ -185,7 +190,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         privyStatus,
         privyReason,
         connectPrivy,
-        signWithdrawal,
+        signTransaction,
       }}
     >
       {children}

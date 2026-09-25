@@ -273,7 +273,22 @@ export function createApp(options: AppOptions): Server {
   async function getMe(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
     // Every agent this wallet owns, so a second device shows the same ones as the first.
-    return { ownerId, agents: await agentsOf(db, ownerId) };
+    const deposit = options.deposit;
+    const viaDeposit = Boolean(deposit?.allow(ownerId));
+    return {
+      ownerId,
+      agents: await agentsOf(db, ownerId),
+      /**
+       * What renting would cost this wallet, and how. The screen needs this
+       * before it can ask for anything: on the deposit flow it has to take an
+       * amount and warn that the agent cannot play until the transaction lands,
+       * and on the seed flow neither applies.
+       */
+      funding: {
+        mode: viaDeposit ? ("deposit" as const) : ("seed" as const),
+        feeChips: viaDeposit ? toChips(deposit!.fee, deposit!.chipRate) : 0,
+      },
+    };
   }
 
   async function postAgent(ctx: Ctx) {

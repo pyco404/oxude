@@ -52,11 +52,59 @@ const BRIEF_DEBOUNCE_MS = 1500;
 const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
 const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
 
+/**
+ * A deposit-funded rental in progress. Until it reaches "idle" the agent on
+ * screen holds an address and nothing else: no fee has been paid and its vault
+ * does not exist.
+ */
+type RentalStep =
+  | { at: "idle" }
+  | { at: "signing" | "sending"; chips: number; feeChips: number }
+  | { at: "waiting"; chips: number; feeChips: number; rentalId: string }
+  | { at: "error"; message: string };
+
+/**
+ * What is happening to a deposit-funded rental, said plainly. Every state here
+ * except the last means the agent exists but is not rented: nothing has been
+ * charged and it cannot play.
+ */
+function RentalProgress({ step }: { step: RentalStep }) {
+  if (step.at === "error") {
+    return (
+      <p className="rounded-panel border border-loss px-3 py-2 text-[12px] leading-5 text-loss">
+        {step.message}. Nothing was charged — the rent and the deposit are one transaction, so it either all happens
+        or none of it does.
+      </p>
+    );
+  }
+  if (step.at === "idle") return null;
+  const money = (
+    <>
+      <span className="font-mono text-gold">{step.chips.toLocaleString()}</span> deposit and{" "}
+      <span className="font-mono text-gold">{step.feeChips.toLocaleString()}</span> rent
+    </>
+  );
+  if (step.at === "waiting") {
+    return (
+      <p className="rounded-panel border border-line px-3 py-2 text-[12px] leading-5 text-muted">
+        Your transaction has been sent and hasn&apos;t landed yet. The agent stays unplayable until it does; if it never
+        lands, it&apos;s retired and nothing is charged.
+      </p>
+    );
+  }
+  return (
+    <p className="rounded-panel border border-line px-3 py-2 text-[12px] leading-5 text-muted">
+      {step.at === "signing" ? "Waiting for your wallet to sign" : "Sending"} the {money}. The agent cannot play until
+      this lands.
+    </p>
+  );
+}
+
 export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const feed = useFeed(initialFeed);
   // Sign-in is site-wide: the mobile top bar and this page share one session.
   const wallet = useWallet();
-  const { session, wallets } = wallet;
+  const { session, wallets, signTransaction } = wallet;
   const token = session?.token ?? null;
   const [agent, setAgent] = useState<AgentView | null>(null);
   // Every agent this wallet owns, from the server: the same list on every device.
@@ -66,6 +114,17 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const [chosen, setChosen] = useState<string>("");
   const [brief, setBrief] = useState("");
   const [name, setName] = useState("");
+  /**
+   * What to fund a deposit-funded agent with, in chips. Ignored on the seed
+   * flow, where the server seeds a fixed balance. The chooser that quotes
+   * survival against this figure comes with the rent screen's own work; this is
+   * the amount, plainly.
+   */
+  const [deposit, setDeposit] = useState("900");
+  /** Where a deposit-funded rental has got to, for the screen to narrate. */
+  const [rentalStep, setRentalStep] = useState<RentalStep>({ at: "idle" });
+  /** How renting works for this wallet. Seed until the server says otherwise. */
+  const [funding, setFunding] = useState<{ mode: "seed" | "deposit"; feeChips: number }>({ mode: "seed", feeChips: 0 });
   const [preview, setPreview] = useState<{ value: Preview; paid: boolean } | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [autoPreview, setAutoPreview] = useState(true);
@@ -123,8 +182,9 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
    */
   const loadMine = useCallback(
     async (sessionToken: string) => {
-      const { agents: owned } = await api.me(sessionToken);
+      const { agents: owned, funding } = await api.me(sessionToken);
       setMine(owned);
+      setFunding(funding);
       const inPlay = owned.filter((a) => !a.retired);
       const saved = localStorage.getItem(AGENT_KEY);
       const open = inPlay.find((a) => idOf(a) === saved) ?? inPlay[0] ?? null;
@@ -265,12 +325,32 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     run("rent", async () => {
       // No name given: the agent's character is named for it.
       const chosenName = name.trim();
-      const { agent: created, elicitation } = await api.rent(token, {
+      const { agent: created, elicitation, funding, rental } = await api.rent(token, {
         ...(chosenName ? { name: chosenName } : {}),
         band,
+        deposit: Number(deposit) || 0,
         ...(tab === "preset" ? { presetName: chosen } : { brief: brief.trim() }),
       });
       if (elicitation?.free) setFirstFreeUsed(true);
+      // On the deposit flow the agent is not rented yet: it holds an address and
+      // nothing else until its owner pays for it. Signing is the rest of
+      // renting, not a step afterwards, so it happens here rather than being
+      // left to a button somebody might not press.
+      if (funding === "deposit" && rental) {
+        const money = { chips: rental.depositChips, feeChips: rental.feeChips };
+        setRentalStep({ at: "signing", ...money });
+        try {
+          const signed = await signTransaction(rental.transaction);
+          setRentalStep({ at: "sending", ...money });
+          const { rental: done } = await api.submitRental(token, rental.rentalId, signed);
+          setRentalStep(done.playable ? { at: "idle" } : { at: "waiting", ...money, rentalId: rental.rentalId });
+        } catch (error) {
+          // Nothing was charged. The fee, the vault and the deposit are one
+          // transaction, so a refusal here leaves the wallet exactly as it was.
+          setRentalStep({ at: "error", message: (error as Error).message });
+          throw error;
+        }
+      }
       const id = created.id ?? created.agentId!;
       localStorage.setItem(AGENT_KEY, id);
       setAgent({ ...created, id });
@@ -351,6 +431,10 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       bandRows={bandRows}
       presetRatings={presetRatings}
       signedIn={Boolean(session)}
+      deposits={funding.mode === "deposit"}
+      deposit={deposit}
+      setDeposit={setDeposit}
+      rentalStep={rentalStep}
     />
   );
 
@@ -499,6 +583,11 @@ function RentPanel(props: {
   bandRows: { name: BandName; worstMatch: number; survival: BandSurvivalRow }[] | null;
   presetRatings: Record<string, number>;
   signedIn: boolean;
+  /** This wallet rents by depositing: the screen has to ask for an amount. */
+  deposits: boolean;
+  deposit: string;
+  setDeposit: (s: string) => void;
+  rentalStep: RentalStep;
 }) {
   const ready =
     props.signedIn && (props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12);
@@ -615,7 +704,9 @@ function RentPanel(props: {
           {!props.signedIn
             ? "Sign in to rent"
             : props.busy
-              ? "Renting…"
+              ? props.deposits
+                ? "Waiting for your wallet…"
+                : "Renting…"
               : props.tab === "preset"
                 ? `Rent ${props.chosen}`
                 : "Rent on this brief"}
@@ -627,6 +718,33 @@ function RentPanel(props: {
         ) : (
           <p className="text-[12px] leading-5 text-muted">Presets are free to rent and free to rate.</p>
         )}
+        {props.deposits ? (
+          <div className="rounded-panel border border-line bg-panel-2 px-3 py-3">
+            <label htmlFor="deposit" className="block text-[12px] uppercase tracking-wider text-muted">
+              Fund it with
+            </label>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                id="deposit"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={props.deposit}
+                onChange={(e) => props.setDeposit(e.target.value)}
+                className="rounded-panel w-32 border border-line bg-panel px-3 py-2 font-mono text-[13px]"
+              />
+              <span className="text-[13px] text-muted">chips, from your own wallet</span>
+            </div>
+            <p className="mt-2 text-[12px] leading-5 text-muted">
+              You pay the rent and this deposit in one transaction your wallet signs.{" "}
+              <span className="text-ink">
+                The agent cannot play until that transaction lands.
+              </span>{" "}
+              If you refuse it, or it fails, nothing is charged at all.
+            </p>
+          </div>
+        ) : null}
+        {props.rentalStep.at !== "idle" ? <RentalProgress step={props.rentalStep} /> : null}
         {/* Devnet only, and renders nothing anywhere else: the api has no faucet
             to answer with, so nobody is shown one that cannot exist. */}
         <FaucetPanel />

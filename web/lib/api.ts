@@ -247,6 +247,33 @@ export type FaucetStatus = {
   nextAt: string | null;
 };
 
+/**
+ * A deposit-funded rental waiting on its owner's signature.
+ *
+ * `playable` is false in every answer that carries this: no fee has been paid
+ * and the vault does not exist, so the agent is a placeholder for an address
+ * until the transaction lands.
+ */
+export type PendingRental = {
+  rentalId: string;
+  /** Base64, for the wallet to sign. */
+  transaction: string;
+  fee: number;
+  feeChips: number;
+  deposit: number;
+  depositChips: number;
+  playable: false;
+};
+
+export type RentalState = {
+  rentalId: string;
+  agentId: string;
+  status: "prepared" | "submitted" | "confirmed" | "expired";
+  signature: string | null;
+  error: string | null;
+  playable: boolean;
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -282,7 +309,13 @@ async function request<T>(path: string, init: RequestInit & { token?: string | n
 export const api = {
   presets: () => request<{ presets: Preset[]; free: boolean }>("/presets"),
   /** Who you are signed in as, and every agent that wallet owns - on any device. */
-  me: (token: string | null) => request<{ ownerId: string; agents: AgentView[] }>("/auth/me", { token }),
+  me: (token: string | null) =>
+    request<{
+      ownerId: string;
+      agents: AgentView[];
+      /** How renting works for this wallet, which the rent screen needs before it asks anything. */
+      funding: { mode: "seed" | "deposit"; feeChips: number };
+    }>("/auth/me", { token }),
   previewTable: (token: string | null, policyTable: unknown, band: BandName = DEFAULT_BAND) =>
     request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable, band }) }),
   previewBrief: (token: string | null, brief: string, band: BandName = DEFAULT_BAND) =>
@@ -291,8 +324,22 @@ export const api = {
       token,
       body: JSON.stringify({ brief, band }),
     }),
-  rent: (token: string | null, input: { name?: string; presetName?: string; brief?: string; band?: BandName }) =>
-    request<{ agent: AgentView; elicitation: { free: boolean } | null }>("/agents", {
+  /**
+   * Rents an agent. Read `funding` to know what came back: "seed" is an agent
+   * that can play at once, "deposit" is one that cannot play until the owner
+   * signs `rental.transaction` and it lands. Never infer this from which fields
+   * are set.
+   */
+  rent: (
+    token: string | null,
+    input: { name?: string; presetName?: string; brief?: string; band?: BandName; deposit?: number },
+  ) =>
+    request<{
+      agent: AgentView;
+      elicitation: { free: boolean } | null;
+      funding: "seed" | "deposit";
+      rental: PendingRental | null;
+    }>("/agents", {
       method: "POST",
       token,
       body: JSON.stringify(input),
@@ -335,6 +382,13 @@ export const api = {
     ),
   feed: (limit = 12, before?: number) =>
     request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
+  submitRental: (token: string | null, rentalId: string, transaction: string) =>
+    request<{ rental: { status: RentalState["status"]; signature: string | null; playable: boolean } }>(
+      `/rentals/${rentalId}/submit`,
+      { method: "POST", token, body: JSON.stringify({ transaction }) },
+    ),
+  rentalState: (token: string | null, rentalId: string) =>
+    request<{ rental: RentalState }>(`/rentals/${rentalId}`, { token }),
   faucet: (token: string | null) => request<{ faucet: FaucetStatus }>("/faucet", { token }),
   claimFaucet: (token: string | null) =>
     request<{ grant: { amount: number; chips: number; signature: string } }>("/faucet", { method: "POST", token }),
