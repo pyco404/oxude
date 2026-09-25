@@ -8,7 +8,8 @@ const PAGE = 30;
 
 /** Every match, newest first: the live window on top, older pages below on request. */
 export function LiveView({ initial }: { initial: Feed | null }) {
-  const feed = useFeed(initial, PAGE);
+  // Every row is kept: older pages load below, so the window must not drop any off its end.
+  const feed = useFeed(initial, PAGE, true);
   const [older, setOlder] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);

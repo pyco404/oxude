@@ -73,11 +73,85 @@ body {
   transition: border-color 200ms ease-out;
 }
 
+/*
+ * The live feed. A new row opens a gap at the top of the list and drops into
+ * it, so the rows below move down rather than jump. A round's hands, action
+ * and outcome each fade in over the last. The live dot blinks on and off in
+ * steps: flat red, never a glow or a pulse of size.
+ */
+@keyframes row-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+
+@keyframes row-drop {
+  from {
+    transform: translateY(-40%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.row-in {
+  display: grid;
+  animation: row-open 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.row-in > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.row-in > * > * {
+  animation: row-drop 360ms cubic-bezier(0.2, 0.7, 0.2, 1) 80ms both;
+}
+
+@keyframes phase-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.phase-in {
+  animation: phase-in 220ms ease-out both;
+}
+
+@keyframes live-blink {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+.live-blink {
+  animation: live-blink 1.2s steps(1, end) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bar-wipe {
     animation: none;
   }
   .card-border {
     transition: none;
+  }
+  .row-in,
+  .row-in > * > *,
+  .phase-in,
+  .live-blink {
+    animation: none;
   }
 }
