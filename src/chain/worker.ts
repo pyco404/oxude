@@ -1,8 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import type { SeedOpenVaultInput } from "./seed-settlement.js";
-import { balancesOf } from "../db/ledger.js";
-import { agents, chainOps, withdrawals, type ChainOpRow } from "../db/schema.js";
+import { balancesOf, record } from "../db/ledger.js";
+import { agents, chainOps, deposits, rentals, withdrawals, type ChainOpRow } from "../db/schema.js";
 import type { Funding } from "../chips.js";
 import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
 
@@ -288,6 +288,14 @@ export async function drainChainOps(
 export type Mismatch = { agentId: string; name: string; ledger: number; chain: number | null };
 
 /**
+ * A vault holding more than the ledger says. Not a disagreement: a vault is an
+ * ordinary token account, so anyone can transfer into one without the program
+ * being involved at all, and a deposit whose confirmation was lost looks the
+ * same from here. Either way the money is the agent's and the ledger is behind.
+ */
+export type Surplus = { agentId: string; name: string; ledger: number; chain: number; surplus: number };
+
+/**
  * Compares each agent's vault with its ledger balance, for agents whose ops
  * have all been confirmed. The ledger is authoritative; a mismatch is a bug to
  * investigate, never something to "fix" by overwriting either side.
@@ -295,7 +303,7 @@ export type Mismatch = { agentId: string; name: string; ledger: number; chain: n
 export async function reconcile(
   db: Db,
   chain: ChainPort | ChainPorts,
-): Promise<{ checked: number; mismatches: Mismatch[] }> {
+): Promise<{ checked: number; mismatches: Mismatch[]; surpluses: Surplus[] }> {
   const ports = portsOf(chain);
   const involved = await db
     .select({ id: agents.id, name: agents.name, funding: agents.funding })
@@ -312,6 +320,7 @@ export async function reconcile(
     involved.map((a) => a.id),
   );
   const mismatches: Mismatch[] = [];
+  const surpluses: Surplus[] = [];
   for (const agent of involved) {
     const port = ports[agent.funding];
     // An agent whose program this server cannot reach is not a disagreement:
@@ -319,9 +328,54 @@ export async function reconcile(
     if (!port) continue;
     const onChain = await port.vaultBalance(agent.id);
     const ledger = balances.get(agent.id) ?? 0;
-    if (onChain !== ledger) mismatches.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain });
+    if (onChain === ledger) continue;
+    // More on chain than in the ledger is money that arrived: the ledger is
+    // behind, not wrong. Less is the serious direction - the ledger says an
+    // agent owns something its vault cannot pay - and that is a bug to look at.
+    if (onChain !== null && onChain > ledger) {
+      surpluses.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain, surplus: onChain - ledger });
+    } else {
+      mismatches.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain });
+    }
   }
-  return { checked: involved.length, mismatches };
+  return { checked: involved.length, mismatches, surpluses };
+}
+
+/**
+ * Credits money that reached a vault without the ledger hearing about it.
+ *
+ * The program cannot stop a plain transfer into a vault, so `deposit` exists to
+ * make one attributable rather than to make it the only way in. Whatever the
+ * route, the tokens are in the agent's vault and are its owner's; refusing to
+ * count them would leave money nobody could play with or withdraw.
+ *
+ * An agent with a rental or top-up still in flight is left alone. Its surplus
+ * is most likely that very transaction, and crediting it here as well as when
+ * it confirms would count it twice.
+ */
+export async function creditSurplus(
+  db: Db,
+  chain: ChainPort | ChainPorts,
+): Promise<{ credited: { agentId: string; amount: number }[] }> {
+  const { surpluses } = await reconcile(db, chain);
+  const credited: { agentId: string; amount: number }[] = [];
+  for (const s of surpluses) {
+    const inFlight = await db
+      .select({ id: rentals.id })
+      .from(rentals)
+      .where(and(eq(rentals.agentId, s.agentId), inArray(rentals.status, ["prepared", "submitted"])))
+      .limit(1);
+    if (inFlight.length > 0) continue;
+    const topping = await db
+      .select({ id: deposits.id })
+      .from(deposits)
+      .where(and(eq(deposits.agentId, s.agentId), inArray(deposits.status, ["prepared", "submitted"])))
+      .limit(1);
+    if (topping.length > 0) continue;
+    await record(db, [{ agentId: s.agentId, amount: s.surplus, reason: "deposit" }]);
+    credited.push({ agentId: s.agentId, amount: s.surplus });
+  }
+  return { credited };
 }
 
 /**

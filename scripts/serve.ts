@@ -112,6 +112,9 @@ if (rpc) {
 // else keeps the seed flow, which is what the cutover runs on until a season
 // boundary flips the default.
 let depositFlow: import("../src/http/server.js").AppOptions["deposit"];
+// The same client, kept at its full type. The http layer is handed only the
+// parts it uses; the worker needs the rest of it to settle and reconcile.
+let depositClient: import("../src/chain/settlement.js").ChainClient | undefined;
 if (rpc && process.env["CHAIN_STAKE_MINT"]) {
   const { Connection, Keypair, PublicKey } = await import("@solana/web3.js");
   const { ChainClient } = await import("../src/chain/settlement.js");
@@ -134,6 +137,7 @@ if (rpc && process.env["CHAIN_STAKE_MINT"]) {
         .map((w) => w.trim())
         .filter(Boolean),
     );
+    depositClient = client;
     depositFlow = {
       chain: client,
       fee: config.rent.toNumber(),
@@ -204,6 +208,7 @@ if (characterModel) {
 if (depositFlow) {
   const { sweepRentals } = await import("../src/db/rentals.js");
   const { sweepDeposits } = await import("../src/db/deposits.js");
+  const { creditSurplus } = await import("../src/chain/worker.js");
   const sweepMs = Number(process.env["RENTAL_SWEEP_MS"] ?? 60_000);
   const sweep = async () => {
     try {
@@ -213,6 +218,12 @@ if (depositFlow) {
       const tops = await sweepDeposits(db, depositFlow!.chain);
       if (tops.confirmed.length) console.log(`deposits: ${tops.confirmed.length} landed after a lost confirmation`);
       if (tops.expired.length) console.log(`deposits: ${tops.expired.length} never landed`);
+      // Money that reached a vault by some other route than this server. It is
+      // the agent's either way, and refusing to count it would strand it.
+      if (chain && depositClient) {
+        const { credited } = await creditSurplus(db, { seed: chain, deposit: depositClient });
+        for (const c of credited) console.log(`chain: credited ${c.amount} that arrived in ${c.agentId.slice(0, 8)}'s vault`);
+      }
     } catch (error) {
       console.error(`rentals: sweep failed: ${String(error).slice(0, 160)}`);
     }

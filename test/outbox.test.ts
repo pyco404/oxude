@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
-import { agents, chainOps, STARTING_BALANCE } from "../src/db/schema.js";
+import { agents, chainOps, deposits, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
 import {
+  creditSurplus,
   drainChainOps,
   reconcile,
   settlementLag,
@@ -450,6 +451,86 @@ describe("the settlement lag alarm", () => {
     worker.stop();
     expect(seen.filter((s) => !s.stalled)).toHaveLength(1);
     expect(seen).toHaveLength(2);
+  });
+});
+
+describe("money that arrives without the ledger hearing about it", () => {
+  // A vault is an ordinary token account: the program cannot stop a plain
+  // transfer into one. `deposit` exists to make one attributable, not to make
+  // it the only way in - so the ledger has to be able to catch up.
+  async function fresh() {
+    const { db } = await connect();
+    await migrate(db);
+    return db;
+  }
+
+  it("calls a vault holding more than the ledger a surplus, not a disagreement", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Given", presetName: "Anchor", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+
+    // Somebody transferred straight into the vault.
+    chain.vaults.set(agent.id, chain.vaults.get(agent.id)! + 250);
+    const check = await reconcile(db, chain);
+    expect(check.mismatches).toEqual([]);
+    expect(check.surpluses).toHaveLength(1);
+    expect(check.surpluses[0]).toMatchObject({ agentId: agent.id, surplus: 250 });
+  });
+
+  it("still reports a vault holding less, which is the serious direction", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Short", presetName: "Bully", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+
+    // The ledger says this agent owns more than its vault can pay. That is a bug.
+    chain.vaults.set(agent.id, chain.vaults.get(agent.id)! - 100);
+    const check = await reconcile(db, chain);
+    expect(check.surpluses).toEqual([]);
+    expect(check.mismatches.map((m) => m.name)).toEqual(["Short"]);
+  });
+
+  it("credits a surplus so the money can be played with, once", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Topped", presetName: "Hammer", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+    const before = await balanceOf(db, agent.id);
+
+    chain.vaults.set(agent.id, before + 400);
+    const first = await creditSurplus(db, chain);
+    expect(first.credited).toEqual([{ agentId: agent.id, amount: 400 }]);
+    expect(await balanceOf(db, agent.id)).toBe(before + 400);
+
+    // The two now agree, so a second pass finds nothing to do.
+    const again = await creditSurplus(db, chain);
+    expect(again.credited).toEqual([]);
+    expect((await reconcile(db, chain)).surpluses).toEqual([]);
+  });
+
+  it("leaves an agent alone while its own deposit is still in flight", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Pending", presetName: "Mirage", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+    const before = await balanceOf(db, agent.id);
+
+    // A top-up has been sent and not yet recorded. Its money is already in the
+    // vault, so it looks exactly like a surplus - and crediting it here as well
+    // as when it confirms would count it twice.
+    await db.insert(deposits).values({
+      agentId: agent.id,
+      ownerId: someWallet(),
+      amount: 300,
+      status: "submitted",
+      preparedTx: "",
+      lastValidBlockHeight: 1,
+    });
+    chain.vaults.set(agent.id, before + 300);
+
+    expect((await creditSurplus(db, chain)).credited).toEqual([]);
+    expect(await balanceOf(db, agent.id)).toBe(before);
   });
 });
 
