@@ -45,6 +45,9 @@ import { LiveStream, resumeFrom, type LiveOptions } from "./live.js";
 import { settlementStatus, settlementLag, SETTLEMENT_LAG_ALARM_MS } from "../chain/worker.js";
 import { DEVNET_CHIP_RATE, rateOf, type Funding } from "../chips.js";
 import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
+import { prepareRental, submitRental, RentalError, type RentalChain } from "../db/rentals.js";
+import { rentals } from "../db/schema.js";
+import { baseUnits, chips as toChips } from "../chips.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
 
 /**
@@ -85,6 +88,23 @@ export type AppOptions = {
    * it the faucet endpoints answer 503.
    */
   faucet?: FaucetChain;
+  /**
+   * The deposit-funded flow. Absent until its program is deployed and
+   * configured, and while it is absent every rental takes the seed flow.
+   *
+   * `fee` and `chipRate` are read from the program's own config at startup
+   * rather than set here, so the price a player is quoted is the price the
+   * program will insist on when their transaction arrives.
+   */
+  deposit?: {
+    chain: RentalChain;
+    /** Base units burned per rental, as the program's config carries it. */
+    fee: number;
+    /** Base units to one chip this season. */
+    chipRate: number;
+    /** Whose rentals take this flow. */
+    allow: (ownerId: string) => boolean;
+  };
   /**
    * Base units to one chip, as the settlement program's config carries it.
    * Defaults to devnet's fixed rate of one chip to one whole token.
@@ -190,6 +210,8 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
     ["GET", /^\/season$/, getSeason],
+    ["POST", /^\/rentals\/([^/]+)\/submit$/, postRentalSubmit],
+    ["GET", /^\/rentals\/([^/]+)$/, getRental],
     ["GET", /^\/faucet$/, getFaucet],
     ["POST", /^\/faucet$/, postFaucet],
     ["POST", /^\/preview$/, postPreview],
@@ -293,10 +315,24 @@ export function createApp(options: AppOptions): Server {
     if (wantedBand !== undefined && !STAKE_BANDS.some((b) => b.name === wantedBand)) {
       throw new HttpError(400, `band must be one of ${STAKE_BANDS.map((b) => b.name).join(", ")}`);
     }
+    // Which flow this rental takes. A deposit rental is paid for by its owner
+    // and cannot be created here and now: it needs a transaction signed in
+    // their wallet, so the answer is the agent plus that transaction.
+    const deposit = options.deposit;
+    const viaDeposit = Boolean(deposit?.allow(ownerId));
+    let depositAmount = 0;
+    if (viaDeposit) {
+      const asked = ctx.body["deposit"];
+      if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) {
+        throw new HttpError(400, "deposit is required, in chips, and must be above zero");
+      }
+      depositAmount = baseUnits(Math.floor(asked), deposit!.chipRate);
+    }
+
     // One agent in play per wallet. The check and the rental share a transaction
     // and a lock on this wallet, so renting from two devices at once still
     // leaves one agent, not two.
-    const row = await db.transaction(async (tx) => {
+    const { row, rental } = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${ownerId}, 0))`);
       const active = await activeAgentsOf(tx as unknown as Db, ownerId);
       if (active.length > 0) {
@@ -305,14 +341,27 @@ export function createApp(options: AppOptions): Server {
           agents: active.map((a) => ({ id: a.id, name: a.name })),
         });
       }
-      return createAgent(tx as unknown as Db, {
+      const t = tx as unknown as Db;
+      const wanted = {
         name,
         ownerId,
         ...(presetName ? { presetName } : {}),
         ...(brief ? { brief } : {}),
         ...(table ? { policyTable: table } : {}),
         ...(wantedBand !== undefined ? { band: wantedBand as BandName } : {}),
-      });
+      };
+      if (!viaDeposit) return { row: await createAgent(t, wanted), rental: null };
+      // Inside the lock on purpose. Building the transaction is a round trip to
+      // an RPC, but the lock is on this wallet alone, so the only thing it
+      // delays is the same wallet renting twice at once - which is the thing it
+      // is for.
+      try {
+        const prepared = await prepareRental(t, deposit!.chain, { ...wanted, fee: deposit!.fee, deposit: depositAmount });
+        return { row: prepared.agent, rental: prepared };
+      } catch (error) {
+        if (error instanceof RentalError) throw new HttpError(error.status, error.message);
+        throw error;
+      }
     });
     await refreshTrueRatings(db);
     // Its character: a face, a name unless the owner gave one, an epithet and a
@@ -337,6 +386,30 @@ export function createApp(options: AppOptions): Server {
         ...bandStatus(view!),
       },
       elicitation: presetName ? null : { free: freeCall, reusedRatedTable: reused },
+      /**
+       * Which flow this rental took. Read this rather than inferring it from
+       * which keys are present: a seed rental hands back an agent that can play
+       * at once, and a deposit rental hands back one that cannot play at all
+       * until the owner signs `rental.transaction` and it lands.
+       */
+      funding: rental ? ("deposit" as const) : ("seed" as const),
+      rental: rental
+        ? {
+            rentalId: rental.rentalId,
+            /** Base64. The owner's wallet signs exactly this and sends it back. */
+            transaction: rental.transaction,
+            fee: rental.fee,
+            feeChips: toChips(rental.fee, deposit!.chipRate),
+            deposit: rental.deposit,
+            depositChips: toChips(rental.deposit, deposit!.chipRate),
+            /**
+             * False, always, in this answer. No fee has been paid and the vault
+             * does not exist yet; the agent is a placeholder for an address
+             * until the transaction lands.
+             */
+            playable: false,
+          }
+        : null,
     };
   }
 
@@ -677,6 +750,44 @@ export function createApp(options: AppOptions): Server {
         /** Past this, something is wrong rather than merely busy. */
         alarmAfterMs: SETTLEMENT_LAG_ALARM_MS,
         stalled: lagMs !== null && lagMs >= SETTLEMENT_LAG_ALARM_MS,
+      },
+    };
+  }
+
+  /** Owner only: sends the wallet-signed rental transaction. */
+  async function postRentalSubmit(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const rentalId = requireUuid(ctx.params[0]);
+    const deposit = options.deposit;
+    if (!deposit) throw new HttpError(503, "deposit-funded rentals are unavailable on this server");
+    const signed = String(ctx.body["transaction"] ?? "");
+    if (!signed) throw new HttpError(400, "transaction is required");
+    try {
+      const out = await submitRental(db, deposit.chain, { rentalId, ownerId, signedTx: signed });
+      return { rental: { ...out, playable: out.status === "confirmed" } };
+    } catch (error) {
+      if (error instanceof RentalError) throw new HttpError(error.status, error.message);
+      throw error;
+    }
+  }
+
+  /** Owner only: where a rental's transaction has got to. */
+  async function getRental(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    const [r] = await db.select().from(rentals).where(eq(rentals.id, id)).limit(1);
+    if (!r || r.ownerId !== ownerId) throw new HttpError(404, "no such rental");
+    return {
+      rental: {
+        rentalId: r.id,
+        agentId: r.agentId,
+        status: r.status,
+        signature: r.signature,
+        error: r.error,
+        fee: r.fee,
+        deposit: r.deposit,
+        /** An agent is only a rental once its transaction has landed. */
+        playable: r.status === "confirmed",
       },
     };
   }

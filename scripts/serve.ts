@@ -103,6 +103,50 @@ if (rpc) {
   chain = new SeedChainClient(new Connection(rpc, "confirmed"), settler);
 }
 
+// The deposit-funded flow, when its program is deployed and configured. The
+// fee and the chip rate are read from the program's own config rather than set
+// here, so a player is never quoted a price the program will then refuse.
+//
+// FUNDING_MODE=deposit switches every new rental to it. FUNDING_DEPOSIT_WALLETS
+// is a comma-separated allowlist for trying it on the live site while everyone
+// else keeps the seed flow, which is what the cutover runs on until a season
+// boundary flips the default.
+let depositFlow: import("../src/http/server.js").AppOptions["deposit"];
+if (rpc && process.env["CHAIN_STAKE_MINT"]) {
+  const { Connection, Keypair, PublicKey } = await import("@solana/web3.js");
+  const { ChainClient } = await import("../src/chain/settlement.js");
+  const { loadKeypair } = await import("../src/chain/common.js");
+  try {
+    const secret = process.env["CHAIN_SETTLER_SECRET"];
+    const settler = secret
+      ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[]))
+      : loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
+    const client = new ChainClient(
+      new Connection(rpc, "confirmed"),
+      settler,
+      new PublicKey(process.env["CHAIN_STAKE_MINT"]),
+    );
+    const config = await client.config();
+    const mode = process.env["FUNDING_MODE"] === "deposit";
+    const allowed = new Set(
+      (process.env["FUNDING_DEPOSIT_WALLETS"] ?? "")
+        .split(",")
+        .map((w) => w.trim())
+        .filter(Boolean),
+    );
+    depositFlow = {
+      chain: client,
+      fee: config.rent.toNumber(),
+      chipRate: config.chipRate.toNumber(),
+      allow: (ownerId) => mode || allowed.has(ownerId),
+    };
+    const who = mode ? "every new rental" : allowed.size ? `${allowed.size} allowlisted wallet(s)` : "nobody yet";
+    console.log(`Deposits: on for ${who}; rent ${config.rent.toNumber() / config.chipRate.toNumber()} chips`);
+  } catch (error) {
+    console.log(`Deposits: off - ${String(error).slice(0, 140)}`);
+  }
+}
+
 // The devnet faucet, when there is a treasury to hand out from. It refuses any
 // cluster but devnet, and says so rather than starting quietly: a faucet is
 // only ever a devnet convenience, and the check is on the chain's own genesis
@@ -142,6 +186,7 @@ const { url } = await listen({
   host: process.env["HOST"],
   ...(chain ? { chain } : {}),
   ...(faucet ? { faucet } : {}),
+  ...(depositFlow ? { deposit: depositFlow } : {}),
   ...(characterModel ? { character: characterModel } : {}),
 });
 // Chosen names that could not be checked at rent: checked again until the model answers.
@@ -151,6 +196,25 @@ if (characterModel) {
     onLog: (line) => console.log(line),
     onError: (error) => console.error(`names: ${String(error).slice(0, 160)}`),
   });
+}
+
+// Rentals whose transaction never landed: the agent is retired and its owner's
+// one-agent slot comes back. Runs on a timer because the failure it clears up
+// is a browser that closed mid-signature, which nothing else will ever report.
+if (depositFlow) {
+  const { sweepRentals } = await import("../src/db/rentals.js");
+  const sweepMs = Number(process.env["RENTAL_SWEEP_MS"] ?? 60_000);
+  const sweep = async () => {
+    try {
+      const { confirmed, expired } = await sweepRentals(db, depositFlow!.chain);
+      if (confirmed.length) console.log(`rentals: ${confirmed.length} landed after a lost confirmation`);
+      if (expired.length) console.log(`rentals: ${expired.length} never landed, agents retired`);
+    } catch (error) {
+      console.error(`rentals: sweep failed: ${String(error).slice(0, 160)}`);
+    }
+    setTimeout(() => void sweep(), sweepMs);
+  };
+  setTimeout(() => void sweep(), sweepMs);
 }
 
 if (chain && rpc) {
