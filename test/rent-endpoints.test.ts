@@ -88,7 +88,7 @@ const tokens = new Map<string, string>();
  * because a wallet may only hold one agent at a time and every rental here
  * leaves one behind.
  */
-const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard"] as const;
+const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard", "dep-chips"] as const;
 const onDepositFlow = new Set(DEPOSITORS.map(walletOf));
 
 async function tokenFor(label: string): Promise<string> {
@@ -271,5 +271,48 @@ describe("renting over HTTP", () => {
     });
   });
 
+
+
+  describe("what a client is told about money", () => {
+    // The ledger holds base units because it has to reconcile with a vault.
+    // Everything a player reads is chips. A view that forgets to convert is not
+    // slightly wrong: 900 chips is 900,000,000 base units.
+    it("reports a deposit-funded balance in chips, not base units", async () => {
+      const who = "dep-chips";
+      const rented = await api("/agents", { method: "POST", body: { presetName: "Anchor", deposit: 2_000 }, as: who });
+      const tx = Transaction.from(Buffer.from(rented.body.rental.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      await api(`/rentals/${rented.body.rental.rentalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      const agentId = rented.body.agent.id as string;
+      // The ledger, in base units.
+      expect(await balanceOf(db, agentId)).toBe(baseUnits(2_000, RATE));
+
+      // The view, in chips - and able to cover every band, which a view that
+      // read base units as chips would also say, so the figure is the test.
+      const view = await api(`/agents/${agentId}`, { as: who });
+      expect(view.body.agent.balance).toBe(2_000);
+      expect(view.body.agent.balanceBaseUnits).toBe(baseUnits(2_000, RATE));
+      expect(view.body.agent.canPlay).toBe(true);
+      expect(view.body.agent.affordable).toEqual(["A", "B", "C"]);
+
+      // And the movements, which are ledger rows and so the easiest to miss.
+      const ledger = await api(`/agents/${agentId}/ledger`, { as: who });
+      expect(ledger.body.balance).toBe(2_000);
+      expect(ledger.body.movements.map((m: { amount: number }) => m.amount)).toEqual([2_000]);
+    });
+
+    it("leaves a seed-funded balance alone, because a chip is a base unit there", async () => {
+      const seeded = await api("/agents", { method: "POST", body: { presetName: "Mirage" }, as: "seed-chips" });
+      const id = seeded.body.agent.id as string;
+      const view = await api(`/agents/${id}`, { as: "seed-chips" });
+      // The frozen programme's mint has no decimals: one token was one chip.
+      expect(view.body.agent.balance).toBe(await balanceOf(db, id));
+      expect(view.body.agent.balance).toBe(900);
+    });
+  });
 
 });

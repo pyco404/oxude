@@ -480,7 +480,7 @@ export function createApp(options: AppOptions): Server {
     const [fresh] = await db.select().from(agents).where(eq(agents.id, row.id)).limit(1);
     return {
       agent: {
-        ...view,
+        ...inChips(view!),
         character: character ? ownerCharacter(character) : null,
         id: fresh!.id,
         brief: fresh!.brief,
@@ -523,6 +523,20 @@ export function createApp(options: AppOptions): Server {
    * balance can still play, what each would risk, and - when the agent can no
    * longer cover its own band - which cheaper band is still open to it.
    */
+  /**
+   * An agent view with its money in chips.
+   *
+   * The ledger holds base units, because it has to reconcile with a vault
+   * (src/chips.ts). Everything a player reads is chips: the bands, the stakes,
+   * the floor they set, the figure on the card. That conversion has to happen
+   * somewhere, and the api boundary is the only place it can happen once - a
+   * deposit-funded balance of 900 chips is 900,000,000 base units, so a view
+   * that forgets is not slightly wrong, it is wrong by a factor of a million.
+   */
+  function inChips<T extends { balance: number; funding: Funding }>(row: T): T & { balanceBaseUnits: number } {
+    return { ...row, balance: toChips(row.balance, rateOf(row)), balanceBaseUnits: row.balance };
+  }
+
   function bandStatus(row: { band: BandName; balance: number; presetName: string | null; funding: Funding }) {
     const rate = rateOf(row);
     const open = affordableBands(row.balance, rate);
@@ -586,7 +600,7 @@ export function createApp(options: AppOptions): Server {
       const [full] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
       return {
         agent: {
-          ...row,
+          ...inChips(row),
           brief: own!.brief,
           policyTable: own!.policyTable,
           trueRating: own!.trueRating,
@@ -603,7 +617,7 @@ export function createApp(options: AppOptions): Server {
         view: "owner",
       };
     }
-    return { agent: { ...row, ...bandStatus(row), character, traits }, view: "public" };
+    return { agent: { ...inChips(row), ...bandStatus(row), character, traits }, view: "public" };
   }
 
   async function postPlay(ctx: Ctx) {
@@ -647,7 +661,7 @@ export function createApp(options: AppOptions): Server {
         /** What the play was worth before the stake capped it. */
         uncappedNet: log.nets.A,
       },
-      balance: after?.balance ?? 0,
+      balance: after ? toChips(after.balance, rateOf(after)) : 0,
       retired: retired.includes(id),
       /**
        * Whether this counts toward the ladder. False means the opponent was a
@@ -764,7 +778,11 @@ export function createApp(options: AppOptions): Server {
     const id = requireUuid(ctx.params[0]);
     const row = await publicAgent(db, id);
     if (!row) throw new HttpError(404, "no such agent");
-    return { balance: row.balance, band: row.band, retired: row.retired, movements: await statement(db, id) };
+    // Chips, like every other money figure a client sees. `statement` returns
+    // the ledger's own rows, which are base units.
+    const rate = rateOf(row);
+    const movements = (await statement(db, id)).map((m) => ({ ...m, amount: toChips(m.amount, rate) }));
+    return { balance: toChips(row.balance, rate), band: row.band, retired: row.retired, movements };
   }
 
   async function getMatch(ctx: Ctx) {

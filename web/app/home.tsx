@@ -330,6 +330,9 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
     run("rent", async () => {
       // No name given: the agent's character is named for it.
       const chosenName = name.trim();
+      // Set once a deposit rental has landed, so the stale pre-payment snapshot
+      // below is not written over the fresh one.
+      let paid = false;
       const { agent: created, elicitation, funding, rental } = await api.rent(token, {
         ...(chosenName ? { name: chosenName } : {}),
         band,
@@ -349,6 +352,14 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
           setRentalStep({ at: "sending", ...money });
           const { rental: done } = await api.submitRental(token, rental.rentalId, signed);
           setRentalStep(done.playable ? { at: "idle" } : { at: "waiting", ...money, rentalId: rental.rentalId });
+          // The agent handed back above was read before the transaction landed,
+          // so it says nothing in the vault and cannot play. Once the money is
+          // there that snapshot is a lie, and it is the one on screen - so
+          // re-read it rather than leaving the card claiming the agent is broke.
+          if (done.playable) {
+            paid = true;
+            await refreshAgent(created.id ?? created.agentId!, token);
+          }
         } catch (error) {
           // Nothing was charged. The fee, the vault and the deposit are one
           // transaction, so a refusal here leaves the wallet exactly as it was.
@@ -358,7 +369,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       }
       const id = created.id ?? created.agentId!;
       localStorage.setItem(AGENT_KEY, id);
-      setAgent({ ...created, id });
+      if (!paid) setAgent({ ...created, id });
       setMine((held) => [{ ...created, id }, ...held]);
       setTranscript("");
       setLastPlay(null);
