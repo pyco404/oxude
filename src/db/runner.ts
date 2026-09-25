@@ -415,6 +415,18 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
  * Recomputes an agent's rating from its own matches: the mean net over the last
  * RATING_WINDOW, and how many it has played. Derived, so it cannot drift.
  */
+/**
+ * A listed row's balance in chips.
+ *
+ * Balances are the one money figure in these lists that is in an agent's own
+ * units - everything else comes from match nets, which are chips whatever flow
+ * the agent is on. Side by side on one page a base-unit balance beside a chip
+ * one reads as a million times richer, so each row converts at its own rate.
+ */
+export function listedInChips<T extends { balance: number; funding: Funding }>(row: T): T {
+  return { ...row, balance: chips(Number(row.balance), rateOf(row)) };
+}
+
 export async function updateRating(db: Db | PgTransaction<PgQueryResultHKT, Record<string, never>, TablesRelationalConfig>, agentId: string): Promise<void> {
   const raw = sql<number>`case when ${matches.agentA} = ${agentId} then ${matches.netA} else ${matches.netB} end`;
   // Normalised onto band B's scale by dividing out the band's factor, so an
@@ -495,7 +507,7 @@ export async function playableBands(
     .groupBy(ledger.agentId)
     .as("balances");
   const rows = await db
-    .select({ band: agents.band, balance: balances.balance })
+    .select({ band: agents.band, funding: agents.funding, balance: balances.balance })
     .from(agents)
     .innerJoin(balances, eq(balances.agentId, agents.id))
     .where(
@@ -508,7 +520,9 @@ export async function playableBands(
     );
   return STAKE_BANDS.map((b) => ({
     band: b.name,
-    count: rows.filter((r) => r.band === b.name && Number(r.balance) >= b.worstMatch).length,
+    // Each row's balance is in its own agent's units, so each is converted at
+    // its own rate rather than the band's cover being converted once.
+    count: rows.filter((r) => r.band === b.name && canAffordBand(Number(r.balance), b.name, rateOf(r))).length,
   }));
 }
 
@@ -606,11 +620,16 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
 
   // Paired on true rating: the only signal here that is not noise. No recency
   // gate, so a cold roster can bootstrap.
+  // Solvent for this band, in this agent's units. Candidates are all on the
+  // same flow as `me` (below), so one rate applies to every row here - a chip
+  // figure compared against a base-unit sum would call a vault holding fifty
+  // base units solvent for a forty-chip band.
+  const myRate = rateOf(me);
   const solvent = db
     .select({ agentId: ledger.agentId, balance: sql<number>`sum(${ledger.amount})::bigint`.as("balance") })
     .from(ledger)
     .groupBy(ledger.agentId)
-    .having(sql`sum(${ledger.amount}) >= ${bandByName(me.band).worstMatch}`)
+    .having(sql`sum(${ledger.amount}) >= ${baseUnits(bandByName(me.band).worstMatch, myRate)}`)
     .as("solvent");
 
   // Same band: a match has one money scale, so both agents must be on it.
@@ -755,6 +774,7 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
       totalNet: ratings.cumulativeNet,
       recentForm: ratings.rollingNet50,
       balance,
+      funding: agents.funding,
       // Retired agents stay on the ladder, marked: a record is history, not hidden.
       retired: sql<boolean>`${agents.retiredAt} is not null`,
     })
@@ -766,9 +786,11 @@ export async function leaderboard(db: Db, limit = 50, tab: LadderTab = "winnings
   // so listing one would only put a permanent zero between real players.
   const players = isNotNull(agents.ownerId);
   // "Per match" needs a match to divide by; that is arithmetic, not a skill bar.
-  return tab === "winnings"
-    ? rows.where(players).orderBy(desc(ratings.rankedNet)).limit(limit)
-    : rows.where(and(players, gt(ratings.rankedMatches, 0))).orderBy(desc(netPerMatch)).limit(limit);
+  const listed =
+    tab === "winnings"
+      ? rows.where(players).orderBy(desc(ratings.rankedNet)).limit(limit)
+      : rows.where(and(players, gt(ratings.rankedMatches, 0))).orderBy(desc(netPerMatch)).limit(limit);
+  return (await listed).map(listedInChips);
 }
 
 /**
@@ -922,7 +944,7 @@ export async function roster(db: Db, options: { band?: BandName; limit?: number 
   const inBand = options.band === undefined ? sql`true` : eq(agents.band, options.band);
 
   const balance = sql<number>`coalesce((select sum(${ledger.amount})::bigint from ${ledger} where ${ledger.agentId} = ${agents.id}), 0)`;
-  return db
+  const rows = await db
     .select({
       agentId: agents.id,
       name: agents.name,
@@ -933,12 +955,14 @@ export async function roster(db: Db, options: { band?: BandName; limit?: number 
       cumulativeNet: ratings.cumulativeNet,
       recentForm: ratings.rollingNet50,
       balance,
+      funding: agents.funding,
     })
     .from(agents)
     .innerJoin(ratings, eq(ratings.agentId, agents.id))
     .where(and(isNull(agents.retiredAt), rentalOpenSql(), inBand))
     .orderBy(desc(ratings.matchesPlayed))
     .limit(options.limit ?? 24);
+  return rows.map(listedInChips);
 }
 
 /** Active agents in each stake band, so a newcomer can be pointed at the busiest. */

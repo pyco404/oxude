@@ -25,7 +25,7 @@ import {
   recordElicitation,
   elicitationCount,
 } from "../src/db/ledger.js";
-import { assertSameFlow, createAgent, leaderboard, pickOpponent, playableBands, runMatch, setBand } from "../src/db/runner.js";
+import { assertSameFlow, createAgent, leaderboard, pickOpponent, playableBands, roster, runMatch, setBand } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { someWallet } from "./helpers.js";
 
@@ -420,6 +420,45 @@ describe("agents on different funding flows", () => {
     }
     const pick = await pickOpponent(db, mine.id);
     expect(pick.opponentId).toBe(other.id);
+  });
+});
+
+describe("lists that show many agents at once", () => {
+  // Balances are the one money figure in these lists that is in an agent's own
+  // units; everything else comes from match nets, which are chips whatever the
+  // flow. Side by side, a base-unit balance reads as a million times richer.
+  it("show every balance in chips, whichever program holds the vault", async () => {
+    const { db } = await connect();
+    await migrate(db);
+    await createAgent(db, { name: "Seeded", presetName: "Anchor", ownerId: someWallet() });
+    const deposited = await createAgent(db, { name: "Deposited", presetName: "Bully", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, deposited.id));
+    // The same money, counted in each agent's own units.
+    await record(db, [{ agentId: deposited.id, amount: baseUnits(900, DEVNET_CHIP_RATE), reason: "deposit" }]);
+
+    const listed = await roster(db);
+    const byName = new Map(listed.map((r) => [r.name, r.balance]));
+    // 900 chips each: the seed agent's seed, and the deposit agent's deposit.
+    expect(byName.get("Seeded")).toBe(900);
+    expect(byName.get("Deposited")).toBe(900);
+  });
+
+  it("count a band's playable agents in each agent's own units", async () => {
+    const { db } = await connect();
+    await migrate(db);
+    const me = await createAgent(db, { name: "Mine", presetName: "Anchor", ownerId: someWallet() });
+    const rich = await createAgent(db, { name: "Rich", presetName: "Bully", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, rich.id));
+    await record(db, [{ agentId: rich.id, amount: baseUnits(900, DEVNET_CHIP_RATE), reason: "deposit" }]);
+    // A deposit agent holding 30 base units is holding nothing: it must not be
+    // counted as covering a 40-chip band because 30 happens to look like chips.
+    const pauper = await createAgent(db, { name: "Pauper", presetName: "Mirage", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, pauper.id));
+    await record(db, [{ agentId: pauper.id, amount: 30 - 900, reason: "adjustment" }]);
+
+    const counts = await playableBands(db, me.id, null);
+    const bandB = counts.find((c) => c.band === "B")!;
+    expect(bandB.count).toBe(1);
   });
 });
 

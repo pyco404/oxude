@@ -2,7 +2,8 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { runExhibition } from "./runner.js";
-import { agents, bandByName, ledger, matches, type BandName } from "./schema.js";
+import { agents, canAffordBand, ledger, matches, type BandName } from "./schema.js";
+import { rateOf } from "../chips.js";
 
 /**
  * Exhibitions between house agents, so the platform is visibly running when no
@@ -32,7 +33,7 @@ export async function pickHousePair(
     .groupBy(ledger.agentId)
     .as("balances");
   const rows = await db
-    .select({ id: agents.id, band: agents.band, balance: balances.balance })
+    .select({ id: agents.id, band: agents.band, funding: agents.funding, balance: balances.balance })
     .from(agents)
     .innerJoin(balances, eq(balances.agentId, agents.id))
     .where(and(isNull(agents.ownerId), isNull(agents.retiredAt)));
@@ -42,7 +43,10 @@ export async function pickHousePair(
   const bandOf = new Map<string, BandName>();
   const byBand = new Map<BandName, string[]>();
   for (const r of rows) {
-    if (Number(r.balance) < bandByName(r.band).worstMatch) continue;
+    // Each house agent in its own units. They are all seed-funded today, where
+    // a chip is a base unit, but the roster has to exist on the deposit program
+    // too and there a chip is a million of them.
+    if (!canAffordBand(Number(r.balance), r.band, rateOf(r))) continue;
     bandOf.set(r.id, r.band);
     byBand.set(r.band, [...(byBand.get(r.band) ?? []), r.id]);
   }
