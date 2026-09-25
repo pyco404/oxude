@@ -99,13 +99,15 @@ CHAIN_RPC_URL=https://api.devnet.solana.com DATABASE_URL=... npm run serve -- --
 
 The live site runs on Railway: Postgres, the API (with the settlement worker) and the web app as three services.
 
-**`railway up` uploads the git repository root, not the working directory.** The API deploys correctly from the repo root with `railway up -s api`, because the root `railway.json` is its config. The web app does not: its config is `web/railway.json`, but a CLI upload puts the repo root at the top of the build context, so Railway reads the root `railway.json`, starts `npm start` → `tsx scripts/serve.ts --migrate`, finds no `DATABASE_URL` and crash-loops. Setting the service's **Root Directory to `/web` does not fix this** — that setting applies to git-triggered builds, not to a context the CLI uploads. `cd web && railway up -s web` does not fix it either, because the CLI still walks up to the git root.
+**`railway up` uploads the git repository root, not the working directory.** The API deploys correctly from the repo root with `railway up -s api`, because the root `railway.json` is its config. The web app does not: its config is `web/railway.json`, but a CLI upload puts the repo root at the top of the build context, so Railway reads the root `railway.json`, starts `npm start` → `tsx scripts/serve.ts --migrate`, finds no `DATABASE_URL` and crash-loops. `cd web && railway up -s web` does not fix it, because the CLI still walks up to the git root.
+
+The web service has its **Root Directory set to `/web`**, and current Railway (railpack v0.40) *does* apply that to a CLI upload — an earlier version of this note said it applied only to git-triggered builds. So the upload has to contain a `web/` directory for the setting to resolve: uploading the *contents* of `web/` fails at prepare with `Root directory "/web" was not found in the deployed source`. Nothing ships when that happens, so the site stays up.
 
 Until the web service is connected to GitHub (see below), deploy it from a copy of `web/` placed outside the repository:
 
 ```
-rm -rf /tmp/webdeploy && mkdir -p /tmp/webdeploy
-tar -cf - --exclude=node_modules --exclude=.next -C web . | (cd /tmp/webdeploy && tar -xf -)
+rm -rf /tmp/webdeploy && mkdir -p /tmp/webdeploy/web
+tar -cf - --exclude=node_modules --exclude=.next -C web . | (cd /tmp/webdeploy/web && tar -xf -)
 cd /tmp/webdeploy && railway up -s web --ci \
   --project af965879-57de-4ff2-89a0-efc0c9863fcd --environment production
 ```
