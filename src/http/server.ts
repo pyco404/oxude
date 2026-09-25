@@ -75,6 +75,13 @@ export type AppOptions = {
   /** Applies to nonce requests, which anyone can make. Default 20 a minute. */
   nonceRateLimit?: RateLimitRule;
   /**
+   * The seed flow is closing. No new seed rentals, and no renewals of the ones
+   * that exist - which is all it takes, because every rental already ends at a
+   * season boundary. They play to the end of the season they are in, then
+   * expire, then lapse after the usual grace with their balance withdrawable.
+   */
+  seedCutover?: { closed: boolean };
+  /**
    * Faucet grants per wallet, on top of the one-a-day rule in the ledger.
    * Default 3 an hour.
    */
@@ -345,6 +352,21 @@ export function createApp(options: AppOptions): Server {
         mode: viaDeposit ? ("deposit" as const) : ("seed" as const),
         feeChips: viaDeposit ? toChips(deposit!.fee, deposit!.chipRate) : 0,
       },
+      /** Set while the seed flow is closing, so the screen can say so. */
+      cutover: cutoverNotice(),
+    };
+  }
+
+  /** What to tell an owner about the seed flow closing, or null if it is not. */
+  function cutoverNotice(now = new Date()) {
+    if (!options.seedCutover?.closed) return null;
+    const season = seasonAt(now);
+    return {
+      closed: true as const,
+      /** Seed agents play to here and no further. */
+      endsAt: season.end,
+      /** And their balance can be taken until here. */
+      withdrawableUntil: new Date(season.end.getTime() + GRACE_MS),
     };
   }
 
@@ -395,6 +417,14 @@ export function createApp(options: AppOptions): Server {
     // their wallet, so the answer is the agent plus that transaction.
     const deposit = options.deposit;
     const viaDeposit = Boolean(deposit?.allow(ownerId));
+    const cutover = cutoverNotice();
+    if (!viaDeposit && cutover) {
+      throw new HttpError(
+        503,
+        `Renting is paused while Oxude moves to the new settlement program, where you fund an agent yourself instead of being handed a starting balance. Agents rented before the move play until ${cutover.endsAt.toISOString().slice(0, 16).replace("T", " ")} UTC.`,
+        { cutover },
+      );
+    }
     let depositAmount = 0;
     if (viaDeposit) {
       const asked = ctx.body["deposit"];
@@ -688,6 +718,19 @@ export function createApp(options: AppOptions): Server {
   async function postRenew(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
     const id = requireUuid(ctx.params[0]);
+    const cutover = cutoverNotice();
+    if (cutover) {
+      const [row] = await db.select({ funding: agents.funding }).from(agents).where(eq(agents.id, id)).limit(1);
+      // Refusing the renewal is the whole cutover: a rental already ends at a
+      // season boundary, so one that cannot be renewed simply runs out.
+      if (row?.funding === "seed") {
+        throw new HttpError(
+          409,
+          `This agent is on the old settlement program, which closes at ${cutover.endsAt.toISOString().slice(0, 16).replace("T", " ")} UTC, so it can't be renewed. It keeps playing until then, and its balance can be withdrawn until ${cutover.withdrawableUntil.toISOString().slice(0, 16).replace("T", " ")} UTC. Rent again on the new program, where you fund the agent yourself.`,
+          { cutover },
+        );
+      }
+    }
     try {
       return { rental: await renewAgent(db, id, ownerId) };
     } catch (error) {

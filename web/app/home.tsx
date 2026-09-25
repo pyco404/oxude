@@ -15,6 +15,7 @@ import { SeasonLine } from "@/app/season-line";
 import { RentalPanel } from "@/app/rental-panel";
 import { FaucetPanel } from "@/app/faucet-panel";
 import { DepositPanel } from "@/app/deposit-panel";
+import { CutoverNotice } from "@/app/cutover-notice";
 import { CharacterBlock } from "@/app/character";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
@@ -126,6 +127,8 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const [rentalStep, setRentalStep] = useState<RentalStep>({ at: "idle" });
   /** How renting works for this wallet. Seed until the server says otherwise. */
   const [funding, setFunding] = useState<{ mode: "seed" | "deposit"; feeChips: number }>({ mode: "seed", feeChips: 0 });
+  /** Set while the old settlement program is closing. */
+  const [cutover, setCutover] = useState<{ endsAt: string; withdrawableUntil: string } | null>(null);
   const [preview, setPreview] = useState<{ value: Preview; paid: boolean } | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [autoPreview, setAutoPreview] = useState(true);
@@ -183,9 +186,10 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
    */
   const loadMine = useCallback(
     async (sessionToken: string) => {
-      const { agents: owned, funding } = await api.me(sessionToken);
+      const { agents: owned, funding, cutover } = await api.me(sessionToken);
       setMine(owned);
       setFunding(funding);
+      setCutover(cutover);
       const inPlay = owned.filter((a) => !a.retired);
       const saved = localStorage.getItem(AGENT_KEY);
       const open = inPlay.find((a) => idOf(a) === saved) ?? inPlay[0] ?? null;
@@ -384,6 +388,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
   const inPlay = mine.filter((a) => !a.retired);
   const agentCard = agent ? (
     <AgentCard
+      cutover={cutover}
       agent={agent}
       onPlay={play}
       busy={busy === "play"}
@@ -436,6 +441,7 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
       deposit={deposit}
       setDeposit={setDeposit}
       rentalStep={rentalStep}
+      cutover={cutover}
     />
   );
 
@@ -589,6 +595,8 @@ function RentPanel(props: {
   deposit: string;
   setDeposit: (s: string) => void;
   rentalStep: RentalStep;
+  /** Set while the old settlement program is closing. */
+  cutover: { endsAt: string; withdrawableUntil: string } | null;
 }) {
   const ready =
     props.signedIn && (props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12);
@@ -746,6 +754,7 @@ function RentPanel(props: {
           </div>
         ) : null}
         {props.rentalStep.at !== "idle" ? <RentalProgress step={props.rentalStep} /> : null}
+        {props.cutover && !props.deposits ? <CutoverNotice cutover={props.cutover} /> : null}
         {/* Devnet only, and renders nothing anywhere else: the api has no faucet
             to answer with, so nobody is shown one that cannot exist. */}
         <FaucetPanel />
@@ -945,6 +954,7 @@ function AgentCard({
   lastPlay,
   onBand,
   onWithdrawn,
+  cutover,
 }: {
   agent: AgentView;
   onPlay: () => void;
@@ -953,6 +963,8 @@ function AgentCard({
   onBand: (value: BandName) => void;
   /** After a withdrawal: the balance and maybe retirement changed. */
   onWithdrawn: () => void;
+  /** Set while the old settlement program is closing, for an agent still on it. */
+  cutover: { endsAt: string; withdrawableUntil: string } | null;
 }) {
   const retired = agent.retired === true;
   // Expired: the season ended without a renewal. It cannot play until renewed.
@@ -1124,6 +1136,12 @@ function AgentCard({
             onChanged={onWithdrawn}
           />
         )}
+
+        {cutover && agent.funding !== "deposit" && !retired ? (
+          <div className="mt-4">
+            <CutoverNotice cutover={cutover} agentName={agent.name} />
+          </div>
+        ) : null}
 
         {!(agent.id ?? agent.agentId) ? null : (
           <DepositPanel

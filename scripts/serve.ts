@@ -205,6 +205,10 @@ const { url } = await listen({
   ...(chain ? { chain } : {}),
   ...(faucet ? { faucet } : {}),
   ...(depositFlow ? { deposit: depositFlow } : {}),
+  // SEED_CUTOVER=closed stops new seed rentals and seed renewals. Nothing else
+  // is needed: every rental already ends at a season boundary, so one that
+  // cannot be renewed runs out there and lapses with its balance withdrawable.
+  ...(process.env["SEED_CUTOVER"] === "closed" ? { seedCutover: { closed: true } } : {}),
   ...(characterModel ? { character: characterModel } : {}),
 });
 // Chosen names that could not be checked at rent: checked again until the model answers.

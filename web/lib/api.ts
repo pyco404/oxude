@@ -320,6 +320,8 @@ export const api = {
       agents: AgentView[];
       /** How renting works for this wallet, which the rent screen needs before it asks anything. */
       funding: { mode: "seed" | "deposit"; feeChips: number };
+      /** Set while the old settlement program is closing. Null the rest of the time. */
+      cutover: { closed: true; endsAt: string; withdrawableUntil: string } | null;
     }>("/auth/me", { token }),
   previewTable: (token: string | null, policyTable: unknown, band: BandName = DEFAULT_BAND) =>
     request<{ preview: Preview }>("/preview", { method: "POST", token, body: JSON.stringify({ policyTable, band }) }),

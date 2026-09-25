@@ -81,3 +81,49 @@ describe("renting is limited per wallet and per address", () => {
     expect(await db.select().from(agents).where(eq(agents.ownerId, walletOf("rl-three")))).toHaveLength(0);
   });
 });
+
+describe("the seed flow closing", () => {
+  // Refusing the renewal is the whole cutover. A rental already ends at a
+  // season boundary, so one that cannot be renewed simply runs out there.
+  it("stops new seed rentals and says when the old ones stop playing", async () => {
+    const { db, close: closeDb2 } = await connect();
+    await migrate(db);
+    const { url: u, close } = await listen({
+      db,
+      seedCutover: { closed: true },
+      rateLimit: { limit: 1000, windowMs: 60_000 },
+      nonceRateLimit: { limit: 1000, windowMs: 60_000 },
+      rentRateLimit: { limit: 1000, windowMs: 60_000 },
+      rentAddressRateLimit: { limit: 1000, windowMs: 60_000 },
+    });
+    const kp = nacl.sign.keyPair.fromSeed(seedOf("cutover-one"));
+    const publicKey = bs58.encode(kp.publicKey);
+    const post = (path: string, body: unknown, token?: string) =>
+      fetch(`${u}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(body),
+      });
+    const issued = (await (await post("/auth/nonce", { publicKey })).json()) as Record<string, string>;
+    const sig = bs58.encode(nacl.sign.detached(new TextEncoder().encode(issued["message"]!), kp.secretKey));
+    const { token } = (await (await post("/auth/verify", { publicKey, nonce: issued["nonce"], signature: sig })).json()) as Record<string, string>;
+
+    const res = await post("/agents", { presetName: "Anchor" }, token);
+    expect(res.status).toBe(503);
+    const body2 = (await res.json()) as Record<string, any>;
+    expect(String(body2.error)).toMatch(/Renting is paused/);
+    // It says when, because that is the thing an owner needs from this.
+    expect(body2.cutover.endsAt).toBeTruthy();
+    expect(new Date(body2.cutover.withdrawableUntil).getTime()).toBeGreaterThan(
+      new Date(body2.cutover.endsAt).getTime(),
+    );
+
+    // And the wallet is told the same thing when it asks who it is.
+    const me = (await (await fetch(`${u}/auth/me`, { headers: { authorization: `Bearer ${token}` } })).json()) as Record<string, any>;
+    expect(me.cutover.closed).toBe(true);
+
+    await close();
+    await closeDb2();
+  });
+});
+
