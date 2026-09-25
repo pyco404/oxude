@@ -75,6 +75,23 @@ export type AppOptions = {
   /** Applies to nonce requests, which anyone can make. Default 20 a minute. */
   nonceRateLimit?: RateLimitRule;
   /**
+   * Faucet grants per wallet, on top of the one-a-day rule in the ledger.
+   * Default 3 an hour.
+   */
+  faucetRateLimit?: RateLimitRule;
+  /** Renting and topping up per wallet. Default 5 an hour. */
+  rentRateLimit?: RateLimitRule;
+  /**
+   * The same per address. Looser than the per-wallet rules on purpose: an
+   * address is a poor proxy for a person, because a household, an office or a
+   * mobile network share one, so a limit tight enough to stop a script would
+   * also turn away the third real person behind a router. Wallets are the other
+   * way round - one person can make any number - which is why neither key works
+   * alone. Default 20 rentals and 12 faucet grants an hour.
+   */
+  rentAddressRateLimit?: RateLimitRule;
+  faucetAddressRateLimit?: RateLimitRule;
+  /**
    * Browser origins allowed to call this API. The web app runs on its own
    * origin, so without this every request from it fails before it is sent.
    * Defaults to CORS_ORIGIN or localhost:3000.
@@ -167,6 +184,43 @@ export function createApp(options: AppOptions): Server {
   // unbounded, it is a cheap way to bloat the transcript table.
   const playLimiter = new RateLimiter(options.playRateLimit ?? { limit: 30, windowMs: 60_000 }, options.now);
   const nonceLimiter = new RateLimiter(options.nonceRateLimit ?? { limit: 20, windowMs: 60_000 }, options.now);
+  const faucetLimiter = new RateLimiter(options.faucetRateLimit ?? { limit: 3, windowMs: 3_600_000 }, options.now);
+  const rentLimiter = new RateLimiter(options.rentRateLimit ?? { limit: 5, windowMs: 3_600_000 }, options.now);
+  const faucetByAddress = new RateLimiter(options.faucetAddressRateLimit ?? { limit: 12, windowMs: 3_600_000 }, options.now);
+  const rentByAddress = new RateLimiter(options.rentAddressRateLimit ?? { limit: 20, windowMs: 3_600_000 }, options.now);
+
+  /**
+   * Charges an attempt against the wallet *and* the address it came from.
+   *
+   * The older limiter keys on one or the other - the wallet when signed in,
+   * otherwise the address - which leaves a gap either way: one wallet behind
+   * many addresses, or one address cycling through wallets, which costs nothing
+   * to make. Both buckets have to have room, and a request refused by the
+   * second does not spend the first.
+   */
+  function spendBoth(
+    perWallet: RateLimiter,
+    perAddress: RateLimiter,
+    ownerId: string,
+    clientKey: string,
+    what: string,
+  ): void {
+    const byWallet = perWallet.take(ownerId);
+    if (!byWallet.ok) {
+      throw new HttpError(429, `too many ${what} from this wallet; try again in ${byWallet.retryAfterSeconds}s`, {
+        retryAfter: byWallet.retryAfterSeconds,
+      });
+    }
+    const byAddress = perAddress.take(clientKey);
+    if (!byAddress.ok) {
+      // Give the wallet its attempt back: it did nothing wrong, and it should
+      // not lose an hour's allowance to whoever else is behind this address.
+      perWallet.refund(ownerId);
+      throw new HttpError(429, `too many ${what} from this connection; try again in ${byAddress.retryAfterSeconds}s`, {
+        retryAfter: byAddress.retryAfterSeconds,
+      });
+    }
+  }
   const authDomain = options.authDomain ?? process.env["AUTH_DOMAIN"] ?? "localhost:3000";
   // The table a player was shown when they rated a brief is the table they rent,
   // with no second model call: the model is not deterministic, so asking again
@@ -296,6 +350,9 @@ export function createApp(options: AppOptions): Server {
 
   async function postAgent(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
+    // Before anything is created or any model is called: renting writes rows,
+    // and on the deposit flow it also builds a transaction over an RPC.
+    spendBoth(rentLimiter, rentByAddress, ownerId, ctx.clientKey, "rentals");
     const presetName = ctx.body["presetName"] as PresetName | undefined;
     const brief = typeof ctx.body["brief"] === "string" ? ctx.body["brief"].trim() : "";
     if (!presetName && !brief) throw new HttpError(400, "presetName or brief is required");
@@ -778,6 +835,7 @@ export function createApp(options: AppOptions): Server {
     const agentId = requireUuid(ctx.params[0]);
     const deposit = options.deposit;
     if (!deposit) throw new HttpError(503, "deposits are unavailable on this server");
+    spendBoth(rentLimiter, rentByAddress, ownerId, ctx.clientKey, "deposits");
     const asked = ctx.body["amount"];
     if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) {
       throw new HttpError(400, "amount is required, in chips, and must be above zero");
@@ -861,6 +919,7 @@ export function createApp(options: AppOptions): Server {
     const wallet = ctx.requireOwner();
     const faucet = options.faucet;
     if (!faucet) throw new HttpError(503, "there is no faucet on this network");
+    spendBoth(faucetLimiter, faucetByAddress, wallet, ctx.clientKey, "faucet requests");
     try {
       return { grant: await grantFaucet(db, faucet, wallet, chipRate) };
     } catch (error) {

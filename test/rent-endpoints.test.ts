@@ -122,6 +122,8 @@ beforeAll(async () => {
     db,
     deposit: { chain, fee: FEE, chipRate: RATE, allow: (o) => onDepositFlow.has(o) },
     rateLimit: { limit: 1000, windowMs: 60_000 },
+    rentRateLimit: { limit: 1000, windowMs: 60_000 },
+    rentAddressRateLimit: { limit: 1000, windowMs: 60_000 },
     nonceRateLimit: { limit: 1000, windowMs: 60_000 },
     playRateLimit: { limit: 1000, windowMs: 60_000 },
   }));
@@ -268,5 +270,6 @@ describe("renting over HTTP", () => {
       expect(await balanceOf(db, agentId)).toBe(baseUnits(900, RATE));
     });
   });
+
 
 });

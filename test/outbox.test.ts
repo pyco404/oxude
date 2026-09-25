@@ -7,6 +7,7 @@ import { createAgent, runMatch } from "../src/db/runner.js";
 import {
   creditSurplus,
   drainChainOps,
+  watchSettlerSol,
   reconcile,
   settlementLag,
   startChainWorker,
@@ -531,6 +532,60 @@ describe("money that arrives without the ledger hearing about it", () => {
 
     expect((await creditSurplus(db, chain)).credited).toEqual([]);
     expect(await balanceOf(db, agent.id)).toBe(before);
+  });
+});
+
+describe("the settler's SOL", () => {
+  // The settler pays the account rent for every vault, settlement, withdrawal
+  // and rental this system opens, so a player needs no SOL at all - and the
+  // settler running dry stops everything while nothing else looks wrong.
+  it("says so once when it runs low, and once when it is topped up", async () => {
+    let sol = 5;
+    const low: number[] = [];
+    const back: number[] = [];
+    const watch = watchSettlerSol(async () => sol, {
+      floorSol: 1,
+      intervalMs: 5,
+      onLow: (s) => low.push(s),
+      onRecovered: (s) => back.push(s),
+    });
+
+    await new Promise((r) => setTimeout(r, 40));
+    expect(low).toEqual([]);
+
+    sol = 0.4;
+    await new Promise((r) => setTimeout(r, 60));
+    // Many checks have run; it said so once.
+    expect(low).toEqual([0.4]);
+    expect(back).toEqual([]);
+
+    sol = 2;
+    await new Promise((r) => setTimeout(r, 60));
+    watch.stop();
+    expect(back).toEqual([2]);
+    expect(low).toEqual([0.4]);
+  });
+
+  it("keeps watching when a balance cannot be read", async () => {
+    let fail = true;
+    const errors: unknown[] = [];
+    const low: number[] = [];
+    const watch = watchSettlerSol(
+      async () => {
+        if (fail) throw new Error("rpc down");
+        return 0.2;
+      },
+      { floorSol: 1, intervalMs: 5, onLow: (s) => low.push(s), onRecovered: () => {}, onError: (e) => errors.push(e) },
+    );
+    await new Promise((r) => setTimeout(r, 40));
+    expect(errors.length).toBeGreaterThan(0);
+    expect(low).toEqual([]);
+
+    // It recovers rather than having given up.
+    fail = false;
+    await new Promise((r) => setTimeout(r, 60));
+    watch.stop();
+    expect(low).toEqual([0.2]);
   });
 });
 

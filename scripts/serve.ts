@@ -163,7 +163,12 @@ if (rpc && process.env["CHAIN_STAKE_MINT"]) {
 // only ever a devnet convenience, and the check is on the chain's own genesis
 // hash rather than on a variable naming it.
 let faucet: import("../src/db/faucet.js").FaucetChain | undefined;
-if (rpc && process.env["CHAIN_STAKE_MINT"]) {
+// Off unless asked for. It used to follow CHAIN_STAKE_MINT, which meant the
+// variable that tells the api about the deposit programme also handed out free
+// tokens to everyone - two decisions on one switch, and the surprising one
+// silent. FAUCET_ENABLED=true is the only thing that turns it on now; the
+// devnet check still applies on top of it and cannot be overridden.
+if (rpc && process.env["CHAIN_STAKE_MINT"] && process.env["FAUCET_ENABLED"] === "true") {
   const { Connection, Keypair, PublicKey } = await import("@solana/web3.js");
   const { devnetFaucet, NotDevnetError } = await import("../src/chain/faucet.js");
   const { loadKeypair } = await import("../src/chain/common.js");
@@ -183,6 +188,8 @@ if (rpc && process.env["CHAIN_STAKE_MINT"]) {
     if (error instanceof NotDevnetError) console.log(`Faucet: off - ${error.message}`);
     else console.log(`Faucet: off - no treasury key (${String(error).slice(0, 120)})`);
   }
+} else if (rpc && process.env["CHAIN_STAKE_MINT"]) {
+  console.log("Faucet: off (set FAUCET_ENABLED=true to hand out test tokens)");
 }
 
 // A host sets PORT and needs every interface; locally, loopback only.
@@ -237,6 +244,27 @@ if (depositFlow) {
     setTimeout(() => void sweep(), sweepMs);
   };
   setTimeout(() => void sweep(), sweepMs);
+}
+
+// The settler pays for every account this system opens, so it running dry stops
+// everything while nothing else looks wrong. It was down to 0.001 SOL on
+// 2026-09-25 and nothing had said so.
+if (chain && rpc) {
+  const { watchSettlerSol, SETTLER_SOL_FLOOR } = await import("../src/chain/worker.js");
+  const { Connection, LAMPORTS_PER_SOL } = await import("@solana/web3.js");
+  const conn = new Connection(rpc, "confirmed");
+  const keys: [string, import("@solana/web3.js").PublicKey][] = [["seed", chain.signer.publicKey]];
+  if (depositClient) keys.push(["deposit", depositClient.signer.publicKey]);
+  for (const [which, key] of keys) {
+    watchSettlerSol(async () => (await conn.getBalance(key, "confirmed")) / LAMPORTS_PER_SOL, {
+      onLow: (sol) =>
+        console.error(
+          `chain: SETTLER LOW - the ${which} settler ${key.toBase58()} has ${sol.toFixed(4)} SOL, under ${SETTLER_SOL_FLOOR}. It pays the rent for every account this opens; below this, settlements start failing.`,
+        ),
+      onRecovered: (sol) => console.log(`chain: the ${which} settler is funded again (${sol.toFixed(3)} SOL)`),
+      onError: (error) => console.error(`chain: could not read the ${which} settler's balance: ${String(error).slice(0, 120)}`),
+    });
+  }
 }
 
 if (chain && rpc) {

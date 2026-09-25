@@ -109,6 +109,10 @@ beforeAll(async () => {
     rateLimit: { limit: 3, windowMs: 60_000 },
     nonceRateLimit: { limit: 1000, windowMs: 60_000 },
     playRateLimit: { limit: 4, windowMs: 60_000 },
+    // This file rents many agents from one address; the rent limits have a
+    // file of their own (test/rate-limits.test.ts).
+    rentRateLimit: { limit: 1000, windowMs: 60_000 },
+    rentAddressRateLimit: { limit: 1000, windowMs: 60_000 },
   }));
 });
 afterAll(async () => {

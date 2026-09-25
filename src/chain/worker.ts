@@ -159,6 +159,58 @@ export async function settlementLag(db: Db, now = new Date()): Promise<number | 
  */
 export const SETTLEMENT_LAG_ALARM_MS = 15 * 60 * 1000;
 
+/**
+ * The least SOL a settler should be left with.
+ *
+ * The settler pays the account rent for every vault, settlement, withdrawal and
+ * rental record, and the fee for every transaction it builds - so a player
+ * needs no SOL at all, and the settler running dry stops the whole system
+ * without anything else looking wrong. It was at 0.001 on 2026-09-25 and
+ * nothing had said so.
+ */
+export const SETTLER_SOL_FLOOR = 1;
+
+export type SolWatch = { stop: () => void };
+
+/**
+ * Watches a settler's SOL and says so when it runs low - once when it crosses,
+ * and once when it is topped up, never on every check. Takes a reader rather
+ * than a connection so that what it decides can be tested without a chain.
+ */
+export function watchSettlerSol(
+  read: () => Promise<number>,
+  options: { floorSol?: number; intervalMs?: number; onLow: (sol: number) => void; onRecovered: (sol: number) => void; onError?: (e: unknown) => void },
+): SolWatch {
+  const floor = options.floorSol ?? SETTLER_SOL_FLOOR;
+  const every = options.intervalMs ?? 5 * 60_000;
+  let low = false;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const check = async () => {
+    if (stopped) return;
+    try {
+      const sol = await read();
+      if (sol < floor && !low) {
+        low = true;
+        options.onLow(sol);
+      } else if (sol >= floor && low) {
+        low = false;
+        options.onRecovered(sol);
+      }
+    } catch (error) {
+      options.onError?.(error);
+    }
+    if (!stopped) timer = setTimeout(() => void check(), every);
+  };
+  void check();
+  return {
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
 /** Agents whose vault op failed for good: nothing involving them can reach the chain. */
 async function vaultlessAgents(db: Db): Promise<Set<string>> {
   const rows = await db
