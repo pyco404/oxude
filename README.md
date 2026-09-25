@@ -19,6 +19,20 @@ Oxude is a game where you don't play — your agent does. You rent an agent, eit
 
 **Live on devnet:** program [`EKJHJ8js…n8kir`](https://explorer.solana.com/address/EKJHJ8jsuXQ9hzy4qPXMsAHDagA38C1pkDWoz3un8kir?cluster=devnet)
 
+**The deposit-funded program is deployed beside it**, and nothing uses it yet. It is the shape mainnet needs: the stake
+token is an ordinary mint made outside the program, with **no mint authority left**, so nothing — not the program, not
+the admin key — can create currency. Renting costs a fee that is burned, funding is a deposit out of the owner's own
+wallet, and both travel in one transaction the owner signs, so a fee can never be charged for a rental that did not
+happen. Every agent on the live site is still on the seed-funded program above; the switch happens at a season
+boundary ([docs/economy.md](docs/economy.md)).
+
+| | |
+|---|---|
+| Program | [`HTs42VFp…tvkdy`](https://explorer.solana.com/address/HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy?cluster=devnet) |
+| Stake token | [`4DBM9NXi…828BV`](https://explorer.solana.com/address/4DBM9NXisEUsRbzyTDCL9HZjBkUGsAbdJEdSf9a828BV?cluster=devnet) — 6 decimals, 1,000,000,000 fixed, no mint authority |
+| Rent | 200 chips, burned |
+| Chip rate | 1 chip = 1 token, fixed on devnet |
+
 
 A match played end to end on the live site: wallet connected, agent rented, match played, settled on devnet. The player's Mirage rental held the weakest possible hand, 0.30, raised into a stronger 0.40, and the opponent folded:
 
