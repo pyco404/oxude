@@ -14,6 +14,7 @@ import { WithdrawPanel } from "@/app/withdraw-panel";
 import { SeasonLine } from "@/app/season-line";
 import { RentalPanel } from "@/app/rental-panel";
 import { FaucetPanel } from "@/app/faucet-panel";
+import { DepositPanel } from "@/app/deposit-panel";
 import { CharacterBlock } from "@/app/character";
 import { AutoplayPanel } from "@/app/autoplay-panel";
 import { PageNote } from "@/app/site-header";
@@ -1120,6 +1121,14 @@ function AgentCard({
             agentId={(agent.id ?? agent.agentId)!}
             retired={retired}
             refreshKey={`${agent.balance ?? ""}-${agent.matchesPlayed ?? ""}`}
+            onChanged={onWithdrawn}
+          />
+        )}
+
+        {!(agent.id ?? agent.agentId) ? null : (
+          <DepositPanel
+            agentId={(agent.id ?? agent.agentId)!}
+            canDeposit={agent.funding === "deposit" && !retired}
             onChanged={onWithdrawn}
           />
         )}

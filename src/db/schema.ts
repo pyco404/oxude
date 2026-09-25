@@ -600,6 +600,37 @@ export const rentals = pgTable(
 
 export type RentalPaymentStatus = "prepared" | "submitted" | "confirmed" | "expired";
 
+/**
+ * A top-up: the owner's own money moved into an agent's vault after it was
+ * rented. This is what revives an agent that played itself down to nothing,
+ * which the seed flow had no answer for at all.
+ *
+ * Only a record of the transaction, not of the money - the ledger row is
+ * written when it lands. A deposit that arrives without going through here is
+ * still the agent's money, and the reconciler credits it.
+ */
+export const deposits = pgTable(
+  "deposits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    ownerId: text("owner_id").notNull(),
+    /** Base units moved from the owner's wallet into the vault. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    status: text("status").$type<RentalPaymentStatus>().notNull().default("prepared"),
+    preparedTx: text("prepared_tx").notNull(),
+    signedTx: text("signed_tx"),
+    lastValidBlockHeight: bigint("last_valid_block_height", { mode: "number" }).notNull(),
+    signature: text("signature"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("deposits_agent_idx").on(t.agentId, t.status), index("deposits_status_idx").on(t.status)],
+);
+
 export const ratings = pgTable("ratings", {
   agentId: uuid("agent_id")
     .primaryKey()

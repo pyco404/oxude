@@ -221,6 +221,20 @@ export class ChainClient {
   }
 
   /**
+   * A top-up: the deposit instruction alone, for the owner to sign. The settler
+   * pays the fee, as it does for every transaction it builds here, so an owner
+   * topping up needs stake tokens but no SOL.
+   */
+  async prepareDeposit(input: { agentId: string; owner: string; amount: number }): Promise<PreparedWithdrawal> {
+    const owner = new PublicKey(input.owner);
+    const fund = await this.depositInstruction({ agentId: input.agentId, depositor: owner, amount: input.amount });
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash("confirmed");
+    const transaction = new Transaction({ feePayer: this.signer.publicKey, blockhash, lastValidBlockHeight }).add(fund);
+    transaction.partialSign(this.signer);
+    return { transaction, lastValidBlockHeight };
+  }
+
+  /**
    * Sends a fully signed rental and waits for it. The same bytes twice are
    * harmless: the rental record and the vault can each be created once, so the
    * second attempt is the same transaction and lands or fails as one.

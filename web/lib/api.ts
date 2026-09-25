@@ -94,6 +94,11 @@ export type Traits = {
 };
 
 export type AgentView = {
+  /**
+   * Which flow this agent was rented under. Only a "deposit" agent can be
+   * topped up: a "seed" one's vault holds the frozen program's token.
+   */
+  funding?: "seed" | "deposit";
   /** Portrait, epithet and bio. Null for an agent not yet given one. */
   character?: Character | null;
   traits?: Traits;
@@ -382,6 +387,16 @@ export const api = {
     ),
   feed: (limit = 12, before?: number) =>
     request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
+  prepareDeposit: (token: string | null, agentId: string, chips: number) =>
+    request<{ deposit: { depositId: string; amount: number; chips: number; transaction: string } }>(
+      `/agents/${agentId}/deposits`,
+      { method: "POST", token, body: JSON.stringify({ amount: chips }) },
+    ),
+  submitDeposit: (token: string | null, depositId: string, transaction: string) =>
+    request<{ deposit: { status: "prepared" | "submitted" | "confirmed" | "expired"; signature: string | null } }>(
+      `/deposits/${depositId}/submit`,
+      { method: "POST", token, body: JSON.stringify({ transaction }) },
+    ),
   submitRental: (token: string | null, rentalId: string, transaction: string) =>
     request<{ rental: { status: RentalState["status"]; signature: string | null; playable: boolean } }>(
       `/rentals/${rentalId}/submit`,

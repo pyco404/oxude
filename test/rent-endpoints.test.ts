@@ -8,6 +8,7 @@ import { listen } from "../src/http/server.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { baseUnits, DEVNET_CHIP_RATE } from "../src/chips.js";
 import type { RentalChain } from "../src/db/rentals.js";
+import type { DepositChain } from "../src/db/deposits.js";
 
 // Renting over HTTP on both flows. What matters here is that a caller can tell
 // them apart without guessing, and that the deposit flow never hands back an
@@ -17,7 +18,7 @@ const RATE = DEVNET_CHIP_RATE;
 const FEE = baseUnits(200, RATE);
 const FAKE_PROGRAM = new PublicKey(Buffer.alloc(32, 5));
 
-class FakeChain implements RentalChain {
+class FakeChain implements RentalChain, DepositChain {
   readonly settler = Keypair.generate();
   vaults = new Map<string, number>();
   height = 1000;
@@ -35,6 +36,28 @@ class FakeChain implements RentalChain {
     );
     transaction.partialSign(this.settler);
     return { transaction, lastValidBlockHeight: this.height + 150 };
+  }
+  async prepareDeposit(input: { agentId: string; owner: string; amount: number }) {
+    const transaction = new Transaction({
+      feePayer: this.settler.publicKey,
+      blockhash: "11111111111111111111111111111111",
+      lastValidBlockHeight: this.height + 150,
+    }).add(
+      new TransactionInstruction({
+        programId: FAKE_PROGRAM,
+        keys: [{ pubkey: new PublicKey(input.owner), isSigner: true, isWritable: true }],
+        data: Buffer.from(`top:${input.agentId}:${input.amount}`),
+      }),
+    );
+    transaction.partialSign(this.settler);
+    return { transaction, lastValidBlockHeight: this.height + 150 };
+  }
+  /** Top-ups and withdrawals both go out through this in the real client. */
+  async submitWithdrawal(raw: Uint8Array) {
+    const tx = Transaction.from(raw);
+    const [, agentId, amount] = tx.instructions[0]!.data.toString().split(":");
+    this.vaults.set(agentId!, (this.vaults.get(agentId!) ?? 0) + Number(amount));
+    return `sig-top-${agentId}`;
   }
   async submitRental(raw: Uint8Array) {
     const tx = Transaction.from(raw);
@@ -65,7 +88,7 @@ const tokens = new Map<string, string>();
  * because a wallet may only hold one agent at a time and every rental here
  * leaves one behind.
  */
-const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private"] as const;
+const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard"] as const;
 const onDepositFlow = new Set(DEPOSITORS.map(walletOf));
 
 async function tokenFor(label: string): Promise<string> {
@@ -192,4 +215,58 @@ describe("renting over HTTP", () => {
     });
     expect(stolen.status).toBe(403);
   });
+
+  describe("topping up", () => {
+    /** Rents on the deposit flow and lands it, so there is something to top up. */
+    async function funded(who: string, chips: number) {
+      const rented = await api("/agents", { method: "POST", body: { presetName: "Anchor", deposit: chips }, as: who });
+      const tx = Transaction.from(Buffer.from(rented.body.rental.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      await api(`/rentals/${rented.body.rental.rentalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      return rented.body.agent.id as string;
+    }
+
+    it("puts the owner's money in, and the balance says so", async () => {
+      const who = "dep-topup";
+      const agentId = await funded(who, 900);
+      expect(await balanceOf(db, agentId)).toBe(baseUnits(900, RATE));
+
+      const prepared = await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 500 }, as: who });
+      expect(prepared.status).toBe(201);
+      expect(prepared.body.deposit.chips).toBe(500);
+
+      const tx = Transaction.from(Buffer.from(prepared.body.deposit.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      const sent = await api(`/deposits/${prepared.body.deposit.depositId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      expect(sent.body.deposit.status).toBe("confirmed");
+      // This is the gap the seed flow could not close: an agent can be given more.
+      expect(await balanceOf(db, agentId)).toBe(baseUnits(1_400, RATE));
+    });
+
+    it("refuses a top-up for an agent rented before deposits existed", async () => {
+      // A seed agent's vault holds the frozen program's mint; there is nowhere
+      // to put a deposit denominated in the other one.
+      const seeded = await api("/agents", { method: "POST", body: { presetName: "Bully" }, as: "seed-owner" });
+      const out = await api(`/agents/${seeded.body.agent.id}/deposits`, { method: "POST", body: { amount: 100 }, as: "seed-owner" });
+      expect(out.status).toBe(409);
+      expect(String(out.body.error)).toMatch(/rented before deposits/);
+    });
+
+    it("refuses anyone but the owner, and an amount of nothing", async () => {
+      const who = "dep-guard";
+      const agentId = await funded(who, 900);
+      expect((await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 100 }, as: "mallory" })).status).toBe(403);
+      expect((await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 0 }, as: who })).status).toBe(400);
+      expect(await balanceOf(db, agentId)).toBe(baseUnits(900, RATE));
+    });
+  });
+
 });

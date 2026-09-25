@@ -46,6 +46,7 @@ import { settlementStatus, settlementLag, SETTLEMENT_LAG_ALARM_MS } from "../cha
 import { DEVNET_CHIP_RATE, rateOf, type Funding } from "../chips.js";
 import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
 import { prepareRental, submitRental, RentalError, type RentalChain } from "../db/rentals.js";
+import { prepareDeposit, submitDeposit, DepositError, type DepositChain } from "../db/deposits.js";
 import { rentals } from "../db/schema.js";
 import { baseUnits, chips as toChips } from "../chips.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
@@ -97,7 +98,7 @@ export type AppOptions = {
    * program will insist on when their transaction arrives.
    */
   deposit?: {
-    chain: RentalChain;
+    chain: RentalChain & DepositChain;
     /** Base units burned per rental, as the program's config carries it. */
     fee: number;
     /** Base units to one chip this season. */
@@ -210,6 +211,8 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
     ["GET", /^\/season$/, getSeason],
+    ["POST", /^\/agents\/([^/]+)\/deposits$/, postDeposit],
+    ["POST", /^\/deposits\/([^/]+)\/submit$/, postDepositSubmit],
     ["POST", /^\/rentals\/([^/]+)\/submit$/, postRentalSubmit],
     ["GET", /^\/rentals\/([^/]+)$/, getRental],
     ["GET", /^\/faucet$/, getFaucet],
@@ -767,6 +770,45 @@ export function createApp(options: AppOptions): Server {
         stalled: lagMs !== null && lagMs >= SETTLEMENT_LAG_ALARM_MS,
       },
     };
+  }
+
+  /** Owner only: builds a top-up for the owner's wallet to sign. Amount in chips. */
+  async function postDeposit(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const agentId = requireUuid(ctx.params[0]);
+    const deposit = options.deposit;
+    if (!deposit) throw new HttpError(503, "deposits are unavailable on this server");
+    const asked = ctx.body["amount"];
+    if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) {
+      throw new HttpError(400, "amount is required, in chips, and must be above zero");
+    }
+    try {
+      const out = await prepareDeposit(db, deposit.chain, {
+        agentId,
+        ownerId,
+        amount: baseUnits(Math.floor(asked), deposit.chipRate),
+      });
+      return { deposit: { ...out, chips: toChips(out.amount, deposit.chipRate) } };
+    } catch (error) {
+      if (error instanceof DepositError) throw new HttpError(error.status, error.message);
+      throw error;
+    }
+  }
+
+  /** Owner only: sends the wallet-signed top-up. */
+  async function postDepositSubmit(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const depositId = requireUuid(ctx.params[0]);
+    const deposit = options.deposit;
+    if (!deposit) throw new HttpError(503, "deposits are unavailable on this server");
+    const signed = String(ctx.body["transaction"] ?? "");
+    if (!signed) throw new HttpError(400, "transaction is required");
+    try {
+      return { deposit: await submitDeposit(db, deposit.chain, { depositId, ownerId, signedTx: signed }) };
+    } catch (error) {
+      if (error instanceof DepositError) throw new HttpError(error.status, error.message);
+      throw error;
+    }
   }
 
   /** Owner only: sends the wallet-signed rental transaction. */

@@ -203,12 +203,16 @@ if (characterModel) {
 // is a browser that closed mid-signature, which nothing else will ever report.
 if (depositFlow) {
   const { sweepRentals } = await import("../src/db/rentals.js");
+  const { sweepDeposits } = await import("../src/db/deposits.js");
   const sweepMs = Number(process.env["RENTAL_SWEEP_MS"] ?? 60_000);
   const sweep = async () => {
     try {
       const { confirmed, expired } = await sweepRentals(db, depositFlow!.chain);
       if (confirmed.length) console.log(`rentals: ${confirmed.length} landed after a lost confirmation`);
       if (expired.length) console.log(`rentals: ${expired.length} never landed, agents retired`);
+      const tops = await sweepDeposits(db, depositFlow!.chain);
+      if (tops.confirmed.length) console.log(`deposits: ${tops.confirmed.length} landed after a lost confirmation`);
+      if (tops.expired.length) console.log(`deposits: ${tops.expired.length} never landed`);
     } catch (error) {
       console.error(`rentals: sweep failed: ${String(error).slice(0, 160)}`);
     }
