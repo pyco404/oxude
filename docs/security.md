@@ -77,7 +77,7 @@ These are real, and would each need fixing before anything of value were at stak
 8. **Each settlement record costs the settler about 0.0015 SOL in rent.** At scale this is a steady SOL drain; old records could be closed to recover it, but there is no instruction for that yet. Each withdrawal likewise leaves a record, and the first one per owner also creates their token account, both paid by the settler.
 9. **Unaudited.** The program, the auth flow and the ledger have tests, not an audit.
 10. **Privy is third-party script in the page.** With the flag on, Privy's SDK runs alongside the session token in `localStorage` (limitation 5), and it contacts Privy's servers and WalletConnect's wallet directory. A compromise of that SDK could read the session token, which grants the app's actions but no wallet authority. Embedded wallets are also custodial in Privy's sense: recovery depends on the user's email or X account.
-11. **The settlement path runs through a third party.** The deployed worker settles through a Helius devnet RPC endpoint rather than Solana's public one, whose rate limits on shared cloud IPs made settlements slow. That endpoint sees every settlement before it reaches the chain and could delay or drop one; it cannot forge one, because the settler's signature is made locally. The ledger stays authoritative and the reconciler still reports a disagreement.
+11. **The settlement path runs through a third party**, and it is a single point of failure. The deployed worker settles through a Helius devnet RPC endpoint rather than Solana's public one, whose rate limits on shared cloud IPs made settlements slow. On 2026-09-23 that key stopped working and every pass failed with `401 Unauthorized` for about 28 hours, queueing 159 settlements. Nothing was lost — the outbox stopped at the first failure, sent nothing twice, and drained in order once an endpoint answered — but nothing noticed either, because a worker that cannot reach a chain looks exactly like a worker with nothing to do. Settlement lag needs an alarm before real money. That endpoint sees every settlement before it reaches the chain and could delay or drop one; it cannot forge one, because the settler's signature is made locally. The ledger stays authoritative and the reconciler still reports a disagreement.
 12. **Renting doesn't prove consent.** An agent's id binds it to its owner, so nobody can record a different one, but the server still creates the agent without the owner signing anything. It could create an agent "owned" by a wallet that never asked for one, which gives that wallet tokens and takes nothing. A transaction signed by the owner at rent time would prove consent; it would cost a signing step and make the agent wait to play.
 
 ## Before mainnet
@@ -86,14 +86,40 @@ Nothing here is optional. This is a devnet demo today; each item is a thing that
 must be true before any of it holds real money.
 
 **Rotate every production credential.** All four were exposed in a terminal
-session on 2026-09-20 and must be replaced, not merely re-scoped:
+session on 2026-09-20, and `DATABASE_URL` and `CHAIN_SETTLER_SECRET` again on
+2026-09-25. They must be replaced, not merely re-scoped.
+
+`DATABASE_URL` was rotated on 2026-09-25: the role password was changed and the
+old one now fails authentication over the network path, which is the only path
+there is — the database service has no `RAILWAY_TCP_PROXY_*` and so no public
+endpoint, so reaching it at all requires being inside the Railway project.
+
+Two lessons from doing it. Testing the old password from inside the database's
+own container proves nothing, because local connections there use `trust` auth
+and never check it; the test has to go over `postgres.railway.internal`. And
+`railway variables --set-from-stdin KEY` keeps the value out of the command
+line, which `--set "KEY=$(cat file)"` does not.
 
 - [ ] `ANTHROPIC_API_KEY` — revoke and reissue in the Anthropic console.
 - [ ] `CHAIN_RPC_URL` — roll the Helius API key.
 - [ ] `DATABASE_URL` — change the Postgres password in Railway.
-- [ ] `CHAIN_SETTLER_SECRET` — generate a fresh settler keypair, point the
-      config at it with `set_settler` (admin-signed), then update the Railway
-      variable. The old key keeps no powers once the config moves.
+- [ ] `CHAIN_SETTLER_SECRET` — **not rotatable on the deployed program.**
+      `set_settler` exists in this repo but was committed on 2026-09-20 at
+      22:14, about fifteen hours after the last deploy at 07:05, so the live
+      bytecode has never had it: calling it fails with
+      `InstructionFallbackNotFound`. Rotating the seed program's settler
+      therefore means upgrading it first, which would also ship every other
+      program change since that deploy — including the playable-withdrawal
+      floor — to the program holding every existing vault.
+
+      The decision taken on 2026-09-25 was **not** to upgrade: the seed program
+      is frozen and retires at the deposit cutover, and its token is worthless,
+      so a stolen settler there can deface the devnet record but cannot take
+      anything of value. The deposit-funded program gets a fresh settler at
+      `initialize` and has `set_settler` from the start, so this stops being a
+      one-way door. Until the cutover, the seed program signs with a key that
+      is known to be exposed. That is a deliberate, bounded acceptance and not
+      a thing to repeat on mainnet.
 
 Read variables with `railway variables -s <service> --json` and take the key
 names; printing the table puts the values on screen.
