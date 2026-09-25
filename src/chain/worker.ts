@@ -211,6 +211,61 @@ export function watchSettlerSol(
   };
 }
 
+export type DriftWatch = { stop: () => void };
+
+/**
+ * Watches for vaults holding *less* than the ledger says, and says so.
+ *
+ * This is the direction that means something is wrong: the ledger is
+ * authoritative, so a vault that cannot cover what the ledger credits is either
+ * a bug or somebody moving money that was not theirs to move. A settler key
+ * can settle between any two vaults it likes, so a stolen one drains vaults at
+ * whatever rate the outflow cap allows - slowly, and completely silently,
+ * because nothing else in the system looks at a vault once its ops are done.
+ *
+ * Said once when drift appears and once when it clears, like the other alarms
+ * here: repeating it every pass would make it noise. Surpluses are not drift
+ * and are handled by `creditSurplus`.
+ */
+export function watchDrift(
+  db: Db,
+  chain: ChainPort | ChainPorts,
+  options: {
+    intervalMs?: number;
+    onDrift: (mismatches: Mismatch[]) => void;
+    onCleared: () => void;
+    onError?: (e: unknown) => void;
+  },
+): DriftWatch {
+  const every = options.intervalMs ?? 5 * 60_000;
+  let drifting = false;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const check = async () => {
+    if (stopped) return;
+    try {
+      const { mismatches } = await reconcile(db, chain);
+      if (mismatches.length > 0 && !drifting) {
+        drifting = true;
+        options.onDrift(mismatches);
+      } else if (mismatches.length === 0 && drifting) {
+        drifting = false;
+        options.onCleared();
+      }
+    } catch (error) {
+      options.onError?.(error);
+    }
+    if (!stopped) timer = setTimeout(() => void check(), every);
+  };
+  void check();
+  return {
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
 /** Agents whose vault op failed for good: nothing involving them can reach the chain. */
 async function vaultlessAgents(db: Db): Promise<Set<string>> {
   const rows = await db

@@ -267,6 +267,23 @@ if (chain && rpc) {
   }
 }
 
+// Vaults holding less than the ledger says. Nothing looked at this before: a
+// stolen settler key can settle between any two vaults it likes, and would have
+// drained them without anything in the system noticing.
+if (chain && rpc) {
+  const { watchDrift } = await import("../src/chain/worker.js");
+  watchDrift(db, depositClient ? { seed: chain, deposit: depositClient } : chain, {
+    onDrift: (mismatches) => {
+      const worst = mismatches.slice(0, 5).map((m) => `${m.name} ledger ${m.ledger} vs vault ${m.chain ?? "none"}`);
+      console.error(
+        `chain: VAULTS SHORT - ${mismatches.length} agent(s) hold less on chain than the ledger credits them: ${worst.join("; ")}${mismatches.length > 5 ? ", ..." : ""}. The ledger is authoritative, so this is money moved by something other than this server.`,
+      );
+    },
+    onCleared: () => console.log("chain: vaults and ledger agree again"),
+    onError: (error) => console.error(`chain: could not reconcile: ${String(error).slice(0, 160)}`),
+  });
+}
+
 if (chain && rpc) {
   const { startChainWorker } = await import("../src/chain/worker.js");
   const settler = chain.signer;

@@ -7,6 +7,7 @@ import { createAgent, runMatch } from "../src/db/runner.js";
 import {
   creditSurplus,
   drainChainOps,
+  watchDrift,
   watchSettlerSol,
   reconcile,
   settlementLag,
@@ -586,6 +587,56 @@ describe("the settler's SOL", () => {
     await new Promise((r) => setTimeout(r, 60));
     watch.stop();
     expect(low).toEqual([0.2]);
+  });
+});
+
+describe("watching for vaults that fall short", () => {
+  // The direction that means something is wrong. A settler key can settle
+  // between any two vaults it likes, so a stolen one drains them at whatever
+  // the outflow cap allows - and until this, nothing in the system looked.
+  it("says so once when a vault falls short, and once when it is put right", async () => {
+    const { db } = await connect();
+    await migrate(db);
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Drained", presetName: "Anchor", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+
+    const drifts: number[] = [];
+    let cleared = 0;
+    const watch = watchDrift(db, chain, {
+      intervalMs: 5,
+      onDrift: (m) => drifts.push(m.length),
+      onCleared: () => (cleared += 1),
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(drifts).toEqual([]);
+
+    // Somebody settled money out of this vault that the ledger knows nothing of.
+    chain.vaults.set(agent.id, chain.vaults.get(agent.id)! - 200);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(drifts).toEqual([1]);
+    expect(cleared).toBe(0);
+
+    chain.vaults.set(agent.id, await balanceOf(db, agent.id));
+    await new Promise((r) => setTimeout(r, 60));
+    watch.stop();
+    expect(cleared).toBe(1);
+    expect(drifts).toEqual([1]);
+  });
+
+  it("does not call a surplus drift: that direction is the ledger being behind", async () => {
+    const { db } = await connect();
+    await migrate(db);
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Given", presetName: "Bully", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+
+    const drifts: number[] = [];
+    const watch = watchDrift(db, chain, { intervalMs: 5, onDrift: (m) => drifts.push(m.length), onCleared: () => {} });
+    chain.vaults.set(agent.id, chain.vaults.get(agent.id)! + 500);
+    await new Promise((r) => setTimeout(r, 60));
+    watch.stop();
+    expect(drifts).toEqual([]);
   });
 });
 
