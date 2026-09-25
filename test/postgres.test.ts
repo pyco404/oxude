@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import pg from "pg";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { balanceOf, balancesOf, record } from "../src/db/ledger.js";
-import { createAgent, hasOutflowRoom, leaderboard, playableBands, publicAgent } from "../src/db/runner.js";
+import { createAgent, hasOutflowRoom, leaderboard, playableBands, publicAgent, runMatch } from "../src/db/runner.js";
+import { liveCounters } from "../src/db/feed.js";
 import { faucetStatus } from "../src/db/faucet.js";
 import { baseUnits, DEVNET_CHIP_RATE } from "../src/chips.js";
 import { chainOps } from "../src/db/schema.js";
@@ -103,6 +104,17 @@ describe.skipIf(!URL)("against a real Postgres", () => {
     // And the ladder, whose figures come from bigint rating columns.
     const rows = await leaderboard(db, 10);
     for (const row of rows) expect(typeof row.cumulativeNet).toBe("number");
+    await close();
+  });
+
+  it("reads the live feed's staked total as a number", async () => {
+    const { db, close } = await fresh();
+    const a = await createAgent(db, { name: "Staker", presetName: "Anchor" });
+    const b = await createAgent(db, { name: "Caller", presetName: "Bully" });
+    const played = await runMatch(db, a.id, b.id, { seed: 7 });
+    const counters = await liveCounters(db, new Date());
+    expect(typeof counters.totalStaked).toBe("number");
+    expect(counters).toEqual({ matchesToday: 1, totalStaked: played.stake * 2 });
     await close();
   });
 

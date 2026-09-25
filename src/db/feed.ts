@@ -1,8 +1,9 @@
-import { and, desc, eq, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, lt, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { headlineBeat } from "../transcript.js";
-import type { Seat } from "../types.js";
+import { beatsFor, headlineBeat, type Beat } from "../transcript.js";
+import type { Action, MatchLog, RoundOutcome, Seat } from "../types.js";
 import type { Db } from "./client.js";
+import { dayStart } from "../season.js";
 import { agents, matches } from "./schema.js";
 
 /**
@@ -57,6 +58,72 @@ export async function recentMatches(
   if (options.agentId !== undefined) conditions.push(or(eq(matches.agentA, options.agentId), eq(matches.agentB, options.agentId))!);
   if (options.stakedOnly) conditions.push(eq(matches.exhibition, false));
 
+  const rows = await feedRows(db, conditions, "newest", Math.min(Math.max(options.limit ?? 20, 1), 100));
+  return rows.map(({ item }) => item);
+}
+
+/** One round as the live feed plays it out: both hands, the actions, what it settled. */
+export type PlayRound = {
+  roundNumber: number;
+  /** Who acted first; null when both chose at once. */
+  leader: Seat | null;
+  edges: { A: number; B: number };
+  /** Decisions in the order they were made. */
+  sequence: { seat: Seat; action: Action }[];
+  outcome: RoundOutcome;
+  /** What changed hands: the ante on a fold, the bet on a flip, nothing if both folded. */
+  bet: number;
+  /** The chance A had of winning the flip; null when there was no flip. */
+  chanceA: number | null;
+  winner: Seat | null;
+  /** Running totals after the round. */
+  nets: { A: number; B: number };
+  roundsWon: { A: number; B: number };
+  /** The moments the transcript calls out in this round, e.g. "bluff-worked". */
+  beats: Beat["kind"][];
+};
+
+/** A new match for the live stream: the feed row, plus the rounds to play it out with. */
+export type LiveMatch = FeedItem & { play: PlayRound[] };
+
+/** The rounds of a match, with nothing a transcript would not also show. */
+export function playRounds(log: MatchLog): PlayRound[] {
+  return log.rounds.map((r, i) => ({
+    roundNumber: r.roundNumber,
+    leader: r.leader,
+    edges: r.edges,
+    sequence: r.sequence,
+    outcome: r.outcome,
+    bet: r.bet,
+    chanceA: r.flip?.probabilityAWins ?? null,
+    winner: r.winner,
+    nets: r.nets,
+    roundsWon: r.roundsWon,
+    beats: beatsFor(log, i).map((b) => b.kind),
+  }));
+}
+
+/**
+ * Every match recorded after `seq`, oldest first, exhibitions included: what
+ * the live stream tails. Bounded, so a long gap is caught up over several reads.
+ */
+export async function matchesAfter(db: Db, seq: number, limit = 50): Promise<LiveMatch[]> {
+  const rows = await feedRows(db, [gt(matches.seq, seq)], "oldest", limit);
+  return rows.map(({ item, log }) => ({ ...item, play: playRounds(log) }));
+}
+
+/** The newest match seq, or 0 before the first: where a live tail starts. */
+export async function latestSeq(db: Db): Promise<number> {
+  const [row] = await db.select({ seq: matches.seq }).from(matches).orderBy(desc(matches.seq)).limit(1);
+  return row?.seq ?? 0;
+}
+
+async function feedRows(
+  db: Db,
+  conditions: SQL[],
+  order: "newest" | "oldest",
+  limit: number,
+): Promise<{ item: FeedItem; log: MatchLog }[]> {
   const rows = await db
     .select({
       id: matches.id,
@@ -82,13 +149,13 @@ export async function recentMatches(
     .innerJoin(agentA, eq(agentA.id, matches.agentA))
     .innerJoin(agentB, eq(agentB.id, matches.agentB))
     .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(matches.seq))
-    .limit(Math.min(Math.max(options.limit ?? 20, 1), 100));
+    .orderBy(order === "newest" ? desc(matches.seq) : asc(matches.seq))
+    .limit(limit);
 
   return rows.map((r) => {
     const names = { A: r.aName, B: r.bName };
     const beat = headlineBeat(r.log, names);
-    return {
+    const item: FeedItem = {
       id: r.id,
       seq: r.seq,
       createdAt: r.createdAt,
@@ -105,6 +172,7 @@ export async function recentMatches(
       exhibition: r.exhibition,
       ranked: r.ranked,
     };
+    return { item, log: r.log };
   });
 }
 
@@ -163,4 +231,20 @@ export async function matchActivity(db: Db): Promise<{
     largestPot: Number(row?.largest ?? 0),
     exhibitions: Number(row?.exhibitions ?? 0),
   };
+}
+
+/**
+ * The two counters the live feed ticks up: staked matches since 00:00 UTC, and
+ * chips staked across every staked match ever, both sides counted as
+ * matchActivity counts them. Exhibitions stake nothing and count toward neither.
+ */
+export async function liveCounters(db: Db, now: Date): Promise<{ matchesToday: number; totalStaked: number }> {
+  const [row] = await db
+    .select({
+      today: sql<number>`count(*) filter (where ${gte(matches.createdAt, dayStart(now))})::int`,
+      totalStaked: sql<number>`coalesce(sum(${matches.stake} * 2), 0)::bigint`,
+    })
+    .from(matches)
+    .where(eq(matches.exhibition, false));
+  return { matchesToday: Number(row?.today ?? 0), totalStaked: Number(row?.totalStaked ?? 0) };
 }
