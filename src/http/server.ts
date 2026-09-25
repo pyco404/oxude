@@ -42,7 +42,7 @@ import { SURVIVAL, SURVIVAL_HOURS, SURVIVAL_PACE_MINUTES, SURVIVAL_SEED_BALANCE,
 
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
 import { LiveStream, resumeFrom, type LiveOptions } from "./live.js";
-import { settlementStatus } from "../chain/worker.js";
+import { settlementStatus, settlementLag, SETTLEMENT_LAG_ALARM_MS } from "../chain/worker.js";
 import { DEVNET_CHIP_RATE, rateOf, type Funding } from "../chips.js";
 import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
@@ -661,8 +661,24 @@ export function createApp(options: AppOptions): Server {
   }
 
   /** Public: platform-wide activity in staked matches. */
+  /**
+   * Public, and deliberately so: how far behind the chain is, alongside the
+   * activity figures. It is here rather than only in the logs because the
+   * outage this measures was invisible for 28 hours in logs somebody had to
+   * think to read. Anything that can poll a URL can watch it.
+   */
   async function getStats() {
-    return { activity: await matchActivity(db) };
+    const lagMs = await settlementLag(db);
+    return {
+      activity: await matchActivity(db),
+      settlement: {
+        /** How long the oldest unsent movement has waited. Null when none is waiting. */
+        lagMs,
+        /** Past this, something is wrong rather than merely busy. */
+        alarmAfterMs: SETTLEMENT_LAG_ALARM_MS,
+        stalled: lagMs !== null && lagMs >= SETTLEMENT_LAG_ALARM_MS,
+      },
+    };
   }
 
   /** Devnet only: whether this wallet can be topped up, and when it can next ask. */

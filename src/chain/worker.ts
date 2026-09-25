@@ -130,6 +130,35 @@ async function fundingOf(db: Db, ops: readonly ChainOpRow[]): Promise<Map<string
   return byOp;
 }
 
+/**
+ * How long the oldest unsent op has been waiting, in milliseconds. Null when
+ * the outbox is empty.
+ *
+ * This exists because the failure it measures is invisible otherwise. A worker
+ * that cannot reach a chain logs exactly what a worker with nothing to do logs
+ * - "0 confirmed" - so an RPC whose key had been revoked went unnoticed for 28
+ * hours on 2026-09-23, and the fix for it went unnoticed again because it had
+ * been set in the wrong place. Both would have shown here within a minute.
+ *
+ * It measures age, not count: a backlog of two ops that have sat for a day is
+ * the emergency, and a hundred that arrived this second is a busy Tuesday.
+ */
+export async function settlementLag(db: Db, now = new Date()): Promise<number | null> {
+  const [row] = await db
+    .select({ oldest: sql<string | null>`min(${chainOps.createdAt})` })
+    .from(chainOps)
+    .where(eq(chainOps.status, "pending"));
+  if (!row?.oldest) return null;
+  return Math.max(0, now.getTime() - new Date(row.oldest).getTime());
+}
+
+/**
+ * How long an op may wait before something is wrong. Generous next to the
+ * worker's five-second pass and the program's ten-minute outflow window, so a
+ * throttled vault waiting its turn never trips it.
+ */
+export const SETTLEMENT_LAG_ALARM_MS = 15 * 60 * 1000;
+
 /** Agents whose vault op failed for good: nothing involving them can reach the chain. */
 async function vaultlessAgents(db: Db): Promise<Set<string>> {
   const rows = await db
@@ -302,10 +331,22 @@ export async function reconcile(
 export function startChainWorker(
   db: Db,
   chain: ChainPort | ChainPorts,
-  options: { intervalMs?: number; onPass?: (result: DrainResult) => void } = {},
+  options: {
+    intervalMs?: number;
+    onPass?: (result: DrainResult) => void;
+    /**
+     * The outbox has been stuck for too long, or has started moving again.
+     * Called once when it starts and once when it clears, never on every pass:
+     * an alarm that repeats every five seconds is one nobody reads.
+     */
+    onLag?: (state: { stalled: boolean; lagMs: number }) => void;
+    lagAlarmMs?: number;
+  } = {},
 ): { stop: () => void } {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let alarming = false;
+  const alarmAfter = options.lagAlarmMs ?? SETTLEMENT_LAG_ALARM_MS;
   const pass = async () => {
     if (stopped) return;
     try {
@@ -313,6 +354,16 @@ export function startChainWorker(
       options.onPass?.(result);
     } catch (error) {
       options.onPass?.({ confirmed: 0, alreadyOnChain: 0, deferred: 0, stoppedAt: null, error: String(error) });
+    }
+    try {
+      const lagMs = (await settlementLag(db)) ?? 0;
+      const stalled = lagMs >= alarmAfter;
+      if (stalled !== alarming) {
+        alarming = stalled;
+        options.onLag?.({ stalled, lagMs });
+      }
+    } catch {
+      // A lag check that itself fails must not stop the worker draining.
     }
     if (!stopped) timer = setTimeout(() => void pass(), options.intervalMs ?? 5_000);
   };

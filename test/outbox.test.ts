@@ -4,7 +4,14 @@ import { connect, migrate, type Db } from "../src/db/client.js";
 import { agents, chainOps, STARTING_BALANCE } from "../src/db/schema.js";
 import { balanceOf } from "../src/db/ledger.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
-import { drainChainOps, reconcile, type ChainPort } from "../src/chain/worker.js";
+import {
+  drainChainOps,
+  reconcile,
+  settlementLag,
+  startChainWorker,
+  SETTLEMENT_LAG_ALARM_MS,
+  type ChainPort,
+} from "../src/chain/worker.js";
 import type { SeedOpenVaultInput } from "../src/chain/seed-settlement.js";
 import { agentIdFor } from "../src/agent-id.js";
 import { someWallet } from "./helpers.js";
@@ -377,6 +384,72 @@ describe("two programs, side by side", () => {
     deposit.vaults.set(b.id, 1);
     const broken = await reconcile(db, { seed, deposit });
     expect(broken.mismatches.map((m) => m.name)).toEqual(["Deposited"]);
+  });
+});
+
+describe("the settlement lag alarm", () => {
+  // The failure this exists for: a worker that cannot reach a chain logs what
+  // a worker with nothing to do logs. These check that the outbox standing
+  // still is distinguishable from the outbox being empty.
+  async function fresh() {
+    const { db } = await connect();
+    await migrate(db);
+    return db;
+  }
+
+  it("says nothing when there is nothing waiting", async () => {
+    const db = await fresh();
+    expect(await settlementLag(db)).toBeNull();
+  });
+
+  it("measures the age of the oldest waiting op, not how many are waiting", async () => {
+    const db = await fresh();
+    const agent = await createAgent(db, { name: "Waiting", presetName: "Anchor", ownerId: someWallet() });
+    const old = new Date(Date.now() - 40 * 60_000);
+    await db.update(chainOps).set({ createdAt: old }).where(eq(chainOps.agentId, agent.id));
+
+    const lag = await settlementLag(db);
+    expect(lag).toBeGreaterThanOrEqual(39 * 60_000);
+    expect(lag).toBeLessThan(41 * 60_000);
+    expect(lag! >= SETTLEMENT_LAG_ALARM_MS).toBe(true);
+
+    // A hundred ops that arrived this second are a busy Tuesday, not an alarm:
+    // the newer rows do not lower the figure, and on their own would not raise it.
+    const before = await settlementLag(db);
+    await db.insert(chainOps).values({ kind: "settle", fromAgent: agent.id, toAgent: agent.id, amount: 1 });
+    expect(await settlementLag(db)).toBeGreaterThanOrEqual(before!);
+
+    // Once it drains, there is nothing to report again.
+    await db.update(chainOps).set({ status: "confirmed" });
+    expect(await settlementLag(db)).toBeNull();
+  });
+
+  it("fires once when the outbox stalls and once when it moves again, not on every pass", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const agent = await createAgent(db, { name: "Stuck", presetName: "Hammer", ownerId: someWallet() });
+    await db.update(chainOps).set({ createdAt: new Date(Date.now() - 60 * 60_000) }).where(eq(chainOps.agentId, agent.id));
+    // The chain is unreachable, which is what makes the op sit there.
+    chain.failNext = "fetch failed";
+
+    const seen: { stalled: boolean; lagMs: number }[] = [];
+    const worker = startChainWorker(db, chain, {
+      intervalMs: 20,
+      lagAlarmMs: 15 * 60_000,
+      onLag: (s) => seen.push(s),
+    });
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Many passes have run; the alarm was raised once.
+    expect(seen.filter((s) => s.stalled)).toHaveLength(1);
+    expect(seen[0]!.lagMs).toBeGreaterThan(15 * 60_000);
+
+    // The chain comes back and the op lands: one all-clear, and no more.
+    chain.failNext = null;
+    await new Promise((r) => setTimeout(r, 400));
+    worker.stop();
+    expect(seen.filter((s) => !s.stalled)).toHaveLength(1);
+    expect(seen).toHaveLength(2);
   });
 });
 

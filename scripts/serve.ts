@@ -171,6 +171,13 @@ if (chain && rpc) {
         console.log(`chain: ${r.confirmed} confirmed, ${r.alreadyOnChain} already on chain${held}`);
       }
     },
+    // Said once when the outbox stops moving and once when it starts again.
+    // Loud on purpose: the failure it names looks identical to a quiet hour.
+    onLag: ({ stalled, lagMs }) => {
+      const mins = Math.round(lagMs / 60_000);
+      if (stalled) console.error(`chain: SETTLEMENTS STALLED - the oldest movement has waited ${mins} minutes and has not landed`);
+      else console.log(`chain: settlements moving again`);
+    },
   });
   // Hosted RPC URLs carry an API key in the query string; keep it out of the logs.
   const shown = new URL(rpc);
