@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Transcript } from "@/app/transcript";
 import { BluffCard, LiveFeed, useFeed } from "@/app/feed";
 import { LadderPanel } from "@/app/ladder-panel";
+import { LiveDot } from "@/app/live-dot";
+import { usePlaying } from "@/lib/live";
 import { Segmented } from "@/app/ui";
 import { PrivyOption } from "@/app/privy-option";
 import { useWallet } from "@/app/wallet-context";
@@ -722,6 +724,7 @@ function RosterPanel({
   agents: RosterAgent[] | null | undefined;
   fromAgent: boolean;
 }) {
+  const playing = usePlaying();
   return (
     <section className="rounded-panel mt-3 border border-line bg-panel">
       <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
@@ -747,6 +750,7 @@ function RosterPanel({
                 <span className="min-w-0 flex-1 truncate">
                   <AgentName name={a.name} preset={a.presetName} />
                 </span>
+                {playing.has(a.agentId) ? <LiveDot /> : null}
                 <span className="w-16 shrink-0 truncate font-mono text-[11px] text-muted">{a.presetName ?? "brief"}</span>
                 <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted">{a.matchesPlayed}m</span>
                 <span className="w-12 shrink-0 text-right font-mono text-[11px] text-gold">{a.balance}</span>

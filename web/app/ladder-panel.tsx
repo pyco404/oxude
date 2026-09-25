@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import { api, type LadderPeriod, type LadderRow } from "@/lib/api";
 import { Segmented } from "@/app/ui";
 import { netTone } from "@/lib/tone";
+import { LiveDot } from "@/app/live-dot";
+import { usePlaying } from "@/lib/live";
 
 const money = (n: number, digits = 2) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}`;
 const whole = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n)}`;
@@ -34,6 +36,7 @@ export function LadderPanel({
   const [period, setPeriod] = useState<LadderPeriod>("season");
   const [seasonNumber, setSeasonNumber] = useState<number | null>(null);
   const [rows, setRows] = useState<LadderRow[] | null | undefined>(undefined);
+  const playing = usePlaying();
   useEffect(() => {
     let current = true;
     api
@@ -101,6 +104,7 @@ export function LadderPanel({
               >
                 <AgentName name={row.name} preset={row.presetName} />
               </Link>
+              {playing.has(row.agentId) ? <LiveDot /> : null}
               {row.retired ? (
                 <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
                   retired
