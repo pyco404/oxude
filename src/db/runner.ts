@@ -39,7 +39,7 @@ import {
 } from "./schema.js";
 import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, StakeError } from "./ledger.js";
 import { recordEvent } from "./events.js";
-import { baseUnits, chips, rateOf } from "../chips.js";
+import { baseUnits, chips, rateOf, type Funding } from "../chips.js";
 import { rentalEndFor, rentalOpen, rentalOpenSql } from "./rental.js";
 import { seasonAt } from "../season.js";
 import { bandFactor, standings, type Standing } from "./standings.js";
@@ -109,8 +109,17 @@ export type CreateAgentInput = {
   policyStakes?: Stakes;
   /** The money scale to play at. Defaults to DEFAULT_BAND. */
   band?: BandName;
-  /** Balance to seed. Defaults to STARTING_BALANCE. */
+  /** Balance to seed. Defaults to STARTING_BALANCE. Ignored on the deposit flow. */
   startingBalance?: number;
+  /**
+   * Which funding flow this rental is on. "seed" mints a starting balance and
+   * queues the vault for the worker, which is how every agent worked before
+   * deposits. "deposit" does neither: the owner's own transaction opens the
+   * vault and puts the money in, so there is nothing to seed and nothing for
+   * the worker to send. Its ledger row and its vault record are written when
+   * that transaction lands (src/db/rentals.ts).
+   */
+  funding?: Funding;
   /** When the rental is taken out, which decides the season it ends with. Defaults to now. */
   now?: Date;
 };
@@ -124,6 +133,7 @@ export function bandRules(band: BandName): RulesConfig {
 export async function createAgent(db: Db, input: CreateAgentInput) {
   const table = input.policyTable ?? (input.presetName ? snapshotPreset(input.presetName) : undefined);
   if (!table) throw new Error(`agent ${input.name} needs a preset name or a policy table`);
+  const funding = input.funding ?? "seed";
   const seed = input.startingBalance ?? STARTING_BALANCE;
   // The agent, its seeded balance and the chain op that funds its vault land
   // together, so a vault can never be owed without an agent or vice versa.
@@ -141,18 +151,23 @@ export async function createAgent(db: Db, input: CreateAgentInput) {
       policyTable: table,
       policyStakes: input.policyStakes ?? DEFAULT_RULES.stakes,
       band: input.band ?? DEFAULT_BAND,
+      funding,
       // A player's rental ends at the season boundary, however far into the
       // season it starts. House agents are not rented and never end.
       rentalEndsAt: input.ownerId ? rentalEndFor(input.now) : null,
     })
     .returning();
   await tx.insert(ratings).values({ agentId: row!.id });
-  // Renting seeds the balance: the first movement in this agent's ledger.
-  await record(tx, [{ agentId: row!.id, amount: seed, reason: "rental-seed" }]);
-  // Opening the vault records a player's agent's owner too: that's who can withdraw.
-  await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, owner: row!.ownerId, salt, amount: seed });
+  if (funding === "seed") {
+    // Renting seeds the balance: the first movement in this agent's ledger.
+    await record(tx, [{ agentId: row!.id, amount: seed, reason: "rental-seed" }]);
+    // Opening the vault records a player's agent's owner too: that's who can withdraw.
+    await tx.insert(chainOps).values({ kind: "open_vault", agentId: row!.id, owner: row!.ownerId, salt, amount: seed });
+  }
   // Its emoji, unique across all agents, chosen with the agent.
-  return { ...row!, mark: await assignMark(tx as unknown as Db, row!.id) };
+  // The salt travels back because a deposit-funded rental needs it to build the
+  // transaction that opens the vault under this id.
+  return { ...row!, salt, mark: await assignMark(tx as unknown as Db, row!.id) };
   });
 }
 

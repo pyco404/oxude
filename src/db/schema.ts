@@ -192,7 +192,13 @@ export type AgentEventKind =
 
 export type AgentEventSource = "owner" | "autoplay" | "season";
 
-export type RetiredReason = "broke" | "withdrawn" | "lapsed";
+/**
+ * Why an agent stopped. "unpaid" is a rental whose transaction never landed:
+ * the agent existed only so its vault address could be derived, was never
+ * funded, and never played - so it is retired rather than left holding its
+ * owner's one-agent slot for ever.
+ */
+export type RetiredReason = "broke" | "withdrawn" | "lapsed" | "unpaid";
 
 /**
  * An agent's character: its portrait, its name's origin, its bio. Kept in a
@@ -422,6 +428,8 @@ export const ledger = pgTable(
 
 export type LedgerReason =
   | "rental-seed"
+  /** The owner's own money, moved into the vault: at rent time, or a top-up. */
+  | "deposit"
   | "match-settlement"
   | "adjustment"
   /** Money out of an agent's vault to its owner. */
@@ -548,6 +556,49 @@ export const withdrawals = pgTable(
 );
 
 export type WithdrawalStatus = "prepared" | "submitted" | "confirmed" | "expired";
+
+/**
+ * A deposit-funded rental: the fee and the first deposit, as one transaction
+ * the owner signs.
+ *
+ * The agent row exists from the moment this is prepared, because its id is what
+ * the vault address derives from, so the transaction cannot be built without
+ * it. Until the transaction lands that agent has no balance and no vault: it
+ * holds its owner's one-agent slot and nothing else. If the transaction never
+ * lands, the sweep retires it and the slot comes back.
+ *
+ * Shaped like `withdrawals` because it is the same problem in the other
+ * direction: something the server builds, the owner signs, and only then is
+ * recorded.
+ */
+export const rentals = pgTable(
+  "rentals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id),
+    ownerId: text("owner_id").notNull(),
+    /** Base units burned for the rental. Never enters the vault, so never the ledger. */
+    fee: bigint("fee", { mode: "number" }).notNull(),
+    /** Base units moved from the owner's wallet into the new vault. */
+    deposit: bigint("deposit", { mode: "number" }).notNull(),
+    /** The salt the agent's id derives from, needed to build the transaction. */
+    salt: text("salt").notNull(),
+    status: text("status").$type<RentalPaymentStatus>().notNull().default("prepared"),
+    /** The transaction as prepared, settler-signed, base64; the owner must sign exactly this. */
+    preparedTx: text("prepared_tx").notNull(),
+    signedTx: text("signed_tx"),
+    lastValidBlockHeight: bigint("last_valid_block_height", { mode: "number" }).notNull(),
+    signature: text("signature"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("rentals_agent_idx").on(t.agentId, t.status), index("rentals_status_idx").on(t.status)],
+);
+
+export type RentalPaymentStatus = "prepared" | "submitted" | "confirmed" | "expired";
 
 export const ratings = pgTable("ratings", {
   agentId: uuid("agent_id")
