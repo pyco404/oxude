@@ -41,6 +41,7 @@ import { STAKE_BANDS, affordableBands, bandByName, canAffordBand, type BandName 
 import { SURVIVAL, SURVIVAL_HOURS, SURVIVAL_PACE_MINUTES, SURVIVAL_SEED_BALANCE, survivalFor } from "../survival.js";
 
 import { RateLimiter, type RateLimitRule } from "./rate-limit.js";
+import { LiveStream, resumeFrom, type LiveOptions } from "./live.js";
 import { settlementStatus } from "../chain/worker.js";
 import { DEVNET_CHIP_RATE, rateOf, type Funding } from "../chips.js";
 import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
@@ -101,6 +102,8 @@ export type AppOptions = {
    * which is the default, so tests never reach a model.
    */
   character?: CharacterDeps;
+  /** The live stream's pacing and limits. Tests shorten the poll. */
+  live?: LiveOptions;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -856,16 +859,35 @@ export function createApp(options: AppOptions): Server {
     vary: "origin",
   };
 
-  return createServer((req, res) => {
+  const live = new LiveStream(db, {
+    onError: (error) => console.error(`live: ${String(error).slice(0, 160)}`),
+    ...options.live,
+  });
+
+  const server = createServer((req, res) => {
     if (req.method === "OPTIONS") {
       res.writeHead(204, corsHeaders);
       res.end();
+      return;
+    }
+    // The live stream holds its response open, so it is answered here rather
+    // than as a route that returns one payload. Public: it carries only what the feed does.
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (req.method === "GET" && url.pathname === "/live") {
+      void live.open(req, res, clientAddress(req), resumeFrom(req, url.searchParams), corsHeaders);
       return;
     }
     void handle(req, res).catch((error: unknown) => {
       send(res, 500, { error: error instanceof Error ? error.message : "unknown error" }, corsHeaders);
     });
   });
+  // Open streams never finish on their own, so closing the server ends them first.
+  const closeServer = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => {
+    live.close();
+    return closeServer(callback);
+  }) as typeof server.close;
+  return server;
 
   function reply(res: ServerResponse, status: number, payload: unknown, headers: Record<string, string> = {}): void {
     send(res, status, payload, { ...corsHeaders, ...headers });
