@@ -305,7 +305,10 @@ if (chain && rpc) {
   process.on("unhandledRejection", (error) => {
     console.error(`chain: unhandled rejection, continuing: ${String(error).slice(0, 160)}`);
   });
-  startChainWorker(db, chain, {
+  // Both programs. Without the second, a deposit-funded agent's settlements are
+  // deferred for want of a client and wait for ever - which is what happened on
+  // 2026-09-25, and what the lag alarm caught.
+  startChainWorker(db, depositClient ? { seed: chain, deposit: depositClient } : chain, {
     intervalMs: Number(process.env["CHAIN_INTERVAL_MS"] ?? 5000),
     onPass: (r) => {
       if (r.confirmed || r.alreadyOnChain || r.error) {

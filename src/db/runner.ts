@@ -124,6 +124,22 @@ export type CreateAgentInput = {
   now?: Date;
 };
 
+/**
+ * Two agents can only stake against each other if their vaults are under the
+ * same program. They are not interchangeable: each vault is a token account for
+ * one mint under one program, and no instruction exists that moves tokens from
+ * a vault under one to a vault under the other. A match across them would be
+ * recorded, would move both ledgers, and could never settle - which is exactly
+ * what happened on 2026-09-25 before this check existed.
+ */
+export function assertSameFlow(a: Pick<AgentRow, "name" | "funding">, b: Pick<AgentRow, "name" | "funding">): void {
+  if (a.funding !== b.funding) {
+    throw new StakeError(
+      `${a.name} is funded by ${a.funding} and ${b.name} by ${b.funding}; their vaults are under different programs and cannot settle against each other`,
+    );
+  }
+}
+
 /** The rules a band is played under: the shipped rules at that band's scale. */
 export function bandRules(band: BandName): RulesConfig {
   return { ...DEFAULT_RULES, stakes: bandStakes(band) };
@@ -262,6 +278,7 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
     { name: rowB.name, balance: balances.get(rowB.id) ?? 0, funding: rowB.funding },
     band,
   );
+  assertSameFlow(rowA, rowB);
   const seed = options.seed ?? newSeed();
   // No display names in the log: the match row references both agents, and a
   // name-free log is exactly what a replay reproduces.
@@ -313,19 +330,26 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
         createdAt: now,
       })
       .returning();
+    // The engine plays in chips; the ledger and the chain hold base units. Both
+    // agents are on the same flow - assertSameFlow above - so one rate converts
+    // both sides, and a settlement stays zero-sum in base units as it is in
+    // chips. The match row keeps the chips, because that is what a transcript,
+    // a rating and the ladder are all in.
+    const rate = rateOf(rowA);
+    const movedA = baseUnits(settledA, rate);
     await record(tx, [
-      { agentId: rowA.id, amount: settledA, reason: "match-settlement", matchId: inserted!.id },
-      { agentId: rowB.id, amount: -settledA, reason: "match-settlement", matchId: inserted!.id },
+      { agentId: rowA.id, amount: movedA, reason: "match-settlement", matchId: inserted!.id },
+      { agentId: rowB.id, amount: -movedA, reason: "match-settlement", matchId: inserted!.id },
     ]);
     // Queue the same movement for the chain. A level match moves nothing.
-    if (settledA !== 0) {
-      const [loser, winner] = settledA > 0 ? [rowB.id, rowA.id] : [rowA.id, rowB.id];
+    if (movedA !== 0) {
+      const [loser, winner] = movedA > 0 ? [rowB.id, rowA.id] : [rowA.id, rowB.id];
       await tx.insert(chainOps).values({
         kind: "settle",
         matchId: inserted!.id,
         fromAgent: loser,
         toAgent: winner,
-        amount: Math.abs(settledA),
+        amount: Math.abs(movedA),
       });
     }
     await updateRating(tx, rowA.id);
@@ -363,6 +387,7 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
     { name: rowB.name, balance: balances.get(rowB.id) ?? 0, funding: rowB.funding },
     band,
   );
+  assertSameFlow(rowA, rowB);
   const seed = options.seed ?? newSeed();
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
   const settledA = settle(log.nets.A);
@@ -616,6 +641,9 @@ export async function pickOpponent(db: Db, agentId: string, options: PickOpponen
         inBand,
         // Two agents with no owner are not the same owner.
         me.ownerId === null ? sql`true` : or(isNull(agents.ownerId), ne(agents.ownerId, me.ownerId)),
+        // Only agents whose vault is under the same program. Different programs
+        // hold different mints, so a match across them could never settle.
+        eq(agents.funding, me.funding),
         // Not one with a withdrawal on its way: it can't play until that lands.
         sql`not exists (select 1 from ${withdrawals} where ${withdrawals.agentId} = ${agents.id} and ${withdrawals.status} = 'submitted')`,
       ),

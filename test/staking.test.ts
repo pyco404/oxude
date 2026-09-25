@@ -25,7 +25,7 @@ import {
   recordElicitation,
   elicitationCount,
 } from "../src/db/ledger.js";
-import { createAgent, leaderboard, pickOpponent, playableBands, runMatch, setBand } from "../src/db/runner.js";
+import { assertSameFlow, createAgent, leaderboard, pickOpponent, playableBands, runMatch, setBand } from "../src/db/runner.js";
 import { refreshTrueRatings } from "../src/db/rating.js";
 import { someWallet } from "./helpers.js";
 
@@ -375,3 +375,51 @@ describe("first elicitation", () => {
     await c();
   });
 });
+
+describe("agents on different funding flows", () => {
+  // Each vault is a token account for one mint under one program. There is no
+  // instruction that moves tokens from a vault under one to a vault under the
+  // other, so a match across them would be recorded, would move both ledgers,
+  // and could never settle. That happened on 2026-09-25 before this existed.
+  it("cannot stake against each other", async () => {
+    expect(() =>
+      stakeBetween(
+        { name: "Deposited", balance: baseUnits(2_000, DEVNET_CHIP_RATE), funding: "deposit" },
+        { name: "Seeded", balance: 900, funding: SEED },
+        "B",
+      ),
+    ).not.toThrow();
+    // stakeBetween only checks cover; the flow check is its own, so that a
+    // caller cannot pass one and skip the other.
+    expect(() =>
+      assertSameFlow({ name: "Deposited", funding: "deposit" }, { name: "Seeded", funding: "seed" }),
+    ).toThrow(/different programs and cannot settle/);
+    expect(() => assertSameFlow({ name: "A", funding: "seed" }, { name: "B", funding: "seed" })).not.toThrow();
+  });
+
+  it("are never offered to each other as opponents", async () => {
+    const { db } = await connect();
+    await migrate(db);
+    const mine = await createAgent(db, { name: "Mine", presetName: "Anchor", ownerId: someWallet() });
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, mine.id));
+    await record(db, [{ agentId: mine.id, amount: baseUnits(2_000, DEVNET_CHIP_RATE), reason: "deposit" }]);
+    // Plenty of seed-funded opponents, all in the same band, all solvent.
+    for (let i = 0; i < 4; i++) await createAgent(db, { name: `Seeded ${i}`, presetName: "Bully" });
+
+    await expect(pickOpponent(db, mine.id)).rejects.toThrow(/no opponent/);
+  });
+
+  it("will play each other once both are on the same flow", async () => {
+    const { db } = await connect();
+    await migrate(db);
+    const mine = await createAgent(db, { name: "Mine", presetName: "Anchor", ownerId: someWallet() });
+    const other = await createAgent(db, { name: "Theirs", presetName: "Bully", ownerId: someWallet() });
+    for (const id of [mine.id, other.id]) {
+      await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, id));
+      await record(db, [{ agentId: id, amount: baseUnits(2_000, DEVNET_CHIP_RATE), reason: "deposit" }]);
+    }
+    const pick = await pickOpponent(db, mine.id);
+    expect(pick.opponentId).toBe(other.id);
+  });
+});
+
