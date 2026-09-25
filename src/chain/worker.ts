@@ -400,7 +400,15 @@ export type Mismatch = { agentId: string; name: string; ledger: number; chain: n
  * being involved at all, and a deposit whose confirmation was lost looks the
  * same from here. Either way the money is the agent's and the ledger is behind.
  */
-export type Surplus = { agentId: string; name: string; ledger: number; chain: number; surplus: number };
+export type Surplus = {
+  agentId: string;
+  name: string;
+  ledger: number;
+  chain: number;
+  surplus: number;
+  /** Which program holds this vault, which decides whether the surplus is money. */
+  funding: Funding;
+};
 
 /**
  * Compares each agent's vault with its ledger balance, for agents whose ops
@@ -440,7 +448,14 @@ export async function reconcile(
     // behind, not wrong. Less is the serious direction - the ledger says an
     // agent owns something its vault cannot pay - and that is a bug to look at.
     if (onChain !== null && onChain > ledger) {
-      surpluses.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain, surplus: onChain - ledger });
+      surpluses.push({
+        agentId: agent.id,
+        name: agent.name,
+        ledger,
+        chain: onChain,
+        surplus: onChain - ledger,
+        funding: agent.funding,
+      });
     } else {
       mismatches.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain });
     }
@@ -456,17 +471,32 @@ export async function reconcile(
  * route, the tokens are in the agent's vault and are its owner's; refusing to
  * count them would leave money nobody could play with or withdraw.
  *
- * An agent with a rental or top-up still in flight is left alone. Its surplus
- * is most likely that very transaction, and crediting it here as well as when
- * it confirms would count it twice.
+ * **Only on the deposit flow.** That programme's token has no mint authority,
+ * so a surplus there can only be tokens somebody already held - real money,
+ * arriving by a route this server did not build. The seed programme is the
+ * opposite: its settler can mint, and that key is known to be exposed, so a
+ * surplus in a seed vault may be tokens conjured by whoever holds it. Crediting
+ * those would put invented money into balances, and from there into who can
+ * play which band, how much is staked, and what the ladder and the rewards are
+ * computed from. They are reported instead, and the ledger stays the only thing
+ * that says what a seed agent owns.
+ *
+ * An agent with a rental or top-up still in flight is left alone either way.
+ * Its surplus is most likely that very transaction, and crediting it here as
+ * well as when it confirms would count it twice.
  */
 export async function creditSurplus(
   db: Db,
   chain: ChainPort | ChainPorts,
-): Promise<{ credited: { agentId: string; amount: number }[] }> {
+): Promise<{ credited: { agentId: string; amount: number }[]; refused: Surplus[] }> {
   const { surpluses } = await reconcile(db, chain);
   const credited: { agentId: string; amount: number }[] = [];
+  const refused: Surplus[] = [];
   for (const s of surpluses) {
+    if (s.funding !== "deposit") {
+      refused.push(s);
+      continue;
+    }
     const inFlight = await db
       .select({ id: rentals.id })
       .from(rentals)
@@ -482,7 +512,7 @@ export async function creditSurplus(
     await record(db, [{ agentId: s.agentId, amount: s.surplus, reason: "deposit" }]);
     credited.push({ agentId: s.agentId, amount: s.surplus });
   }
-  return { credited };
+  return { credited, refused };
 }
 
 /**

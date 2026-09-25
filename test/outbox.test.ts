@@ -493,22 +493,46 @@ describe("money that arrives without the ledger hearing about it", () => {
     expect(check.mismatches.map((m) => m.name)).toEqual(["Short"]);
   });
 
+  it("will not credit a surplus in a seed vault, because that programme can mint", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    // A seed agent: its vault belongs to the frozen programme, whose settler
+    // can mint and whose settler key is known to be exposed. A surplus there
+    // may be tokens somebody conjured, and crediting it would put invented
+    // money into a balance - and from there into bands, staking and the ladder.
+    const agent = await createAgent(db, { name: "Seeded", presetName: "Anchor", ownerId: someWallet() });
+    await drainChainOps(db, chain);
+    const before = await balanceOf(db, agent.id);
+
+    chain.vaults.set(agent.id, before + 10_000);
+    const out = await creditSurplus(db, chain);
+    expect(out.credited).toEqual([]);
+    expect(out.refused.map((r) => r.name)).toEqual(["Seeded"]);
+    expect(out.refused[0]!.surplus).toBe(10_000);
+    // The ledger is unmoved: it stays the only thing that says what this owns.
+    expect(await balanceOf(db, agent.id)).toBe(before);
+  });
+
   it("credits a surplus so the money can be played with, once", async () => {
     const db = await fresh();
     const chain = new FakeChain();
     const agent = await createAgent(db, { name: "Topped", presetName: "Hammer", ownerId: someWallet() });
     await drainChainOps(db, chain);
+    // On the deposit flow, where the token has no mint authority and a surplus
+    // can only be tokens somebody already held.
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, agent.id));
     const before = await balanceOf(db, agent.id);
 
     chain.vaults.set(agent.id, before + 400);
-    const first = await creditSurplus(db, chain);
+    const both = { seed: chain, deposit: chain };
+    const first = await creditSurplus(db, both);
     expect(first.credited).toEqual([{ agentId: agent.id, amount: 400 }]);
     expect(await balanceOf(db, agent.id)).toBe(before + 400);
 
     // The two now agree, so a second pass finds nothing to do.
-    const again = await creditSurplus(db, chain);
+    const again = await creditSurplus(db, both);
     expect(again.credited).toEqual([]);
-    expect((await reconcile(db, chain)).surpluses).toEqual([]);
+    expect((await reconcile(db, both)).surpluses).toEqual([]);
   });
 
   it("leaves an agent alone while its own deposit is still in flight", async () => {
@@ -516,6 +540,7 @@ describe("money that arrives without the ledger hearing about it", () => {
     const chain = new FakeChain();
     const agent = await createAgent(db, { name: "Pending", presetName: "Mirage", ownerId: someWallet() });
     await drainChainOps(db, chain);
+    await db.update(agents).set({ funding: "deposit" }).where(eq(agents.id, agent.id));
     const before = await balanceOf(db, agent.id);
 
     // A top-up has been sent and not yet recorded. Its money is already in the
@@ -531,7 +556,7 @@ describe("money that arrives without the ledger hearing about it", () => {
     });
     chain.vaults.set(agent.id, before + 300);
 
-    expect((await creditSurplus(db, chain)).credited).toEqual([]);
+    expect((await creditSurplus(db, { seed: chain, deposit: chain })).credited).toEqual([]);
     expect(await balanceOf(db, agent.id)).toBe(before);
   });
 });

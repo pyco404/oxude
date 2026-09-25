@@ -235,8 +235,15 @@ if (depositFlow) {
       // Money that reached a vault by some other route than this server. It is
       // the agent's either way, and refusing to count it would strand it.
       if (chain && depositClient) {
-        const { credited } = await creditSurplus(db, { seed: chain, deposit: depositClient });
+        const { credited, refused } = await creditSurplus(db, { seed: chain, deposit: depositClient });
         for (const c of credited) console.log(`chain: credited ${c.amount} that arrived in ${c.agentId.slice(0, 8)}'s vault`);
+        // Not credited, and worth saying out loud: the seed programme's settler
+        // can mint, and that key is exposed, so this may be invented money.
+        for (const r of refused) {
+          console.error(
+            `chain: ${r.name}'s seed vault holds ${r.surplus} more than the ledger credits it. Not counted - the seed programme can mint and its settler key is exposed.`,
+          );
+        }
       }
     } catch (error) {
       console.error(`rentals: sweep failed: ${String(error).slice(0, 160)}`);
