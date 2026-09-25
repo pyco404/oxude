@@ -4,15 +4,17 @@ import type { PreparedWithdrawal } from "../chain/common.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
 import { agents, chainOps, STAKE_BANDS, withdrawals, type WithdrawalStatus } from "./schema.js";
+import { baseUnits, chips, rateOf } from "../chips.js";
 
 /**
- * The least a vault can be left with and still be worth keeping: the cheapest
- * band's worst match. Below this no band is affordable, which is exactly the
- * point at which an agent retires, so leaving less would strand it holding
- * money it can never play. Comfortably above the program's own MIN_STAKE of 10,
- * which only asks that a vault be left empty or non-trivial.
+ * The least a vault can be left with and still be worth keeping, in **chips**:
+ * the cheapest band's worst match. Below this no band is affordable, which is
+ * exactly the point at which an agent retires, so leaving less would strand it
+ * holding money it can never play. Comfortably above either program's own
+ * MIN_STAKE of 10 chips, which only asks that a vault be left empty or
+ * non-trivial.
  */
-const MIN_TO_KEEP_PLAYING = Math.min(...STAKE_BANDS.map((b) => b.worstMatch));
+const MIN_TO_KEEP_PLAYING_CHIPS = Math.min(...STAKE_BANDS.map((b) => b.worstMatch));
 
 /**
  * Withdrawals from an agent's vault to its owner.
@@ -102,20 +104,15 @@ export type Withdrawable = {
 /**
  * What the owner can take now, and what is locked while matches settle.
  *
- * **Seed-funded agents only, for now.** Every figure here is a chip figure read
- * against a balance, and for a seed-funded agent those are the same unit,
- * because that flow's rate is one. For a deposit-funded agent they are not, and
- * the boundary where an owner's chips become base units belongs with the
- * deposit and top-up screens, which have to say which unit they mean. Until
- * then this refuses rather than quietly comparing chips against base units -
- * there is no such agent yet, so nothing is turned away that used to work.
+ * Every figure here is in **base units**, like the ledger it comes from. The
+ * chip floor is converted up at the agent's own rate rather than the balance
+ * being converted down, because the balance is the thing that has to match a
+ * vault exactly and a rounded one would not.
  */
 export async function withdrawable(db: Db, agentId: string): Promise<Withdrawable> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agent) throw new WithdrawalError(404, "no such agent");
-  if (agent.funding !== "seed") {
-    throw new WithdrawalError(503, "withdrawals from a deposit-funded agent are not wired up yet");
-  }
+  const minToKeep = baseUnits(MIN_TO_KEEP_PLAYING_CHIPS, rateOf(agent));
   const balance = await balanceOf(db, agentId);
   const pending = await unsettledOps(db, agentId);
   const locked = pending.filter((op) => op.kind === "settle").reduce((sum, op) => sum + op.amount, 0);
@@ -136,8 +133,8 @@ export async function withdrawable(db: Db, agentId: string): Promise<Withdrawabl
     withdrawable: available,
     locked,
     // A lapsed agent cannot play again, so there is nothing to keep playing on: all or nothing.
-    maxPartial: !lapsed && available >= MIN_TO_KEEP_PLAYING ? available - MIN_TO_KEEP_PLAYING : 0,
-    minStake: MIN_TO_KEEP_PLAYING,
+    maxPartial: !lapsed && available >= minToKeep ? available - minToKeep : 0,
+    minStake: minToKeep,
     reason,
   };
 }
@@ -154,20 +151,22 @@ export async function prepareWithdrawal(
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
   if (!agent) throw new WithdrawalError(404, "no such agent");
   if (agent.ownerId !== input.ownerId) throw new WithdrawalError(403, "that agent belongs to someone else");
+  const rate = rateOf(agent);
+  const minToKeep = baseUnits(MIN_TO_KEEP_PLAYING_CHIPS, rate);
   const state = await withdrawable(db, input.agentId);
   if (state.reason) throw new WithdrawalError(409, `can't withdraw now: ${state.reason}`);
 
   const amount: number = input.amount === "all" ? state.balance : input.amount;
   if (!Number.isSafeInteger(amount) || amount <= 0) throw new WithdrawalError(400, "amount must be a whole number above zero");
-  if (amount > state.balance) throw new WithdrawalError(400, `only ${state.balance} to withdraw`);
+  if (amount > state.balance) throw new WithdrawalError(400, `only ${chips(state.balance, rate)} to withdraw`);
   const remaining = state.balance - amount;
   if (remaining !== 0 && agent.retiredReason === "lapsed") {
     throw new WithdrawalError(400, "this agent's rental has lapsed: withdraw the whole balance");
   }
-  if (remaining !== 0 && remaining < MIN_TO_KEEP_PLAYING) {
+  if (remaining !== 0 && remaining < minToKeep) {
     throw new WithdrawalError(
       400,
-      `that would leave ${remaining}, too little to play a match in any band: take it all and retire, or leave at least ${MIN_TO_KEEP_PLAYING}`,
+      `that would leave ${chips(remaining, rate)}, too little to play a match in any band: take it all and retire, or leave at least ${MIN_TO_KEEP_PLAYING_CHIPS}`,
     );
   }
 

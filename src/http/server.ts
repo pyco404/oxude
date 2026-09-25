@@ -122,7 +122,7 @@ export type AppOptions = {
    * program will insist on when their transaction arrives.
    */
   deposit?: {
-    chain: RentalChain & DepositChain;
+    chain: RentalChain & DepositChain & WithdrawalChain;
     /** Base units burned per rental, as the program's config carries it. */
     fee: number;
     /** Base units to one chip this season. */
@@ -989,6 +989,23 @@ export function createApp(options: AppOptions): Server {
     }
   }
 
+  /**
+   * The program that holds this agent's vault, and the rate its money is in.
+   *
+   * A withdrawal has to reach the programme that actually holds the tokens: the
+   * two have different mints, so asking the wrong one about a vault is asking
+   * about an account it has never heard of.
+   */
+  async function vaultOf(agentId: string): Promise<{ chain: WithdrawalChain; rate: number }> {
+    const [row] = await db.select({ funding: agents.funding }).from(agents).where(eq(agents.id, agentId)).limit(1);
+    if (!row) throw new HttpError(404, "no such agent");
+    if (row.funding === "deposit") {
+      if (!options.deposit) throw new HttpError(503, "this server isn't connected to the deposit program");
+      return { chain: options.deposit.chain, rate: options.deposit.chipRate };
+    }
+    return { chain: needChain(), rate: rateOf(row) };
+  }
+
   /** Runs a withdrawal step, turning its refusals into HTTP answers. */
   async function withdrawalStep<T>(fn: () => Promise<T>): Promise<T> {
     try {
@@ -1015,17 +1032,35 @@ export function createApp(options: AppOptions): Server {
   /** Owner only: what can be withdrawn now, and what is locked while matches settle. */
   async function getWithdrawable(ctx: Ctx) {
     const { id } = await ownAgent(ctx);
-    return { withdrawable: await withdrawalStep(() => withdrawable(db, id)) };
+    const { rate } = await vaultOf(id);
+    const state = await withdrawalStep(() => withdrawable(db, id));
+    // Chips, like every other money figure a client sees. The module works in
+    // base units because those are what has to match a vault.
+    return {
+      withdrawable: {
+        ...state,
+        balance: toChips(state.balance, rate),
+        withdrawable: toChips(state.withdrawable, rate),
+        locked: toChips(state.locked, rate),
+        maxPartial: toChips(state.maxPartial, rate),
+        minStake: toChips(state.minStake, rate),
+      },
+    };
   }
 
   /** Owner only: builds a withdrawal for the owner's wallet to sign. {amount: n} or {amount: "all"}. */
   async function postWithdrawal(ctx: Ctx) {
     const { id, ownerId } = await ownAgent(ctx);
     const raw = ctx.body["amount"];
-    const amount = raw === "all" ? "all" : typeof raw === "number" ? raw : NaN;
-    if (amount !== "all" && !Number.isFinite(amount)) throw new HttpError(400, 'amount must be a number or "all"');
-    const chain = needChain();
-    return { withdrawal: await withdrawalStep(() => prepareWithdrawal(db, chain, { agentId: id, ownerId, amount })) };
+    const asked = raw === "all" ? "all" : typeof raw === "number" ? raw : NaN;
+    if (asked !== "all" && !Number.isFinite(asked)) throw new HttpError(400, 'amount must be a number or "all"');
+    const { chain, rate } = await vaultOf(id);
+    // The owner types chips; the vault and the program speak base units.
+    const amount = asked === "all" ? "all" : baseUnits(Math.floor(asked), rate);
+    const out = await withdrawalStep(() => prepareWithdrawal(db, chain, { agentId: id, ownerId, amount }));
+    return {
+      withdrawal: { ...out, amount: toChips(out.amount, rate), remaining: toChips(out.remaining, rate) },
+    };
   }
 
   /** Owner only: the signed transaction back; recorded, then sent. */
@@ -1034,7 +1069,10 @@ export function createApp(options: AppOptions): Server {
     const withdrawalId = requireUuid(ctx.params[0]);
     const signed = ctx.body["transaction"];
     if (typeof signed !== "string" || !signed) throw new HttpError(400, "transaction is required (base64)");
-    const chain = needChain();
+    // The withdrawal knows its agent, and the agent decides which program.
+    const [w] = await db.select({ agentId: withdrawals.agentId }).from(withdrawals).where(eq(withdrawals.id, withdrawalId)).limit(1);
+    if (!w) throw new HttpError(404, "no such withdrawal");
+    const { chain } = await vaultOf(w.agentId);
     return { withdrawal: await withdrawalStep(() => submitWithdrawal(db, chain, { withdrawalId, ownerId, signedTx: signed })) };
   }
 

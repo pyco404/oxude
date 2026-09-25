@@ -9,6 +9,7 @@ import { balanceOf } from "../src/db/ledger.js";
 import { baseUnits, DEVNET_CHIP_RATE } from "../src/chips.js";
 import type { RentalChain } from "../src/db/rentals.js";
 import type { DepositChain } from "../src/db/deposits.js";
+import type { WithdrawalChain } from "../src/db/withdrawals.js";
 
 // Renting over HTTP on both flows. What matters here is that a caller can tell
 // them apart without guessing, and that the deposit flow never hands back an
@@ -18,7 +19,7 @@ const RATE = DEVNET_CHIP_RATE;
 const FEE = baseUnits(200, RATE);
 const FAKE_PROGRAM = new PublicKey(Buffer.alloc(32, 5));
 
-class FakeChain implements RentalChain, DepositChain {
+class FakeChain implements RentalChain, DepositChain, WithdrawalChain {
   readonly settler = Keypair.generate();
   vaults = new Map<string, number>();
   height = 1000;
@@ -32,6 +33,22 @@ class FakeChain implements RentalChain, DepositChain {
         programId: FAKE_PROGRAM,
         keys: [{ pubkey: new PublicKey(input.owner), isSigner: true, isWritable: true }],
         data: Buffer.from(`${input.agentId}:${input.deposit}`),
+      }),
+    );
+    transaction.partialSign(this.settler);
+    return { transaction, lastValidBlockHeight: this.height + 150 };
+  }
+  /** Withdrawals go out through the same submit path as top-ups. */
+  async prepareWithdrawal(input: { withdrawalId: string; agentId: string; owner: string; amount: number; remaining: number }) {
+    const transaction = new Transaction({
+      feePayer: this.settler.publicKey,
+      blockhash: "11111111111111111111111111111111",
+      lastValidBlockHeight: this.height + 150,
+    }).add(
+      new TransactionInstruction({
+        programId: FAKE_PROGRAM,
+        keys: [{ pubkey: new PublicKey(input.owner), isSigner: true, isWritable: true }],
+        data: Buffer.from(`out:${input.agentId}:${-input.amount}`),
       }),
     );
     transaction.partialSign(this.settler);
@@ -88,7 +105,7 @@ const tokens = new Map<string, string>();
  * because a wallet may only hold one agent at a time and every rental here
  * leaves one behind.
  */
-const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard", "dep-chips"] as const;
+const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard", "dep-chips", "dep-withdraw", "dep-partial", "dep-floor", "dep-retire"] as const;
 const onDepositFlow = new Set(DEPOSITORS.map(walletOf));
 
 async function tokenFor(label: string): Promise<string> {
@@ -312,6 +329,89 @@ describe("renting over HTTP", () => {
       // The frozen programme's mint has no decimals: one token was one chip.
       expect(view.body.agent.balance).toBe(await balanceOf(db, id));
       expect(view.body.agent.balance).toBe(900);
+    });
+  });
+
+
+  describe("withdrawing from a deposit-funded agent", () => {
+    async function funded(who: string, chipsIn: number) {
+      const rented = await api("/agents", { method: "POST", body: { presetName: "Anchor", deposit: chipsIn }, as: who });
+      const tx = Transaction.from(Buffer.from(rented.body.rental.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      await api(`/rentals/${rented.body.rental.rentalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      return rented.body.agent.id as string;
+    }
+
+    it("quotes what can be taken in chips, not base units", async () => {
+      const who = "dep-withdraw";
+      const agentId = await funded(who, 2_000);
+      const state = await api(`/agents/${agentId}/withdrawable`, { as: who });
+      expect(state.body.withdrawable.balance).toBe(2_000);
+      expect(state.body.withdrawable.withdrawable).toBe(2_000);
+      expect(state.body.withdrawable.locked).toBe(0);
+      // The floor is the cheapest band's worst match, in chips.
+      expect(state.body.withdrawable.minStake).toBe(20);
+      expect(state.body.withdrawable.maxPartial).toBe(1_980);
+      expect(state.body.withdrawable.reason).toBeNull();
+    });
+
+    it("takes a part of it, and leaves the rest playable", async () => {
+      const who = "dep-partial";
+      const agentId = await funded(who, 2_000);
+      const prepared = await api(`/agents/${agentId}/withdrawals`, { method: "POST", body: { amount: 500 }, as: who });
+      expect(prepared.status).toBe(201);
+      // Quoted back in chips, both sides.
+      expect(prepared.body.withdrawal.amount).toBe(500);
+      expect(prepared.body.withdrawal.remaining).toBe(1_500);
+      expect(prepared.body.withdrawal.retire).toBe(false);
+
+      const tx = Transaction.from(Buffer.from(prepared.body.withdrawal.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      const sent = await api(`/withdrawals/${prepared.body.withdrawal.withdrawalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      expect(sent.body.withdrawal.status).toBe("confirmed");
+      // The ledger moved by the right number of base units, not of chips.
+      expect(await balanceOf(db, agentId)).toBe(baseUnits(1_500, RATE));
+      const after = await api(`/agents/${agentId}`, { as: who });
+      expect(after.body.agent.balance).toBe(1_500);
+      expect(after.body.agent.canPlay).toBe(true);
+    });
+
+    it("refuses to leave less than a band's worst match, saying the figure in chips", async () => {
+      const who = "dep-floor";
+      const agentId = await funded(who, 900);
+      const out = await api(`/agents/${agentId}/withdrawals`, { method: "POST", body: { amount: 890 }, as: who });
+      expect(out.status).toBe(400);
+      // 10 left, not 10000000 left.
+      expect(String(out.body.error)).toMatch(/would leave 10,? too little/);
+      expect(String(out.body.error)).toMatch(/at least 20/);
+    });
+
+    it("takes the lot and retires the agent, which is how a wallet frees its slot", async () => {
+      const who = "dep-retire";
+      const agentId = await funded(who, 900);
+      const prepared = await api(`/agents/${agentId}/withdrawals`, { method: "POST", body: { amount: "all" }, as: who });
+      expect(prepared.body.withdrawal.amount).toBe(900);
+      expect(prepared.body.withdrawal.retire).toBe(true);
+
+      const tx = Transaction.from(Buffer.from(prepared.body.withdrawal.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      await api(`/withdrawals/${prepared.body.withdrawal.withdrawalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      expect(await balanceOf(db, agentId)).toBe(0);
+      // And the wallet can rent again, which is the point of retiring.
+      const again = await api("/agents", { method: "POST", body: { presetName: "Bully", deposit: 100 }, as: who });
+      expect(again.status).toBe(201);
     });
   });
 
