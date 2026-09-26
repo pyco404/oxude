@@ -337,6 +337,32 @@ export const seasonStandings = pgTable(
   (t) => [primaryKey({ columns: [t.season, t.agentId] }), index("season_standings_prize_idx").on(t.season, t.prizeRank)],
 );
 
+/**
+ * An exit the server does not co-sign, as this server knows it.
+ *
+ * One row per agent, like the Exit PDA it mirrors. The chain is authoritative
+ * for what happened; this is only the record of what the ledger has absorbed,
+ * and a new exit replaces the old row as a new PDA replaces the old account.
+ */
+export const exits = pgTable("exits", {
+  agentId: uuid("agent_id")
+    .primaryKey()
+    .references(() => agents.id),
+  requestedSlot: bigint("requested_slot", { mode: "number" }).notNull(),
+  unlockSlot: bigint("unlock_slot", { mode: "number" }).notNull(),
+  amount: bigint("amount", { mode: "number" }).notNull(),
+  /** Null until the chain says it was claimed. */
+  claimedSlot: bigint("claimed_slot", { mode: "number" }),
+  claimedAmount: bigint("claimed_amount", { mode: "number" }),
+  /**
+   * When the ledger absorbed this claim. Null while the vault is legitimately
+   * ahead of the ledger, which the reconciler explains rather than alarms on.
+   */
+  ingestedAt: timestamp("ingested_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const matches = pgTable(
   "matches",
   {
