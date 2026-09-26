@@ -53,6 +53,13 @@ export const pdas = {
     PublicKey.findProgramAddressSync([Buffer.from("outflow"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
   rental: (rentalId: string) =>
     PublicKey.findProgramAddressSync([Buffer.from("rental"), Buffer.from(uuidBytes(rentalId))], PROGRAM_ID)[0],
+  /**
+   * An agent's exit. Seeded by the agent alone, so anyone holding an agent id
+   * can find it - which is what lets the server explain a shrunken vault
+   * without having been told an id it never chose.
+   */
+  exit: (agentId: string) =>
+    PublicKey.findProgramAddressSync([Buffer.from("exit"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
 };
 
 /** What opening a vault needs: the id, and the owner and salt it was derived from (src/agent-id.ts). */
@@ -308,6 +315,90 @@ export class ChainClient {
    * Deposits from this client's own signer. That is the treasury funding a
    * house agent, never a player: a player's deposit is signed in their wallet.
    */
+  /**
+   * Starts an exit that nobody co-signs.
+   *
+   * `this.signer` is the **owner** here, not the settler. That is the whole
+   * point of these three: build a client around the owner's keypair and every
+   * step of an exit is available without this server existing at all.
+   */
+  async requestExit(input: { agentId: string; amount: number }): Promise<string> {
+    return this.program.methods
+      .requestExit(uuidBytes(input.agentId), new BN(input.amount))
+      .accountsPartial({
+        owner: this.signer.publicKey,
+        config: pdas.config(),
+        agentOwner: pdas.owner(input.agentId),
+        vault: pdas.vault(input.agentId),
+        exit: pdas.exit(input.agentId),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+  }
+
+  /** Claims an exit whose window has passed. Owner-signed, no settler. */
+  async claimExit(agentId: string): Promise<string> {
+    const destination = this.tokenAccount(this.signer.publicKey);
+    return this.program.methods
+      .claimExit(uuidBytes(agentId))
+      .accountsPartial({
+        owner: this.signer.publicKey,
+        config: pdas.config(),
+        agentOwner: pdas.owner(agentId),
+        vault: pdas.vault(agentId),
+        destination,
+        exit: pdas.exit(agentId),
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .preInstructions([
+        createAssociatedTokenAccountIdempotentInstruction(
+          this.signer.publicKey,
+          destination,
+          this.signer.publicKey,
+          this.mint,
+        ),
+      ])
+      .rpc();
+  }
+
+  /** Cancels an unclaimed exit, or clears a claimed one once its record has served. */
+  async closeExit(agentId: string): Promise<string> {
+    return this.program.methods
+      .closeExit(uuidBytes(agentId))
+      .accountsPartial({ owner: this.signer.publicKey, exit: pdas.exit(agentId) })
+      .rpc();
+  }
+
+  /**
+   * An agent's exit as the chain has it, or null if there is none.
+   *
+   * This is the reconciler's evidence: `claimedAmount` on a claimed exit is
+   * what turns "this vault holds less than the ledger says" from an alarm into
+   * an explanation.
+   */
+  async exitOf(agentId: string): Promise<{
+    amount: number;
+    requestedSlot: number;
+    unlockSlot: number;
+    vaultAtRequest: number;
+    claimedSlot: number;
+    claimedAmount: number;
+  } | null> {
+    try {
+      const e = await this.program.account.exit.fetch(pdas.exit(agentId));
+      return {
+        amount: Number(e.amount),
+        requestedSlot: Number(e.requestedSlot),
+        unlockSlot: Number(e.unlockSlot),
+        vaultAtRequest: Number(e.vaultAtRequest),
+        claimedSlot: Number(e.claimedSlot),
+        claimedAmount: Number(e.claimedAmount),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async deposit(input: { agentId: string; amount: number }): Promise<string> {
     return this.program.methods
       .deposit(uuidBytes(input.agentId), new BN(input.amount))

@@ -14,6 +14,219 @@ export type OxudeSettlement = {
   },
   "instructions": [
     {
+      "name": "claimExit",
+      "docs": [
+        "Pays out an exit whose window has passed. The owner signs; nobody else",
+        "is needed, which is the whole point of it.",
+        "",
+        "Pays `min(requested, vault)`, because the window is allowed to have",
+        "taken money out: a settlement that landed while this waited is exactly",
+        "what the wait was for. It cannot overdraw, and it does not fail because",
+        "the vault shrank.",
+        "",
+        "If the remainder would be unplayable dust, this takes the lot instead",
+        "of refusing. Refusing would be the custodial answer - it assumes a",
+        "server is standing by to work out a better number and ask again - and",
+        "an exit that can fail on arithmetic the owner cannot see is not a",
+        "guarantee. Taking everything is always the owner's own money and always",
+        "leaves a valid vault."
+      ],
+      "discriminator": [
+        109,
+        115,
+        53,
+        37,
+        198,
+        221,
+        203,
+        41
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agentOwner",
+            "exit"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agentOwner",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The owner's own token account for the game currency, and nobody else's."
+          ],
+          "writable": true
+        },
+        {
+          "name": "exit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "agentId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "closeExit",
+      "docs": [
+        "Clears an exit and returns its rent to the owner.",
+        "",
+        "Before a claim this is a cancel, and needs no wait: changing your mind",
+        "costs nobody anything.",
+        "",
+        "After a claim it waits `EXIT_WINDOW_SLOTS`, and that wait is",
+        "load-bearing. A claimed exit is the only evidence on chain that the",
+        "vault is legitimately smaller than the server's ledger. Erase it before",
+        "the server has read it and the shortfall becomes indistinguishable from",
+        "a drained vault: the reconciler alarms, correctly, and never stops. So",
+        "the record outlives the claim by as long as the server had to settle in",
+        "the first place."
+      ],
+      "discriminator": [
+        239,
+        55,
+        234,
+        254,
+        49,
+        69,
+        52,
+        60
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "exit"
+          ]
+        },
+        {
+          "name": "exit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "agentId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "deposit",
       "docs": [
         "Moves tokens from a wallet into an agent's vault. This is how every",
@@ -540,6 +753,145 @@ export type OxudeSettlement = {
       "args": [
         {
           "name": "rentalId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "requestExit",
+      "docs": [
+        "Starts an exit that this server does not co-sign.",
+        "",
+        "The owner alone signs, and alone pays. Nothing moves here: this records",
+        "the intent and starts the clock, and `claim_exit` pays out once",
+        "`EXIT_WINDOW_SLOTS` have passed. The gap is the point - it is the",
+        "server's chance to settle every match this agent has already played,",
+        "before money that may already be owed elsewhere leaves the vault.",
+        "",
+        "One exit per agent, because the PDA is seeded by the agent alone. A",
+        "second request while one is live fails on the account already existing,",
+        "which is what we want: an owner closes the first or claims it."
+      ],
+      "discriminator": [
+        121,
+        186,
+        203,
+        74,
+        138,
+        218,
+        135,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "docs": [
+            "Signs and pays. No settler here - that is the point of this path."
+          ],
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "agentOwner"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agentOwner",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "exit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "agentId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "agentId",
           "type": {
             "array": [
               "u8",
@@ -1189,6 +1541,19 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "exit",
+      "discriminator": [
+        25,
+        25,
+        160,
+        223,
+        53,
+        155,
+        170,
+        162
+      ]
+    },
+    {
       "name": "outflow",
       "discriminator": [
         243,
@@ -1266,6 +1631,32 @@ export type OxudeSettlement = {
         35,
         100,
         57
+      ]
+    },
+    {
+      "name": "exitClaimed",
+      "discriminator": [
+        251,
+        154,
+        235,
+        216,
+        216,
+        190,
+        30,
+        25
+      ]
+    },
+    {
+      "name": "exitRequested",
+      "discriminator": [
+        92,
+        125,
+        6,
+        23,
+        233,
+        196,
+        149,
+        70
       ]
     },
     {
@@ -1475,6 +1866,21 @@ export type OxudeSettlement = {
       "code": 6022,
       "name": "mintableStakeToken",
       "msg": "The stake token still has a mint authority: its supply is not fixed"
+    },
+    {
+      "code": 6023,
+      "name": "exitLocked",
+      "msg": "This exit's window has not passed yet"
+    },
+    {
+      "code": 6024,
+      "name": "exitAlreadyClaimed",
+      "msg": "This exit has already been claimed"
+    },
+    {
+      "code": 6025,
+      "name": "exitEvidenceNeeded",
+      "msg": "A claimed exit stays on chain a while, so the ledger can catch up before the record goes"
     }
   ],
   "types": [
@@ -1605,6 +2011,136 @@ export type OxudeSettlement = {
           },
           {
             "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exit",
+      "docs": [
+        "A live or spent exit, one per agent.",
+        "",
+        "Seeded by the agent alone - deliberately not by an id the owner picks -",
+        "so that the server can find any agent's exit at a deterministic address",
+        "without having been told anything. Everything downstream depends on that:",
+        "an exit the server cannot find is an exit it cannot ingest, and a",
+        "shortfall it cannot explain."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agentId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "What the owner asked for. The claim pays at most this, and at most what",
+              "the vault still holds."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "requestedSlot",
+            "type": "u64"
+          },
+          {
+            "name": "unlockSlot",
+            "docs": [
+              "Not before this slot may it be claimed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vaultAtRequest",
+            "docs": [
+              "What the vault held when this was requested, for the server to compare."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claimedSlot",
+            "docs": [
+              "0 until claimed. Non-zero is what tells the reconciler that a smaller",
+              "vault is explained rather than drained."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claimedAmount",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exitClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agentId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exitRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agentId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "unlockSlot",
             "type": "u64"
           }
         ]
