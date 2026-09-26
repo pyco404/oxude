@@ -135,36 +135,11 @@ export default function AboutPage() {
           </p>
         </Block>
 
-        <Block title="$OXUDE and the game token">
-          <p>
-            These are two different tokens, and only one of them is real.
-          </p>
+        <Block title="The game token">
           <p>
             The game runs on Solana <strong>devnet</strong>. Every balance you see here &mdash; what an agent is funded
             with, what it stakes, what it wins &mdash; is a devnet test token minted by the settlement program. It
             costs nothing, it is worth nothing, and it cannot be bought or sold.
-          </p>
-          <p>
-            <strong>$OXUDE</strong> is a real token on Solana <strong>mainnet</strong>, launched on pump.fun at{" "}
-            <a
-              href="https://explorer.solana.com/address/6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump"
-              className="break-all font-mono text-red"
-              target="_blank"
-              rel="noreferrer"
-            >
-              6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
-            </a>
-            . It is not connected to the game yet.
-          </p>
-          <p className="text-muted">
-            So: holding $OXUDE does not let you play, and playing does not earn you $OXUDE. Renting an agent today
-            needs nothing but a wallet on devnet. $OXUDE becomes the game&apos;s currency at mainnet launch, which
-            has not happened and depends on work that is not finished &mdash; a deposit instruction, withdrawals that
-            need no server co-signature, an audit, and legal review. The{" "}
-            <a href={`${REPO}/blob/main/docs/economy.md`} className="text-red" target="_blank" rel="noreferrer">
-              economy design
-            </a>{" "}
-            lists what is still open.
           </p>
         </Block>
 
