@@ -65,6 +65,7 @@ pub const OWNER_SEED: &[u8] = b"owner";
 pub const WITHDRAWAL_SEED: &[u8] = b"withdrawal";
 pub const OUTFLOW_SEED: &[u8] = b"outflow";
 pub const RENTAL_SEED: &[u8] = b"rental";
+pub const EXIT_SEED: &[u8] = b"exit";
 /// Mixed into every agent id, so an id can't be confused with any other hash.
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
@@ -97,6 +98,21 @@ pub const MAX_SETTLEMENT_CEILING_CHIPS: u64 = 900;
 /// The least one vault can pay out through settlements in one window, in chips.
 /// A small vault is allowed this much even though a quarter of it is less.
 pub const OUTFLOW_FLOOR_CHIPS: u64 = 120;
+/// How long an owner-signed exit waits before it can be claimed: about thirty
+/// minutes of slots.
+///
+/// This is the whole safety argument for an exit that nobody co-signs. A
+/// match's result exists in the server's ledger before it exists here, so a
+/// withdrawal taken in that gap can take money already owed to someone else.
+/// The window is the server's chance to settle what it owes before the money
+/// leaves, and it is sized against the two clocks that already exist: the
+/// outflow window is `WINDOW_SLOTS` (~10 minutes) and the server's settlement
+/// lag alarm fires at 15 minutes. Thirty clears both with room.
+///
+/// In slots rather than wall clock, like every other interval here. Slots
+/// running slow makes the window *longer*, which is the safe direction: more
+/// time to settle, and the owner waits a little more.
+pub const EXIT_WINDOW_SLOTS: u64 = 4_500;
 /// The least a vault may be left holding, in chips, if it is not left empty.
 ///
 /// **Not** a band's worst match, and deliberately below the cheapest one - band
@@ -425,6 +441,108 @@ pub mod oxude_settlement {
         emit!(Withdrawn { withdrawal_id, agent_id, owner: record.owner, amount, remaining });
         Ok(())
     }
+
+    /// Starts an exit that this server does not co-sign.
+    ///
+    /// The owner alone signs, and alone pays. Nothing moves here: this records
+    /// the intent and starts the clock, and `claim_exit` pays out once
+    /// `EXIT_WINDOW_SLOTS` have passed. The gap is the point - it is the
+    /// server's chance to settle every match this agent has already played,
+    /// before money that may already be owed elsewhere leaves the vault.
+    ///
+    /// One exit per agent, because the PDA is seeded by the agent alone. A
+    /// second request while one is live fails on the account already existing,
+    /// which is what we want: an owner closes the first or claims it.
+    pub fn request_exit(ctx: Context<RequestExit>, agent_id: [u8; 16], amount: u64) -> Result<()> {
+        require!(amount > 0, OxudeError::ZeroAmount);
+        let slot = Clock::get()?.slot;
+        let exit = &mut ctx.accounts.exit;
+        exit.agent_id = agent_id;
+        exit.owner = ctx.accounts.owner.key();
+        exit.amount = amount;
+        exit.requested_slot = slot;
+        exit.unlock_slot = slot.saturating_add(EXIT_WINDOW_SLOTS);
+        // Recorded for the server, not used by any rule here: a vault smaller
+        // at claim than at request is a settlement having landed in the
+        // window, which is the system working.
+        exit.vault_at_request = ctx.accounts.vault.amount;
+        exit.claimed_slot = 0;
+        exit.claimed_amount = 0;
+        exit.bump = ctx.bumps.exit;
+        emit!(ExitRequested { agent_id, owner: exit.owner, amount, unlock_slot: exit.unlock_slot });
+        Ok(())
+    }
+
+    /// Pays out an exit whose window has passed. The owner signs; nobody else
+    /// is needed, which is the whole point of it.
+    ///
+    /// Pays `min(requested, vault)`, because the window is allowed to have
+    /// taken money out: a settlement that landed while this waited is exactly
+    /// what the wait was for. It cannot overdraw, and it does not fail because
+    /// the vault shrank.
+    ///
+    /// If the remainder would be unplayable dust, this takes the lot instead
+    /// of refusing. Refusing would be the custodial answer - it assumes a
+    /// server is standing by to work out a better number and ask again - and
+    /// an exit that can fail on arithmetic the owner cannot see is not a
+    /// guarantee. Taking everything is always the owner's own money and always
+    /// leaves a valid vault.
+    pub fn claim_exit(ctx: Context<ClaimExit>, agent_id: [u8; 16]) -> Result<()> {
+        let slot = Clock::get()?.slot;
+        let exit = &ctx.accounts.exit;
+        require!(exit.claimed_slot == 0, OxudeError::ExitAlreadyClaimed);
+        require!(slot >= exit.unlock_slot, OxudeError::ExitLocked);
+
+        let held = ctx.accounts.vault.amount;
+        require!(held > 0, OxudeError::ZeroAmount);
+        let min_stake = in_base_units(MIN_STAKE_CHIPS, ctx.accounts.config.chip_rate)?;
+        let amount = exit_payout(exit.amount, held, min_stake);
+
+        let bump = ctx.accounts.config.bump;
+        let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[bump]]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.destination.to_account_info(),
+                    authority: ctx.accounts.config.to_account_info(),
+                },
+                signer,
+            ),
+            amount,
+        )?;
+
+        let exit = &mut ctx.accounts.exit;
+        exit.claimed_slot = slot;
+        exit.claimed_amount = amount;
+        emit!(ExitClaimed { agent_id, owner: exit.owner, amount, remaining: held - amount });
+        Ok(())
+    }
+
+    /// Clears an exit and returns its rent to the owner.
+    ///
+    /// Before a claim this is a cancel, and needs no wait: changing your mind
+    /// costs nobody anything.
+    ///
+    /// After a claim it waits `EXIT_WINDOW_SLOTS`, and that wait is
+    /// load-bearing. A claimed exit is the only evidence on chain that the
+    /// vault is legitimately smaller than the server's ledger. Erase it before
+    /// the server has read it and the shortfall becomes indistinguishable from
+    /// a drained vault: the reconciler alarms, correctly, and never stops. So
+    /// the record outlives the claim by as long as the server had to settle in
+    /// the first place.
+    pub fn close_exit(ctx: Context<CloseExit>, _agent_id: [u8; 16]) -> Result<()> {
+        let exit = &ctx.accounts.exit;
+        if exit.claimed_slot > 0 {
+            let slot = Clock::get()?.slot;
+            require!(
+                slot >= exit.claimed_slot.saturating_add(EXIT_WINDOW_SLOTS),
+                OxudeError::ExitEvidenceNeeded
+            );
+        }
+        Ok(())
+    }
 }
 
 /// An agent's id: the first 16 bytes of the hash of the domain, its owner's
@@ -482,6 +600,28 @@ pub fn in_base_units(chips: u64, chip_rate: u64) -> Result<u64> {
 /// A fixed-window budget: `(window_start, spent)` after charging `amount` at
 /// `slot`, or None if it would go over `cap`. A window that has run its course
 /// starts again from this slot.
+/// What a claim pays out: at most what was asked, at most what is there, and
+/// never leaving dust behind.
+///
+/// The clamp to `held` is the window doing its job - a settlement that landed
+/// while the exit waited is money that was never the owner's, and the claim
+/// simply takes less rather than failing.
+///
+/// The dust rule rounds **up**, to the whole vault. Refusing would be the
+/// custodial answer: it assumes a server is standing by to work out a better
+/// number and ask again, and an exit that can fail on arithmetic the owner
+/// cannot see is not a guarantee. Taking everything is always the owner's own
+/// money and always leaves a valid vault.
+pub fn exit_payout(asked: u64, held: u64, min_stake: u64) -> u64 {
+    let pay = asked.min(held);
+    let remainder = held - pay;
+    if remainder > 0 && remainder < min_stake {
+        held
+    } else {
+        pay
+    }
+}
+
 pub fn charge(window_start: u64, spent: u64, slot: u64, amount: u64, cap: u64) -> Option<(u64, u64)> {
     let (start, spent) = if slot >= window_start.saturating_add(WINDOW_SLOTS) { (slot, 0) } else { (window_start, spent) };
     let spent = spent.checked_add(amount)?;
@@ -774,6 +914,115 @@ pub struct Withdraw<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// A live or spent exit, one per agent.
+///
+/// Seeded by the agent alone - deliberately not by an id the owner picks -
+/// so that the server can find any agent's exit at a deterministic address
+/// without having been told anything. Everything downstream depends on that:
+/// an exit the server cannot find is an exit it cannot ingest, and a
+/// shortfall it cannot explain.
+#[account]
+#[derive(InitSpace)]
+pub struct Exit {
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+    /// What the owner asked for. The claim pays at most this, and at most what
+    /// the vault still holds.
+    pub amount: u64,
+    pub requested_slot: u64,
+    /// Not before this slot may it be claimed.
+    pub unlock_slot: u64,
+    /// What the vault held when this was requested, for the server to compare.
+    pub vault_at_request: u64,
+    /// 0 until claimed. Non-zero is what tells the reconciler that a smaller
+    /// vault is explained rather than drained.
+    pub claimed_slot: u64,
+    pub claimed_amount: u64,
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+#[instruction(agent_id: [u8; 16])]
+pub struct RequestExit<'info> {
+    /// Signs and pays. No settler here - that is the point of this path.
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(seeds = [OWNER_SEED, agent_id.as_ref()], bump = agent_owner.bump, has_one = owner @ OxudeError::NotOwner)]
+    pub agent_owner: Account<'info, AgentOwner>,
+    #[account(seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + Exit::INIT_SPACE,
+        seeds = [EXIT_SEED, agent_id.as_ref()],
+        bump
+    )]
+    pub exit: Account<'info, Exit>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent_id: [u8; 16])]
+pub struct ClaimExit<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(seeds = [OWNER_SEED, agent_id.as_ref()], bump = agent_owner.bump, has_one = owner @ OxudeError::NotOwner)]
+    pub agent_owner: Account<'info, AgentOwner>,
+    #[account(mut, seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
+    pub vault: Account<'info, TokenAccount>,
+    /// The owner's own token account for the game currency, and nobody else's.
+    #[account(
+        mut,
+        token::mint = config.mint,
+        constraint = destination.owner == owner.key() @ OxudeError::NotOwnersAccount
+    )]
+    pub destination: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        seeds = [EXIT_SEED, agent_id.as_ref()],
+        bump = exit.bump,
+        has_one = owner @ OxudeError::NotOwner
+    )]
+    pub exit: Account<'info, Exit>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(agent_id: [u8; 16])]
+pub struct CloseExit<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(
+        mut,
+        close = owner,
+        seeds = [EXIT_SEED, agent_id.as_ref()],
+        bump = exit.bump,
+        has_one = owner @ OxudeError::NotOwner
+    )]
+    pub exit: Account<'info, Exit>,
+}
+
+#[event]
+pub struct ExitRequested {
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub unlock_slot: u64,
+}
+
+#[event]
+pub struct ExitClaimed {
+    pub agent_id: [u8; 16],
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub remaining: u64,
+}
+
 #[event]
 pub struct Withdrawn {
     pub withdrawal_id: [u8; 16],
@@ -886,11 +1135,55 @@ pub enum OxudeError {
     OutflowLimit,
     #[msg("The stake token still has a mint authority: its supply is not fixed")]
     MintableStakeToken,
+    #[msg("This exit's window has not passed yet")]
+    ExitLocked,
+    #[msg("This exit has already been claimed")]
+    ExitAlreadyClaimed,
+    #[msg("A claimed exit stays on chain a while, so the ledger can catch up before the record goes")]
+    ExitEvidenceNeeded,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exit_pays_what_was_asked_when_the_vault_still_covers_it() {
+        // 100 asked of 900 held, minimum 10: an ordinary partial exit.
+        assert_eq!(exit_payout(100, 900, 10), 100);
+        // Asking for everything.
+        assert_eq!(exit_payout(900, 900, 10), 900);
+    }
+
+    #[test]
+    fn an_exit_takes_less_rather_than_failing_when_the_window_took_some() {
+        // Asked for 900, but a settlement landed while it waited and the vault
+        // is down to 600. The claim takes 600. This is the window working, not
+        // a failure, and it must not read as one.
+        assert_eq!(exit_payout(900, 600, 10), 600);
+        assert_eq!(exit_payout(900, 0, 10), 0);
+    }
+
+    #[test]
+    fn an_exit_takes_the_lot_rather_than_leaving_dust() {
+        // 895 of 900 would leave 5, under the minimum of 10. Rounds up to the
+        // whole vault: the alternative is refusing, and an exit nobody
+        // co-signs cannot afford to refuse on arithmetic the owner can't see.
+        assert_eq!(exit_payout(895, 900, 10), 900);
+        // Exactly the minimum left is fine, and is left.
+        assert_eq!(exit_payout(890, 900, 10), 890);
+        // One under is not.
+        assert_eq!(exit_payout(891, 900, 10), 900);
+    }
+
+    #[test]
+    fn an_exit_never_pays_more_than_the_vault_holds() {
+        for asked in [0u64, 1, 50, 900, u64::MAX] {
+            for held in [0u64, 1, 9, 10, 900] {
+                assert!(exit_payout(asked, held, 10) <= held, "asked {asked} held {held}");
+            }
+        }
+    }
 
     #[test]
     fn charge_stays_within_the_cap_and_resets_with_the_window() {
