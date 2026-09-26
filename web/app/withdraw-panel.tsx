@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Withdrawable } from "@/lib/api";
 import { useWallet } from "./wallet-context";
+import { ExitPanel } from "./exit-panel";
 
 const CLUSTER = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
 const explorerTx = (sig: string) =>
@@ -39,6 +40,8 @@ export function WithdrawPanel({
   const { session, signTransaction } = useWallet();
   const token = session?.token ?? null;
   const [info, setInfo] = useState<Withdrawable | null>(null);
+  /** The instant path failed in a way that means we cannot co-sign for them. */
+  const [cannotCoSign, setCannotCoSign] = useState(false);
   const [amount, setAmount] = useState("");
   const [confirmAll, setConfirmAll] = useState(false);
   const [phase, setPhase] = useState<Phase>({ at: "idle" });
@@ -59,6 +62,7 @@ export function WithdrawPanel({
 
   const withdraw = async (what: number | "all") => {
     setConfirmAll(false);
+    setCannotCoSign(false);
     try {
       setPhase({ at: "preparing" });
       const { withdrawal } = await api.prepareWithdrawal(token, agentId, what);
@@ -80,6 +84,11 @@ export function WithdrawPanel({
       await load();
     } catch (e) {
       setPhase({ at: "error", message: e instanceof ApiError ? e.message : (e as Error).message });
+      // A refusal we cannot fix for them: the server has no chain to co-sign
+      // with, or could not be reached at all. Anything else - a bad amount, a
+      // match still settling, a wallet the owner dismissed - is temporary and
+      // the front door is still the right way through it.
+      setCannotCoSign(e instanceof ApiError ? e.status === 503 || e.status >= 500 : !(e instanceof Error && /reject|denied|cancel/i.test(e.message)));
       await load();
     }
   };
@@ -115,6 +124,14 @@ export function WithdrawPanel({
         </span>
       </p>
       {info.reason ? <p className="mt-1 text-[12px] text-muted">Not right now: {info.reason}.</p> : null}
+
+      {/*
+        The exit that needs no co-signature. Renders nothing at all unless one
+        is already under way, or the instant path above has just failed in a
+        way we cannot fix - the co-signed withdrawal is the front door, and an
+        owner who never meets a problem should never read the word "exit".
+      */}
+      <ExitPanel agentId={agentId} info={info} offer={cannotCoSign} onChanged={() => void load()} />
 
       {info.withdrawable > 0 && lapsed ? (
         <>
