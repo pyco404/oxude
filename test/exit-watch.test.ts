@@ -276,3 +276,80 @@ describe("the window a server will start against", () => {
     expect(checkExitWindow(4_500, 300_000).ok).toBe(false);
   });
 });
+
+describe("what the owner's own view says", () => {
+  const fresh = async () => {
+    const c = await connect();
+    await migrate(c.db);
+    return c;
+  };
+
+  it("says nothing about exits when there is none, which is the ordinary case", async () => {
+    const { db, close } = await fresh();
+    const chain = new FakeChain();
+    const a = await player(db, chain, "Normal");
+    const w = await withdrawable(db, a.id);
+    expect(w.exit).toBeNull();
+    expect(w.reason).toBeNull();
+    expect(w.withdrawable).toBe(900);
+    await close();
+  });
+
+  it("carries the window while it waits, and closes the instant path", async () => {
+    const { db, close } = await fresh();
+    const chain = new FakeChain();
+    const a = await player(db, chain, "Waiting");
+    chain.requestExit(a.id, 300, 100, 4_500);
+    await ingestExits(db, await chain.exits());
+
+    const w = await withdrawable(db, a.id);
+    expect(w.exit).toMatchObject({ amount: 300, claimed: false, settled: false, unlockSlot: 4_600 });
+    // Thirty minutes of slots from when the row was written.
+    expect(w.exit!.unlockAt.getTime() - Date.now()).toBeGreaterThan(25 * 60_000);
+    expect(w.exit!.claimable).toBe(false);
+    expect(w.reason).toMatch(/exit is waiting on chain/);
+    expect(w.withdrawable).toBe(0);
+    await close();
+  });
+
+  it("says claimable once the window has passed", async () => {
+    const { db, close } = await fresh();
+    const chain = new FakeChain();
+    const a = await player(db, chain, "Ready");
+    chain.requestExit(a.id, 300, 100, 4_500);
+    await ingestExits(db, await chain.exits());
+
+    const later = new Date(Date.now() + 31 * 60_000);
+    const w = await withdrawable(db, a.id, later);
+    expect(w.exit!.claimable).toBe(true);
+    await close();
+  });
+
+  it("shows a claim as unsettled until the ledger has caught up", async () => {
+    const { db, close } = await fresh();
+    const chain = new FakeChain();
+    const a = await player(db, chain, "Landed");
+    chain.claimExit(a.id, 300, 5_000);
+
+    // The chain has paid, and this server has not been told yet.
+    await db.insert(exits).values({
+      agentId: a.id,
+      requestedSlot: 500,
+      unlockSlot: 5_000,
+      amount: 300,
+      claimedSlot: 5_000,
+      claimedAmount: 300,
+      ingestedAt: null,
+    });
+    let w = await withdrawable(db, a.id);
+    expect(w.exit).toMatchObject({ claimed: true, claimedAmount: 300, settled: false });
+
+    await ingestExits(db, await chain.exits());
+    w = await withdrawable(db, a.id);
+    expect(w.exit).toMatchObject({ claimed: true, settled: true });
+    // Settled means free: the instant path is open again.
+    expect(w.reason).toBeNull();
+    expect(w.withdrawable).toBe(600);
+    await close();
+  });
+});

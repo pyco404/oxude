@@ -262,7 +262,12 @@ gap, which is the same rule that makes the gap safe in the first place.
 5. **The standalone exit page** — plain HTML, an RPC and a wallet, nothing
    else. Ahead of the in-app path, because it is the thing that makes the
    guarantee real; the in-app path is only convenience.
-6. `withdrawable()` states and the API.
+6. `withdrawable()` states and the API. **Built.** One owner-facing answer
+   still comes from one place: `withdrawable()` carries the exit beside the
+   balance, so nothing has to ask two questions to know what an owner can do.
+   Read from the database rather than the chain, because every caller is
+   rendering a page and a page that costs an RPC call per view stops working
+   when the RPC does; `settled` says plainly whether the watcher has caught up.
 7. In-app UI, instant path untouched.
 
 It cannot go earlier than 5, and the reason is worth stating rather than
