@@ -6,7 +6,9 @@ import { createAgent, hasOutflowRoom, leaderboard, playableBands, publicAgent, r
 import { liveCounters } from "../src/db/feed.js";
 import { faucetStatus } from "../src/db/faucet.js";
 import { baseUnits, DEVNET_CHIP_RATE } from "../src/chips.js";
-import { chainOps } from "../src/db/schema.js";
+import { chainOps, rentals } from "../src/db/schema.js";
+import { seasonStatement } from "../src/db/statement.js";
+import { seasonAt } from "../src/season.js";
 import { someWallet } from "./helpers.js";
 
 /**
@@ -127,6 +129,42 @@ describe.skipIf(!URL)("against a real Postgres", () => {
     const status = await faucetStatus(db, wallet, DEVNET_CHIP_RATE);
     expect(typeof status.amount).toBe("number");
     expect(status.available).toBe(true);
+    await close();
+  });
+
+  it("reads a season statement's sums as numbers, not strings", async () => {
+    const { db, close } = await fresh();
+    const owner = someWallet();
+    const a = await createAgent(db, { name: "Stmt-A", presetName: "Bully", ownerId: owner });
+    const b = await createAgent(db, { name: "Stmt-B", presetName: "Mirage", ownerId: someWallet() });
+    const key = seasonAt(new Date()).key;
+    for (let i = 0; i < 3; i++) await runMatch(db, a.id, b.id, { seed: 4000 + i });
+
+    // The rental fee is in base units, so its sum is a genuinely large int8 -
+    // the exact case where node-postgres hands back a string and PGlite does
+    // not. Six figures of chips is more rent than anyone will ever pay, which
+    // is the point: the figure has to survive being bigger than it should be.
+    const fee = baseUnits(500_000, DEVNET_CHIP_RATE);
+    expect(fee).toBeGreaterThan(2_147_483_647);
+    await db.insert(rentals).values({
+      agentId: a.id,
+      ownerId: owner,
+      fee,
+      deposit: 0,
+      salt: "pg",
+      preparedTx: "x",
+      lastValidBlockHeight: 1,
+      status: "confirmed",
+    });
+
+    const s = await seasonStatement(db, key);
+    for (const v of Object.values(s.play)) expect(typeof v).toBe("number");
+    expect(typeof s.burned.chips).toBe("number");
+    expect(s.burned.chips).toBe(500_000);
+    expect(s.play.rankedMatches).toBe(3);
+    expect(s.play.netAcrossAllSides).toBe(0);
+    expect(s.play.rankedStaked).toBeGreaterThan(0);
+    expect(Number.isSafeInteger(s.play.rankedStaked)).toBe(true);
     await close();
   });
 
