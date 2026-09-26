@@ -108,13 +108,24 @@ The live site runs on Railway: Postgres, the API (with the settlement worker) an
 
 The web service has its **Root Directory set to `/web`**, and current Railway (railpack v0.40) *does* apply that to a CLI upload — an earlier version of this note said it applied only to git-triggered builds. So the upload has to contain a `web/` directory for the setting to resolve: uploading the *contents* of `web/` fails at prepare with `Root directory "/web" was not found in the deployed source`. Nothing ships when that happens, so the site stays up.
 
-Until the web service is connected to GitHub (see below), deploy it from a copy of `web/` placed outside the repository:
+**Use `scripts/deploy.sh`, not `railway up` directly.**
 
 ```
-rm -rf /tmp/webdeploy && mkdir -p /tmp/webdeploy/web
-tar -cf - --exclude=node_modules --exclude=.next -C web . | (cd /tmp/webdeploy/web && tar -xf -)
-cd /tmp/webdeploy && railway up -s web --ci \
-  --project af965879-57de-4ff2-89a0-efc0c9863fcd --environment production
+scripts/deploy.sh api
+scripts/deploy.sh web
+```
+
+`railway up` uploads the *working tree*, not the commit, so deploying by hand
+can put code live that is in nobody's git history — which has happened here,
+with two sessions editing one checkout. The script closes that: the api refuses
+to deploy from a dirty tree, and web stages with `git archive HEAD` into a copy
+of `web/` outside the repository, so uncommitted work cannot ship at all. Both
+refuse an unpushed HEAD, so whatever is live can always be fetched back.
+
+It writes the commit into the upload, so the question has an answer:
+
+```
+curl https://oxude.xyz/commit.txt
 ```
 
 **Check the deploy logs every time.** A correct web deploy logs `oxude-web@1.0.0 start` → `next start`. If it logs `oxude@0.0.1 start` → `tsx scripts/serve.ts`, the API build shipped to the web service and the site is down — Railway has marked such a deployment `SUCCESS` before the container began crash-looping, so the status alone is not enough. This has taken oxude.xyz down twice.
