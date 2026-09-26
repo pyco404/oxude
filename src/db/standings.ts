@@ -92,3 +92,69 @@ export async function standings(db: Db, window: StandingsWindow): Promise<Standi
   }));
 }
 
+/**
+ * How many ranked matches an agent must have played before it can be placed
+ * for prizes.
+ *
+ * Net per chip staked is a rate, and a rate from four matches is mostly luck:
+ * a match can move at most its own stake, so one clean sweep is a per-chip of
+ * 1.0, which would top any table however briefly it was earned. The minimum is
+ * the only thing standing between the prize order and whoever got lucky late
+ * on a Sunday. It is a parameter everywhere it is used, because the right
+ * number depends on how much play a season actually sees, and a season's
+ * worth of autoplay is several hundred matches - twenty is a low bar for
+ * anyone genuinely playing and an impossible one for a drive-by.
+ */
+export const MIN_RANKED_MATCHES_FOR_PRIZE = 20;
+
+export type PrizeStanding = Standing & {
+  /**
+   * Ranked net per chip staked, in [-1, 1]: a match cannot move more than its
+   * own stake. Null when nothing was staked.
+   */
+  perChip: number | null;
+  /** 1 is first. Null when the agent is short of the minimum. */
+  prizeRank: number | null;
+  /** How many more ranked matches this agent needs to be placed. 0 once it is. */
+  shortBy: number;
+};
+
+/** Ranked net per chip staked: what prizes rank on. Null with nothing staked. */
+export function perChip(s: Pick<Standing, "rankedNetReal" | "rankedStaked">): number | null {
+  return s.rankedStaked === 0 ? null : s.rankedNetReal / s.rankedStaked;
+}
+
+/**
+ * The prize order: every agent by ranked net per chip staked, best first.
+ *
+ * Deliberately not `rankedNet`, which the ladder uses. `rankedNet` is
+ * normalised onto band B so that totals from different bands can be compared;
+ * dividing by chips staked does the same job, and doing both would apply the
+ * correction twice and hand the cheapest band a standing advantage over the
+ * dearest. So this divides the chips actually moved by the chips actually
+ * risked, and the bands fall out of it on their own.
+ *
+ * Derived from the same rows the ladder is built from rather than queried
+ * again. Two queries could disagree - a match landing between them is all it
+ * would take - and "the ladder and the prize table were computed from
+ * different matches" is not a sentence anyone wants to write about money.
+ *
+ * Agents short of `minMatches` are kept, in order, after everyone placed, with
+ * a null rank and the number of matches they still need. They are not hidden:
+ * an owner who is four matches away should be able to see that they are four
+ * matches away.
+ */
+export function prizeOrder(table: Standing[], minMatches = MIN_RANKED_MATCHES_FOR_PRIZE): PrizeStanding[] {
+  const scored = table.map((s) => ({ ...s, perChip: perChip(s), shortBy: Math.max(0, minMatches - s.rankedMatches) }));
+  const placed = scored.filter((s) => s.shortBy === 0 && s.perChip !== null);
+  const rest = scored.filter((s) => !(s.shortBy === 0 && s.perChip !== null));
+  // Ties go to MORE ranked matches - the opposite of the ladder, on purpose.
+  // For a total, the same net from less exposure is the better result; for a
+  // rate, the same rate held over more matches is the better evidence.
+  placed.sort((a, b) => b.perChip! - a.perChip! || b.rankedMatches - a.rankedMatches || (a.agentId < b.agentId ? -1 : 1));
+  rest.sort((a, b) => b.rankedMatches - a.rankedMatches || (a.agentId < b.agentId ? -1 : 1));
+  return [
+    ...placed.map((s, i) => ({ ...s, prizeRank: i + 1 })),
+    ...rest.map((s) => ({ ...s, prizeRank: null, shortBy: Math.max(s.shortBy, s.perChip === null ? minMatches : 0) })),
+  ];
+}
