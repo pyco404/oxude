@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "balance": "tsx scripts/balance.ts",
-    "check": "npm run typecheck && npm run test",
+    "check": "npm run typecheck && npm run test:pg && npm run test",
     "sweep": "tsx scripts/sweep.ts",
     "search": "tsx scripts/search.ts",
     "inspect": "tsx scripts/inspect.ts",

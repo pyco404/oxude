@@ -42,8 +42,21 @@ npm run test:pg        # starts a throwaway cluster, runs it, removes it
 
 It needs no docker and no root — it uses the postgres binaries already on the
 machine and never touches the machine's own server. `PG_URL=postgres://...`
-runs against a server you already have instead. The file skips itself when
-`PG_URL` is unset, so `npm run check` stays offline.
+runs against a server you already have instead.
+
+**`npm run check` runs it.** It used to not, and `test/postgres.test.ts` skips
+itself without `PG_URL`, so a failure in it could sit in the tree looking like
+a pass — which is exactly what happened: a sweep that changed who stakes left a
+broken case here, and nothing that ran routinely would have said so. A gate
+that quietly omits a path is not a gate. So `check` is
+`typecheck && test:pg && test`, cheapest first, and it **fails** rather than
+skips when there is no Postgres to run against.
+
+A bare `npx vitest run` still skips the file; its describe block says so in its
+own name. `npm run check` is the thing to trust before a commit or a deploy.
+
+`test/chain.test.ts` is the one path still outside the gate. It needs a
+validator, so `npm run test:chain` stays a deliberate act.
 
 The rest of the suite **cannot** be pointed at Postgres as it stands: tests call
 `connect()` expecting a fresh empty database, which is true of PGlite and false

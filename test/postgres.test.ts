@@ -53,7 +53,7 @@ class URL_ {
   }
 }
 
-describe.skipIf(!URL)("against a real Postgres", () => {
+describe.skipIf(!URL)("against a real Postgres (npm run check runs these; a bare vitest run skips them)", () => {
   it("reads a balance as an exact number, past what a 32-bit column held", async () => {
     const { db, close } = await fresh();
     const agent = await createAgent(db, { name: "Wide", presetName: "Anchor" });

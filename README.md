@@ -57,11 +57,11 @@ Because the opponent's edge is hidden and a raise can be answered in the same ro
 
 ## Running it
 
-**Prerequisites:** Node 24 and npm. A Phantom or Solflare browser extension to sign in. For the chain: Rust, the Solana CLI (3.x) and Anchor 0.32.1.
+**Prerequisites:** Node 24 and npm. A Phantom or Solflare browser extension to sign in. `npm run check` also needs the Postgres binaries on the machine (Debian/Ubuntu: `apt install postgresql`) — it starts a throwaway cluster for the checks that must run against the real driver, and refuses to pass without one. For the chain: Rust, the Solana CLI (3.x) and Anchor 0.32.1.
 
 ```bash
 npm install
-npm run check                    # type-check and the test suite (229 tests)
+npm run check                    # type-check, the real-Postgres checks, then the suite
 
 docker compose up -d             # Postgres on :5432
 export DATABASE_URL=postgres://oxude:oxude@localhost:5432/oxude
