@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Oxude — take your money out</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0e0d0c; --panel: #161413; --line: #2a2624; --text: #e8e2dc;
+        --muted: #8a827c; --gold: #d8a657; --red: #d45b4a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 24px 16px; background: var(--bg); color: var(--text);
+        font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      main { max-width: 720px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0 0 8px; }
+      p { margin: 0 0 12px; }
+      .muted { color: var(--muted); font-size: 13px; }
+      section { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 16px; margin: 16px 0; }
+      button {
+        font: inherit; background: var(--red); color: #140d0b; border: 0; border-radius: 6px;
+        padding: 8px 14px; cursor: pointer; margin: 4px 6px 4px 0;
+      }
+      button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+      button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+      input, select {
+        font: inherit; background: #0b0a09; color: var(--text); border: 1px solid var(--line);
+        border-radius: 6px; padding: 8px; width: 100%; margin: 4px 0 10px;
+      }
+      code { color: var(--gold); word-break: break-all; }
+      .row { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 6px 0; }
+      .row:last-child { border-bottom: 0; }
+      .err { color: var(--red); }
+      .ok { color: var(--gold); }
+      a { color: var(--red); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Take your money out of Oxude</h1>
+      <p class="muted">
+        This page talks to Solana and your wallet. It does not talk to Oxude&rsquo;s servers, and it does not
+        need them to be running. Save it and it keeps working.
+      </p>
+
+      <section>
+        <h2>1 · Network</h2>
+        <label class="muted" for="rpc">RPC endpoint</label>
+        <input id="rpc" value="https://api.devnet.solana.com" spellcheck="false" />
+        <button id="connect">Connect wallet</button>
+        <span id="who" class="muted"></span>
+      </section>
+
+      <section id="agents-box" hidden>
+        <h2>2 · Your agents</h2>
+        <p class="muted">Found on chain from your wallet, not from a list we keep.</p>
+        <select id="agents"></select>
+        <div id="detail"></div>
+      </section>
+
+      <section id="act-box" hidden>
+        <h2>3 · Leave</h2>
+        <div id="actions"></div>
+        <p id="status" class="muted"></p>
+      </section>
+
+      <section>
+        <h2>If this page will not run</h2>
+        <p class="muted">
+          Everything here is three instructions on program
+          <code>HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy</code>:
+          <code>request_exit</code>, then <code>claim_exit</code> after the window, and
+          <code>close_exit</code> to reclaim the record&rsquo;s rent. Only your wallet signs any of them.
+          The accounts, the discriminators and the argument layout are written out in
+          <code>exit.mjs</code> beside this file, which is plain JavaScript with no dependencies, so a
+          transaction can be rebuilt by hand from it.
+        </p>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        PROGRAM_ID, pdas, requestExitIx, claimExitIx, closeExitIx, buildMessage,
+        decodeExit, decodeAgentOwner, decodeConfig, decodeTokenAmount, decodeExitConfig,
+        base58Encode, base58Decode, associatedTokenAddress,
+      } from "./exit.mjs";
+
+      const $ = (id) => document.getElementById(id);
+      const state = { wallet: null, agents: [], chosen: null, config: null, window: null };
+
+      const rpc = async (method, params) => {
+        const res = await fetch($("rpc").value.trim(), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        });
+        const body = await res.json();
+        if (body.error) throw new Error(body.error.message ?? JSON.stringify(body.error));
+        return body.result;
+      };
+
+      const accountData = async (address) => {
+        const r = await rpc("getAccountInfo", [address, { encoding: "base64" }]);
+        if (!r?.value) return null;
+        return Uint8Array.from(atob(r.value.data[0]), (c) => c.charCodeAt(0));
+      };
+
+      const say = (message, cls = "muted") => {
+        $("status").className = cls;
+        $("status").textContent = message;
+      };
+
+      /** Phantom and Solflare both take a base58 message on `request`. */
+      async function signAndSend(instructions) {
+        const { blockhash } = (await rpc("getLatestBlockhash", [{ commitment: "confirmed" }])).value;
+        const message = buildMessage({ payer: state.wallet, instructions, recentBlockhash: blockhash });
+        const provider = window.phantom?.solana ?? window.solana ?? window.solflare;
+        const result = await provider.request({
+          method: "signAndSendTransaction",
+          params: { message: base58Encode(message) },
+        });
+        return result?.signature ?? result;
+      }
+
+      $("connect").onclick = async () => {
+        try {
+          const provider = window.phantom?.solana ?? window.solana ?? window.solflare;
+          if (!provider) throw new Error("No Solana wallet extension found in this browser.");
+          const { publicKey } = await provider.connect();
+          state.wallet = publicKey.toString();
+          $("who").textContent = `${state.wallet.slice(0, 4)}…${state.wallet.slice(-4)}`;
+          await loadAgents();
+        } catch (e) {
+          $("who").className = "err";
+          $("who").textContent = e.message;
+        }
+      };
+
+      /**
+       * Every agent this wallet owns, found by asking the program for its
+       * owner records. No list of ours is consulted, which is the point.
+       */
+      async function loadAgents() {
+        say("Looking for your agents…");
+        const [config] = await pdas.config();
+        state.config = decodeConfig(await accountData(config));
+        const [exitConfig] = await pdas.exitConfig();
+        const cfg = await accountData(exitConfig);
+        state.window = cfg ? decodeExitConfig(cfg).slots : null;
+
+        // AgentOwner: 8 discriminator + 16 id + 32 owner. Filter on the owner.
+        const owned = await rpc("getProgramAccounts", [
+          PROGRAM_ID,
+          {
+            encoding: "base64",
+            filters: [{ memcmp: { offset: 24, bytes: state.wallet } }, { dataSize: 57 }],
+          },
+        ]);
+        state.agents = owned.map((a) =>
+          decodeAgentOwner(Uint8Array.from(atob(a.account.data[0]), (c) => c.charCodeAt(0))),
+        );
+        $("agents-box").hidden = false;
+        $("agents").innerHTML = state.agents.length
+          ? state.agents.map((a) => `<option value="${a.agentId}">${a.agentId}</option>`).join("")
+          : `<option value="">no agents found for this wallet</option>`;
+        $("agents").onchange = () => void showAgent($("agents").value);
+        if (state.agents.length) await showAgent(state.agents[0].agentId);
+        else say("Nothing owned by this wallet on this network.");
+      }
+
+      const chips = (base) => (base / (state.config?.chipRate || 1e6)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+      async function showAgent(agentId) {
+        if (!agentId) return;
+        state.chosen = agentId;
+        say("Reading…");
+        const [vault] = await pdas.vault(agentId);
+        const [exitAddr] = await pdas.exit(agentId);
+        const vaultData = await accountData(vault);
+        const exitData = await accountData(exitAddr);
+        const held = vaultData ? decodeTokenAmount(vaultData) : 0;
+        const exit = exitData ? decodeExit(exitData) : null;
+        const slot = await rpc("getSlot", [{ commitment: "confirmed" }]);
+
+        $("detail").innerHTML = `
+          <div class="row"><span class="muted">Vault holds</span><span>${chips(held)} chips</span></div>
+          <div class="row"><span class="muted">Exit window</span><span>${state.window ?? "not enabled"} slots</span></div>
+          ${exit ? `
+            <div class="row"><span class="muted">Asked for</span><span>${chips(exit.amount)} chips</span></div>
+            <div class="row"><span class="muted">${exit.claimedSlot ? "Claimed" : "Unlocks"}</span>
+              <span>${exit.claimedSlot ? `${chips(exit.claimedAmount)} chips` : `slot ${exit.unlockSlot} (now ${slot})`}</span></div>
+          ` : `<div class="row"><span class="muted">Exit</span><span>none started</span></div>`}`;
+
+        const unlocked = exit && !exit.claimedSlot && slot >= exit.unlockSlot;
+        const waiting = exit && !exit.claimedSlot && slot < exit.unlockSlot;
+        $("act-box").hidden = false;
+        $("actions").innerHTML = !exit
+          ? `<label class="muted" for="amount">Chips to take out</label>
+             <input id="amount" type="number" min="0" step="any" value="${chips(held)}" />
+             <button id="do-request">Start the exit</button>`
+          : waiting
+            ? `<p class="muted">Waiting. Roughly ${Math.max(0, Math.round(((exit.unlockSlot - slot) * 0.4) / 60))} minutes left.</p>
+               <button id="do-close" class="ghost">Cancel this exit</button>`
+            : unlocked
+              ? `<button id="do-claim">Claim ${chips(Math.min(exit.amount, held))} chips</button>
+                 <button id="do-close" class="ghost">Cancel instead</button>`
+              : `<p class="ok">Claimed. The record can be cleared once its grace has passed.</p>
+                 <button id="do-close" class="ghost">Clear the record</button>`;
+
+        wire(held, exit);
+        say("");
+      }
+
+      function wire(held, exit) {
+        const run = async (what, build) => {
+          try {
+            say(`${what}…`);
+            const signature = await signAndSend([await build()]);
+            say(`Sent: ${signature}`, "ok");
+            setTimeout(() => void showAgent(state.chosen), 2500);
+          } catch (e) {
+            say(e.message ?? String(e), "err");
+          }
+        };
+        const owner = state.wallet;
+        const agentId = state.chosen;
+        if ($("do-request"))
+          $("do-request").onclick = () =>
+            run("Starting the exit", async () => {
+              const asked = Math.round(Number($("amount").value) * (state.config?.chipRate || 1e6));
+              if (!(asked > 0)) throw new Error("Enter an amount above zero.");
+              return requestExitIx({ owner, agentId, amount: asked });
+            });
+        if ($("do-claim"))
+          $("do-claim").onclick = () =>
+            run("Claiming", async () =>
+              claimExitIx({ owner, agentId, destination: await associatedTokenAddress(owner, state.config.mint) }),
+            );
+        if ($("do-close")) $("do-close").onclick = () => run("Clearing", async () => closeExitIx({ owner, agentId }));
+      }
+    </script>
+  </body>
+</html>

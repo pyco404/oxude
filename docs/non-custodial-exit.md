@@ -219,16 +219,21 @@ only when the server cannot co-sign.
 - Never phrased as "safer", "trustless" or "recommended". It is slower and it
   exists for a situation the player is not in.
 
-## The part our server cannot serve
+## The part our server cannot serve — built
 
 An exit offered only by our web app is not non-custodial: if the server is
-down, so is the button. The guarantee is not real until it can be driven
-without us. That means a static page — no API, no build step, talks only to an
-RPC and a wallet — hosted somewhere separate, and the instructions documented
-well enough to build the transaction by hand.
+down, so is the button. So [`exit/`](../exit/) is two files — `index.html` and
+`exit.mjs` — with no npm, no CDN, no build step and no call to our API. It
+finds a wallet's agents from the program's own `AgentOwner` records, so it
+works for an agent we have never heard of.
 
-Until that exists, this is a better withdrawal, not a non-custodial one, and
-should be described that way.
+The price is base58, the ed25519 curve check, address derivation and
+transaction serialization written out a second time. `test/standalone-exit.test.ts`
+holds every one against `@solana/web3.js` byte for byte, so the copy cannot
+drift. That test earned itself immediately: the first version got base58 wrong
+for all-zero input — which is the System Program's id — so every
+`request_exit` it built was one byte too long, and it would have failed only
+in the hands of someone trying to leave.
 
 ## After a partial claim, the agent plays on
 
