@@ -316,17 +316,25 @@ export const seasonStandings = pgTable(
     agentId: uuid("agent_id")
       .notNull()
       .references(() => agents.id),
-    /** 1 is first, by ranked net won. */
+    /** 1 is first, by ranked net won: the ladder's order. */
     rank: integer("rank").notNull(),
+    /**
+     * 1 is first, by ranked net per chip staked: the order prizes pay in.
+     * Null for an agent short of the minimum match count, and for any season
+     * closed before placement existed.
+     */
+    prizeRank: integer("prize_rank"),
     rankedMatches: integer("ranked_matches").notNull(),
     /** Normalised onto band B's scale, as the ladder ranks. */
     rankedNet: bigint("ranked_net", { mode: "number" }).notNull(),
     rankedStaked: bigint("ranked_staked", { mode: "number" }).notNull(),
+    /** The chips those ranked matches actually moved: the per-chip numerator. */
+    rankedNetReal: bigint("ranked_net_real", { mode: "number" }).notNull(),
     /** Every staked match in the season, house included, in real money. */
     totalMatches: integer("total_matches").notNull(),
     totalNet: bigint("total_net", { mode: "number" }).notNull(),
   },
-  (t) => [primaryKey({ columns: [t.season, t.agentId] })],
+  (t) => [primaryKey({ columns: [t.season, t.agentId] }), index("season_standings_prize_idx").on(t.season, t.prizeRank)],
 );
 
 export const matches = pgTable(

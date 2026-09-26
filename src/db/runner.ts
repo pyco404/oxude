@@ -890,6 +890,7 @@ async function periodLeaderboard(
           rankedMatches: seasonStandings.rankedMatches,
           rankedNet: seasonStandings.rankedNet,
           rankedStaked: seasonStandings.rankedStaked,
+          rankedNetReal: seasonStandings.rankedNetReal,
           totalMatches: seasonStandings.totalMatches,
           totalNet: seasonStandings.totalNet,
         })
@@ -897,7 +898,13 @@ async function periodLeaderboard(
         .innerJoin(agents, eq(agents.id, seasonStandings.agentId))
         .where(eq(seasonStandings.season, window.season))
         .orderBy(seasonStandings.rank)
-    ).map((r) => ({ ...r, rankedNet: Number(r.rankedNet), rankedStaked: Number(r.rankedStaked), totalNet: Number(r.totalNet) }));
+    ).map((r) => ({
+      ...r,
+      rankedNet: Number(r.rankedNet),
+      rankedStaked: Number(r.rankedStaked),
+      rankedNetReal: Number(r.rankedNetReal),
+      totalNet: Number(r.totalNet),
+    }));
   } else {
     rows = await standings(db, window.period === "season" ? { season: window.season } : { since: window.since });
   }

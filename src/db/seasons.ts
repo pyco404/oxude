@@ -85,6 +85,7 @@ export async function closeSeason(db: Db, key: string, now = new Date()): Promis
             rankedMatches: s.rankedMatches,
             rankedNet: s.rankedNet,
             rankedStaked: s.rankedStaked,
+            rankedNetReal: s.rankedNetReal,
             totalMatches: s.totalMatches,
             totalNet: s.totalNet,
           })),

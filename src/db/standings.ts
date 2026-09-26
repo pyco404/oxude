@@ -26,6 +26,8 @@ export type Standing = {
   rankedMatches: number;
   rankedNet: number;
   rankedStaked: number;
+  /** The same ranked matches in the chips actually moved, un-normalised: what prizes divide. */
+  rankedNetReal: number;
   /** Every staked match, house included, in real money: shown, never ranked. */
   totalMatches: number;
   totalNet: number;
@@ -69,6 +71,7 @@ export async function standings(db: Db, window: StandingsWindow): Promise<Standi
       rankedMatches: sql<number>`count(*) filter (where ${sides.ranked})::int`,
       rankedNet,
       rankedStaked: sql<number>`coalesce(sum(${sides.stake}) filter (where ${sides.ranked}), 0)::int`,
+      rankedNetReal: sql<number>`coalesce(sum(${sides.net}) filter (where ${sides.ranked}), 0)::int`,
       totalMatches: sql<number>`count(*)::int`,
       totalNet: sql<number>`coalesce(sum(${sides.net}), 0)::int`,
     })
@@ -83,7 +86,9 @@ export async function standings(db: Db, window: StandingsWindow): Promise<Standi
     rankedMatches: Number(r.rankedMatches),
     rankedNet: Number(r.rankedNet),
     rankedStaked: Number(r.rankedStaked),
+    rankedNetReal: Number(r.rankedNetReal),
     totalMatches: Number(r.totalMatches),
     totalNet: Number(r.totalNet),
   }));
 }
+
