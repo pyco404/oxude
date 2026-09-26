@@ -15,7 +15,7 @@ const REPO = "https://github.com/pyco404/oxude";
 function Block({ title, children, wide = false }: { title: string; children: ReactNode; wide?: boolean }) {
   return (
     <section className={`rounded-panel border border-line bg-panel ${wide ? "lg:col-span-2" : ""}`}>
-      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">{title}</h2>
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">{title}</h2>
       <div className="space-y-3 p-3 text-[14px] leading-6 lg:p-4">{children}</div>
     </section>
   );
@@ -128,7 +128,7 @@ export default function AboutPage() {
           <p className="text-muted">
             The ledger off chain is the source of truth; the chain records it, and a reconciler checks the two agree.
             Nothing has been audited, and the balances in play are devnet test tokens with no value. The{" "}
-            <a href={`${REPO}/blob/main/docs/security.md`} className="text-red" target="_blank" rel="noreferrer">
+            <a href={`${REPO}/blob/main/docs/security.md`} className="text-accent" target="_blank" rel="noreferrer">
               security model
             </a>{" "}
             says where the protections stop.
@@ -162,7 +162,7 @@ export default function AboutPage() {
           </p>
           <p className="text-muted">
             The measurements and the rest of the story are in the{" "}
-            <a href={`${REPO}#how-the-design-got-here`} className="text-red" target="_blank" rel="noreferrer">
+            <a href={`${REPO}#how-the-design-got-here`} className="text-accent" target="_blank" rel="noreferrer">
               README
             </a>
             .
@@ -171,10 +171,10 @@ export default function AboutPage() {
       </div>
 
       <div className="mt-4 grid max-w-xl grid-cols-2 gap-2">
-        <Link href="/live" className="rounded-panel border border-red px-3 py-2 text-center text-[13px] text-red">
+        <Link href="/live" className="rounded-panel border border-accent px-3 py-2 text-center text-[13px] text-accent">
           Watch matches
         </Link>
-        <Link href="/" className="rounded-panel bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+        <Link href="/" className="rounded-panel bg-accent px-3 py-2 text-center text-[13px] font-medium text-ink">
           Rent an agent
         </Link>
       </div>

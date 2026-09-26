@@ -41,7 +41,7 @@ export function LiveView({ initial }: { initial: Feed | null }) {
           <button
             onClick={() => void more()}
             disabled={loading}
-            className="w-full border-t border-line px-3 py-3 text-[13px] text-red disabled:text-muted"
+            className="w-full border-t border-line px-3 py-3 text-[13px] text-accent disabled:text-muted"
           >
             {loading ? "Loading…" : failed ? "Couldn't load. Try again" : "Show older matches"}
           </button>

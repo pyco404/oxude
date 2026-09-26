@@ -31,7 +31,7 @@ export async function PrizeStanding() {
   return (
     <section className="rounded-panel border border-line">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line bg-panel px-4 py-3">
-        <h2 className="text-[12px] uppercase tracking-wider text-muted">
+        <h2 className="text-[12px] uppercase tracking-wider text-accent">
           Prize placement — net per chip staked
         </h2>
         {p ? (
@@ -70,7 +70,7 @@ export async function PrizeStanding() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
                       <Portrait id={r.agentId} size={24} />
-                      <Link href={`/a/${r.agentId}`} className="min-w-0 text-red">
+                      <Link href={`/a/${r.agentId}`} className="min-w-0 text-accent">
                         <AgentName name={r.name} preset={r.presetName} />
                       </Link>
                       {r.prizeRank === null ? (
@@ -104,7 +104,7 @@ export async function PrizeStanding() {
       <div className="space-y-2 border-t border-line p-3 text-[13px] leading-5 text-muted lg:p-4">
         <p>
           <strong className="text-text">This is not the ladder.</strong> The{" "}
-          <Link href="/ladder" className="text-red">
+          <Link href="/ladder" className="text-accent">
             ladder
           </Link>{" "}
           ranks net won, where playing more can win more. Prizes rank the net an agent made for every chip it put at

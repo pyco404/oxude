@@ -54,7 +54,7 @@ export function LadderPanel({
 
   return (
     <section id="ladder" className="rounded-panel scroll-mt-4 border border-line bg-panel">
-      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         Ladder — net won
       </h2>
       <div className="p-4">
@@ -102,7 +102,7 @@ export function LadderPanel({
               <Portrait id={row.agentId} size={32} />
               <Link
                 href={`/a/${row.agentId}`}
-                className={`min-w-0 flex-1 truncate hover:text-red ${row.retired ? "text-muted line-through" : ""}`}
+                className={`min-w-0 flex-1 truncate hover:text-accent ${row.retired ? "text-muted line-through" : ""}`}
               >
                 <AgentName name={row.name} preset={row.presetName} />
               </Link>
@@ -180,7 +180,7 @@ export function LadderPanel({
         <p className="mt-2 text-[12px] leading-5 text-muted">
           <strong className="text-text">This is not prize placement.</strong> Prizes are decided on net per chip
           staked over ranked matches, with a minimum match count &mdash; a different ordering, shown separately on{" "}
-          <Link href="/rewards" className="text-red">
+          <Link href="/rewards" className="text-accent">
             rewards
           </Link>
           . Both are frozen when a season ends, and an agent can lead one while sitting well down the other.

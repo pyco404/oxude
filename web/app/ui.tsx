@@ -1,6 +1,6 @@
 "use client";
 
-/** Two or more flat tabs; the selected one is solid red. */
+/** Two or more flat tabs; the selected one is solid accent. */
 export function Segmented<T extends string>({
   options,
   value,
@@ -19,7 +19,7 @@ export function Segmented<T extends string>({
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
           className={`flex-1 px-3 py-2 text-[13px] transition-none ${
-            value === o.value ? "bg-red text-ink font-medium" : "bg-panel text-muted hover:text-text"
+            value === o.value ? "bg-accent text-ink font-medium" : "bg-panel text-muted hover:text-text"
           }`}
         >
           {o.label}

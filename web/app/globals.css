@@ -1,31 +1,43 @@
 @import "tailwindcss";
 
 /*
- * Flat and dark: no gradients, no glow, no depth. Colour carries meaning
- * rather than decoration, so each one has exactly one job.
+ * Flat and dark: no gradients, no glow, no textures. Flat fills and 1px
+ * borders only. Colour carries meaning rather than decoration, so each one
+ * has exactly one job. Every colour in the app is defined here; retune it
+ * here, and mirror the change in lib/palette.ts, which carries the same values
+ * to the share images, theme-color and the login modal, where CSS can't reach.
  *
- *   red    action and brand - buttons, active states, links. Nothing else.
- *   ivory  body text.
- *   muted  secondary text, and only that.
- *   gold   money - stakes, chips, balances, rewards.
- *   win    a result that went your way; loss, one that didn't.
+ *   ink     the page: a desaturated blue-black, not pure black.
+ *   panel   warm charcoal a step above the page, always with a 1px line.
+ *   text    warm off-white body text.
+ *   muted   secondary text, and only that.
+ *   accent  gold: headings, buttons, links, whatever is selected or active.
+ *   gold    money - stakes, chips, balances, rewards. The accent's hue, kept
+ *           as its own name so the two can be pulled apart later.
+ *   live    sage: something happening now.
+ *   win     a result that went your way; loss, a muted brick, one that didn't.
+ *   brand   the bull's red, for the mark and the wordmark. Nothing else.
+ *
+ * Contrast, measured against panel-2, the lightest surface text sits on:
+ * text 12.4, muted 5.9, accent 8.4, live/win 5.0, loss 4.7. Ink on an accent
+ * button is 9.5. Keep every text colour at 4.5 or above if you retune.
  *
  * The portraits carry the rest of the colour, so the chrome stays quiet.
  */
 @theme {
-  --color-ink: #09090a;
-  --color-panel: #111113;
-  --color-panel-2: #16161a;
-  --color-line: #26262c;
-  --color-text: #f2f0e8;
-  /* Lifted from #8a8a93: the old grey failed to read at the sizes it was used at. */
-  --color-muted: #9a9aa6;
-  --color-red: #ff2d2d;
-  --color-red-dim: #7f1414;
-  --color-gold: #e5b84b;
-  --color-win: #4ec77a;
-  /* A softened red, so a loss reads as red without competing with the action red. */
-  --color-loss: #f2555a;
+  --color-ink: #141a24;
+  --color-panel: #1f1d1a;
+  --color-panel-2: #27241f;
+  --color-line: #3b362e;
+  --color-text: #ede6d6;
+  --color-muted: #a79f90;
+  --color-accent: #e8b84b;
+  --color-accent-dim: #5c4a22;
+  --color-gold: var(--color-accent);
+  --color-live: #6f9e5c;
+  --color-win: #6f9e5c;
+  --color-loss: #d4745a;
+  --color-brand: #ff2d2d;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   /* The one radius in the app: enough to take the edge off, not enough to notice. */
   --radius-panel: 6px;
@@ -40,12 +52,12 @@ body {
 
 /* Flat focus ring; no shadows anywhere in this app. */
 :focus-visible {
-  outline: 1px solid var(--color-red);
+  outline: 1px solid var(--color-accent);
   outline-offset: 1px;
 }
 
 ::selection {
-  background: var(--color-red-dim);
+  background: var(--color-accent-dim);
   color: var(--color-text);
 }
 
@@ -77,7 +89,7 @@ body {
  * The live feed. A new row opens a gap at the top of the list and drops into
  * it, so the rows below move down rather than jump. A round's hands, action
  * and outcome each fade in over the last. The live dot blinks on and off in
- * steps: flat red, never a glow or a pulse of size.
+ * steps: flat sage, never a glow or a pulse of size.
  */
 @keyframes row-open {
   from {

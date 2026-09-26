@@ -9,17 +9,17 @@ export function Transcript({ text, matchId }: { text: string; matchId?: string }
   if (!text) return null;
   return (
     <section className="rounded-panel mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         Transcript
         <span className="flex gap-3 normal-case tracking-normal">
           {matchId ? (
             <>
-              <Link href={`/m/${matchId}`} className="text-[11px] text-muted hover:text-red">
+              <Link href={`/m/${matchId}`} className="text-[11px] text-muted hover:text-accent">
                 open
               </Link>
               <button
                 onClick={() => void navigator.clipboard?.writeText(`${window.location.origin}/m/${matchId}`)}
-                className="text-[11px] text-red"
+                className="text-[11px] text-accent"
               >
                 share link
               </button>
@@ -27,7 +27,7 @@ export function Transcript({ text, matchId }: { text: string; matchId?: string }
           ) : null}
           <button
             onClick={() => void navigator.clipboard?.writeText(text)}
-            className="text-[11px] text-muted hover:text-red"
+            className="text-[11px] text-muted hover:text-accent"
           >
             copy text
           </button>

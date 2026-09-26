@@ -43,7 +43,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: React
 
 function Address({ address, cluster }: { address: string | null; cluster: string }) {
   return address ? (
-    <a href={explorer("address", address, cluster)} className="font-mono text-red" target="_blank" rel="noreferrer">
+    <a href={explorer("address", address, cluster)} className="font-mono text-accent" target="_blank" rel="noreferrer">
       {short(address)}
     </a>
   ) : (
@@ -57,7 +57,7 @@ function RewardsSection({ r }: { r: Rewards }) {
   return (
     <section className="rounded-panel border border-line">
       <div className="border-b border-line bg-panel px-4 py-3 lg:px-4">
-        <h2 className="text-[12px] uppercase tracking-wider text-muted">Rewards</h2>
+        <h2 className="text-[12px] uppercase tracking-wider text-accent">Rewards</h2>
       </div>
       <p className="border-b border-gold/50 bg-gold/5 px-4 py-3 text-[13px] leading-5 text-text lg:px-4">
         Not live yet. $OXUDE has launched on mainnet, but rewards are funded by the creator-fee split and paid at
@@ -91,7 +91,7 @@ function RewardsSection({ r }: { r: Rewards }) {
       </div>
 
       <div className="border-t border-line">
-        <h3 className="px-3 py-2 text-[12px] uppercase tracking-wider text-muted lg:px-4">Recent payouts</h3>
+        <h3 className="px-3 py-2 text-[12px] uppercase tracking-wider text-accent lg:px-4">Recent payouts</h3>
         {payouts.length === 0 ? (
           <p className="px-3 pb-3 text-[13px] text-muted lg:px-4">No payouts yet.</p>
         ) : (
@@ -116,7 +116,7 @@ function RewardsSection({ r }: { r: Rewards }) {
                     <td className="px-3 py-2 font-mono">{p.rank ?? "—"}</td>
                     <td className="px-3 py-2">
                       {p.agentId ? (
-                        <Link href={`/a/${p.agentId}`} className="text-red">
+                        <Link href={`/a/${p.agentId}`} className="text-accent">
                           {p.agentId.slice(0, 8)}
                         </Link>
                       ) : (
@@ -126,7 +126,7 @@ function RewardsSection({ r }: { r: Rewards }) {
                     <td className="px-3 py-2">{p.to ? <Address address={p.to} cluster={r.cluster} /> : "—"}</td>
                     <td className="px-3 py-2 text-right font-mono text-gold">{n(p.amount)}</td>
                     <td className="px-3 py-2 lg:px-4">
-                      <a href={explorer("tx", p.signature, r.cluster)} className="text-red" target="_blank" rel="noreferrer">
+                      <a href={explorer("tx", p.signature, r.cluster)} className="text-accent" target="_blank" rel="noreferrer">
                         view
                       </a>
                     </td>
@@ -139,7 +139,7 @@ function RewardsSection({ r }: { r: Rewards }) {
       </div>
 
       <div className="space-y-2 border-t border-line p-3 text-[13px] leading-5 lg:p-4">
-        <h3 className="text-[12px] uppercase tracking-wider text-muted">Prize schedule</h3>
+        <h3 className="text-[12px] uppercase tracking-wider text-accent">Prize schedule</h3>
         <p>
           Paid daily, on ladder placement, to the owners of the top few agents. Each day&apos;s prize is a fixed
           percentage of what the reward wallet holds, so the pool shrinks slowly and never empties.
@@ -159,7 +159,7 @@ function ActivitySection({ a }: { a: Activity | null }) {
   return (
     <section className="rounded-panel border border-line">
       <div className="border-b border-line bg-panel px-4 py-3 lg:px-4">
-        <h2 className="text-[12px] uppercase tracking-wider text-muted">Match activity</h2>
+        <h2 className="text-[12px] uppercase tracking-wider text-accent">Match activity</h2>
       </div>
       {a === null ? (
         <p className="p-3 text-[13px] text-muted lg:p-4">Couldn&apos;t reach the server. Try again in a moment.</p>

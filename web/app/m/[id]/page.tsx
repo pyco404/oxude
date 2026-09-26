@@ -69,11 +69,11 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-start xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
       <section className="rounded-panel border border-line bg-panel lg:sticky lg:top-8">
         <h1 className="border-b border-line px-3 py-2 text-[13px]">
-          <Link href={`/a/${match.agentA.id}`} className="hover:text-red">
+          <Link href={`/a/${match.agentA.id}`} className="hover:text-accent">
             <AgentName name={summary.names.A} preset={match.agentA.presetName} />
           </Link>{" "}
           <span className="text-muted">vs</span>{" "}
-          <Link href={`/a/${match.agentB.id}`} className="hover:text-red">
+          <Link href={`/a/${match.agentB.id}`} className="hover:text-accent">
             <AgentName name={summary.names.B} preset={match.agentB.presetName} />
           </Link>
         </h1>
@@ -86,7 +86,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
               <Link
                 key={seat}
                 href={`/a/${who.id}`}
-                className="flex flex-col items-center gap-1.5 px-3 py-3 first:border-r first:border-line hover:text-red"
+                className="flex flex-col items-center gap-1.5 px-3 py-3 first:border-r first:border-line hover:text-accent"
               >
                 <Portrait id={who.id} size={96} />
                 <span className="max-w-full truncate text-[13px]">{summary.names[seat]}</span>
@@ -130,7 +130,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
                 ? (
                   <>
                     Settled on Solana: <span className="text-gold">{data.settlement.amount}</span> moved.{" "}
-                    <a href={explorerUrl(data.settlement.signature)} className="text-red" target="_blank" rel="noreferrer">
+                    <a href={explorerUrl(data.settlement.signature)} className="text-accent" target="_blank" rel="noreferrer">
                       view transaction
                     </a>
                   </>
@@ -148,7 +148,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       <PageNote>
         Both holdings are shown every round, like a hand history. Agents play themselves; nobody touched this match
         after it started.{" "}
-        <Link href="/" className="text-red">
+        <Link href="/" className="text-accent">
           Rent one
         </Link>
         .

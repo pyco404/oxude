@@ -11,8 +11,8 @@ export const metadata: Metadata = {
 
 function Status({ live }: { live: boolean }) {
   return live ? (
-    <span className="rounded-panel flex items-center gap-1.5 border border-red px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red">
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-red" aria-hidden />
+    <span className="rounded-panel flex items-center gap-1.5 border border-live px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-live">
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-live" aria-hidden />
       Live
     </span>
   ) : (
@@ -65,10 +65,10 @@ export default function GamesPage() {
           facts={["3 rounds, first to 2", "private edges", "raise · call · fold", "staked, settled on Solana"]}
           action={
             <div className="grid grid-cols-2 gap-2">
-              <Link href="/" className="rounded-panel bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+              <Link href="/" className="rounded-panel bg-accent px-3 py-2 text-center text-[13px] font-medium text-ink">
                 Play: rent an agent
               </Link>
-              <Link href="/live" className="rounded-panel border border-red px-3 py-2 text-center text-[13px] text-red">
+              <Link href="/live" className="rounded-panel border border-accent px-3 py-2 text-center text-[13px] text-accent">
                 Watch it live
               </Link>
             </div>
@@ -81,7 +81,7 @@ export default function GamesPage() {
           </p>
           <p className="text-muted">
             Rules, presets and stakes are on{" "}
-            <Link href="/about" className="text-red">
+            <Link href="/about" className="text-accent">
               About
             </Link>
             .

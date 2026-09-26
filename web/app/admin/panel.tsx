@@ -33,7 +33,7 @@ function duration(ms: number): string {
 }
 
 function Row({ label, value, tone = "plain", sub }: { label: string; value: string; tone?: "plain" | "good" | "bad"; sub?: string }) {
-  const colour = tone === "bad" ? "text-red" : tone === "good" ? "text-gold" : "text-text";
+  const colour = tone === "bad" ? "text-loss" : tone === "good" ? "text-gold" : "text-text";
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-line py-2 last:border-b-0">
       <span className="text-[12px] text-muted">{label}</span>
@@ -46,10 +46,10 @@ function Row({ label, value, tone = "plain", sub }: { label: string; value: stri
 }
 
 function Card({ title, state, children }: { title: string; state?: "ok" | "warn" | "unknown"; children: React.ReactNode }) {
-  const dot = state === "warn" ? "bg-red" : state === "ok" ? "bg-gold" : "bg-line";
+  const dot = state === "warn" ? "bg-loss" : state === "ok" ? "bg-gold" : "bg-line";
   return (
     <section className="rounded-panel border border-line bg-panel">
-      <h2 className="flex items-center gap-2 border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center gap-2 border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         {state ? <span className={`inline-block h-2 w-2 rounded-full ${dot}`} aria-hidden /> : null}
         {title}
       </h2>
@@ -62,7 +62,7 @@ function Ops({ title, ops, empty }: { title: string; ops: OpTrouble[]; empty: st
   if (ops.length === 0) return <Row label={title} value="none" tone="good" sub={empty} />;
   return (
     <div className="py-2">
-      <p className="mb-1 text-[12px] text-red">
+      <p className="mb-1 text-[12px] text-loss">
         {title}: {ops.length}
       </p>
       <div className="overflow-x-auto">
@@ -134,7 +134,7 @@ export function AdminPanel() {
   }
   if (error) {
     return (
-      <p className="text-[13px] text-red">
+      <p className="text-[13px] text-loss">
         {error.message} <button onClick={() => void load()} className="ml-2 underline">retry</button>
       </p>
     );

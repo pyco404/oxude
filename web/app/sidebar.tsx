@@ -35,7 +35,7 @@ function Mark({ onClick }: { onClick?: () => void }) {
       href="/"
       onClick={onClick}
       aria-label="Oxude home"
-      className="flex items-center gap-2 text-xl font-semibold tracking-[0.2em] text-red"
+      className="flex items-center gap-2 text-xl font-semibold tracking-[0.2em] text-brand"
     >
       {/* The mark on its transparent field; the chrome around it stays flat. */}
       <img src="/oxude-tb.png" alt="" width={28} height={28} className="h-7 w-7" />
@@ -80,7 +80,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
         aria-label={session ? `Wallet ${session.ownerId}` : "Sign in"}
         className={`rounded-panel h-9 max-w-full truncate border px-3 text-[12px] ${placement === "up" ? "w-full" : ""} ${
           // One look everywhere: dark, red text, a 1px red border.
-          session ? "border-line font-mono text-text" : "border-red bg-ink text-red"
+          session ? "border-line font-mono text-text" : "border-accent bg-ink text-accent"
         }`}
       >
         {busy === "connect" ? "Waiting…" : session ? shortKey(session.ownerId) : "Sign in"}
@@ -103,7 +103,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                 role="menuitem"
                 onClick={() => void disconnect()}
                 disabled={busy === "disconnect"}
-                className="rounded-panel mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:text-red"
+                className="rounded-panel mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:text-accent"
               >
                 {busy === "disconnect" ? "Signing out…" : "Sign out"}
               </button>
@@ -120,7 +120,7 @@ function WalletControl({ placement = "down" }: { placement?: "down" | "up" }) {
                       role="menuitem"
                       onClick={() => void connect(name)}
                       disabled={busy === "connect"}
-                      className="rounded-panel bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+                      className="rounded-panel bg-accent px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
                     >
                       {name}
                     </button>
@@ -230,7 +230,7 @@ export function Sidebar() {
                 href={item.href}
                 aria-current={current ? "page" : undefined}
                 className={`border-l-2 px-4 py-2.5 text-[13px] uppercase tracking-wider ${
-                  current ? "border-red bg-panel-2 text-text" : "border-transparent text-muted hover:text-text"
+                  current ? "border-accent bg-panel-2 text-text" : "border-transparent text-muted hover:text-text"
                 }`}
               >
                 {item.label}
@@ -239,7 +239,7 @@ export function Sidebar() {
           })}
         </nav>
         <div className="mt-auto border-t border-line p-4">
-          <Link href="/" className="rounded-panel block bg-red px-3 py-2 text-center text-[13px] font-medium text-ink">
+          <Link href="/" className="rounded-panel block bg-accent px-3 py-2 text-center text-[13px] font-medium text-ink">
             Rent an agent
           </Link>
           {/* Phones have it in the top bar; the drawer is this same element, so desktop only. */}

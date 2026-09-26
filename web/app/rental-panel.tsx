@@ -88,8 +88,8 @@ export function RentalPanel({
       disabled={busy}
       className={
         strong
-          ? "mt-2 w-full bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
-          : "mt-2 w-full border border-line px-3 py-2 text-[13px] text-muted hover:border-red hover:text-red"
+          ? "mt-2 w-full bg-accent px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+          : "mt-2 w-full border border-line px-3 py-2 text-[13px] text-muted hover:border-accent hover:text-accent"
       }
     >
       {busy ? "Renewing…" : label}
@@ -151,7 +151,7 @@ export function RentalPanel({
 
   return (
     <div className="mt-4 border-t border-line pt-3">
-      <h3 className="text-[12px] uppercase tracking-wider text-muted">Rental</h3>
+      <h3 className="text-[12px] uppercase tracking-wider text-accent">Rental</h3>
       <div className="mt-2">{body}</div>
       {error ? <p className="mt-2 text-[12px] text-loss">{error}</p> : null}
     </div>

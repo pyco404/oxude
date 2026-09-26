@@ -3,6 +3,7 @@
 import { PrivyProvider, useLogin, usePrivy } from "@privy-io/react-auth";
 import { useSignMessage, useSignTransaction, useWallets } from "@privy-io/react-auth/solana";
 import { useCallback, useEffect, useRef } from "react";
+import { palette } from "@/lib/palette";
 
 /**
  * Privy, kept to one job: turn an email or X login into a Solana embedded
@@ -89,7 +90,7 @@ export default function PrivyBridge({ appId, onReady }: { appId: string; onReady
       appId={appId}
       config={{
         loginMethods: ["email", "twitter"],
-        appearance: { theme: "dark", accentColor: "#ff2d2d", walletChainType: "solana-only" },
+        appearance: { theme: "dark", accentColor: palette.accent, walletChainType: "solana-only" },
         embeddedWallets: { solana: { createOnLogin: "all-users" }, showWalletUIs: false },
       }}
     >

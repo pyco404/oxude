@@ -54,7 +54,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
         </span>
         <span className="min-w-0 flex-1 truncate">
           <span className="text-muted">vs </span>
-          <Link href={`/a/${opponent.id}`} className="hover:text-red">
+          <Link href={`/a/${opponent.id}`} className="hover:text-accent">
             <AgentName name={opponent.name} preset={opponent.presetName} />
           </Link>
         </span>
@@ -85,7 +85,7 @@ function MatchRow({ m, agentId }: { m: FeedItem; agentId: string }) {
             </>
           )}
         </span>
-        <span className="shrink-0 text-red">hand →</span>
+        <span className="shrink-0 text-accent">hand →</span>
       </Link>
     </li>
   );
@@ -161,7 +161,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       </section>
 
       <section className="rounded-panel min-w-0 border border-line bg-panel">
-        <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+        <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
           Recent matches
           {total > matches.length ? (
             <>
@@ -183,7 +183,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
         {agent.presetName
           ? "It plays a published preset table."
           : "It plays a table written from its owner's brief. The brief stays private; only its actions are public, in the hands above."}{" "}
-        <Link href="/" className="text-red">
+        <Link href="/" className="text-accent">
           Rent one
         </Link>
         .

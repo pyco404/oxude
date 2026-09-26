@@ -558,7 +558,7 @@ function ConnectPanel({
               key={name}
               onClick={() => onConnect(name)}
               disabled={busy}
-              className="rounded-panel bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+              className="rounded-panel bg-accent px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
             >
               {busy ? "Waiting…" : name}
             </button>
@@ -618,7 +618,7 @@ function RentPanel(props: {
     props.signedIn && (props.tab === "preset" ? Boolean(props.chosen) : props.brief.trim().length >= 12);
   return (
     <section className="rounded-panel border border-line bg-panel">
-      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">Rent an agent</h2>
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">Rent an agent</h2>
       <div className="space-y-3 p-3">
         <SeasonLine />
         <Segmented
@@ -664,7 +664,7 @@ function RentPanel(props: {
                   type="checkbox"
                   checked={props.autoPreview}
                   onChange={(e) => props.setAutoPreview(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-red"
+                  className="h-3.5 w-3.5 accent-accent"
                 />
                 Rate as I type
               </label>
@@ -675,7 +675,7 @@ function RentPanel(props: {
             <button
               onClick={props.onRateBrief}
               disabled={!props.signedIn || props.brief.trim().length < 12 || props.previewing}
-              className="rounded-panel w-full border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
+              className="rounded-panel w-full border border-accent px-3 py-2 text-[13px] text-accent disabled:border-line disabled:text-muted"
             >
               {props.previewing ? "Rating…" : "Rate this brief"}
               <span className="ml-2 font-mono text-[11px] uppercase tracking-wider">
@@ -703,7 +703,7 @@ function RentPanel(props: {
                   key={b.name}
                   onClick={() => props.setBand(b.name)}
                   aria-pressed={chosen}
-                  className={`rounded-panel border px-2 py-2 text-left ${chosen ? "border-red bg-panel-2" : "border-line"}`}
+                  className={`rounded-panel border px-2 py-2 text-left ${chosen ? "border-accent bg-panel-2" : "border-line"}`}
                 >
                   <div className="font-mono text-[13px]">{b.label}</div>
                   <div className="mt-0.5 font-mono text-[11px] text-gold">
@@ -724,7 +724,7 @@ function RentPanel(props: {
         <button
           onClick={props.onRent}
           disabled={!ready || props.busy}
-          className="rounded-panel w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
+          className="rounded-panel w-full bg-accent px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
           {!props.signedIn
             ? "Sign in to rent"
@@ -804,7 +804,7 @@ function PresetCard({
         onClick={onSelect}
         aria-pressed={selected}
         className={`rounded-panel card-border w-full border px-3 py-3 text-left ${
-          selected ? "border-red bg-panel-2" : "border-line bg-panel hover:border-muted"
+          selected ? "border-accent bg-panel-2" : "border-line bg-panel hover:border-muted"
         }`}
       >
         <span className="flex items-baseline justify-between gap-3">
@@ -871,7 +871,7 @@ function RosterPanel({
   const playing = usePlaying();
   return (
     <section className="rounded-panel mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         Who you'd meet
         <span className="font-mono normal-case tracking-normal">band {band}</span>
       </h2>
@@ -929,7 +929,7 @@ function YourAgents({
 }) {
   return (
     <section className="rounded-panel border border-line bg-panel">
-      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         Your agents<span className="ml-2 normal-case tracking-normal">{agents.length}</span>
       </h2>
       <ul className="p-1">
@@ -987,7 +987,7 @@ function AgentCard({
   const [expired, setExpired] = useState(false);
   return (
     <section className="rounded-panel border border-line bg-panel">
-      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         {retired ? "Retired agent" : "Your agent"}
       </h2>
       <div className="p-4">
@@ -1084,7 +1084,7 @@ function AgentCard({
                         : `Needs ${b.worstMatch} to cover a match`
                     }
                     className={`rounded-panel border px-2 py-1.5 text-left ${
-                      current ? "border-red bg-panel-2" : b.affordable ? "border-line" : "border-line/40 opacity-40"
+                      current ? "border-accent bg-panel-2" : b.affordable ? "border-line" : "border-line/40 opacity-40"
                     }`}
                   >
                     <div className="font-mono text-[12px]">{b.name}</div>
@@ -1109,7 +1109,7 @@ function AgentCard({
         <button
           onClick={onPlay}
           disabled={busy || retired || expired}
-          className="rounded-panel mt-3 w-full bg-red px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
+          className="rounded-panel mt-3 w-full bg-accent px-3 py-3 text-[14px] font-medium text-ink disabled:bg-line disabled:text-muted"
         >
           {retired ? "Retired" : expired ? "Expired: renew to play" : busy ? "Playing…" : "Play a match"}
         </button>
@@ -1224,7 +1224,7 @@ function PreviewPanel({
   const worst = preview ? Math.max(...preview.value.breakdown.map((b) => Math.abs(b.expectedNet)), 0.001) : 1;
   return (
     <section className="rounded-panel mt-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         Expected result
         <span className={`font-mono ${tab === "brief" ? "text-gold" : "text-muted"}`}>
           {tab === "brief" ? "model call" : "free"}

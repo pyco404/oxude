@@ -78,7 +78,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
   const who = bluff.beatSeat === "B" ? bluff.b : bluff.a;
   return (
     <section className="rounded-panel mb-3 border border-line bg-panel">
-      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         <span>Latest bluff{bluff.exhibition ? " · exhibition" : ""}</span>
         <span className="font-mono normal-case tracking-normal">{ago(bluff.createdAt)} ago</span>
       </h2>
@@ -86,7 +86,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         <p className="text-[20px] leading-7">{bluff.headline}.</p>
         <p className="mt-2 text-[13px] leading-5 text-muted">
           The weaker hand raised and the stronger one folded.{" "}
-          <Link href={`/a/${who.id}`} className="text-text hover:text-red">
+          <Link href={`/a/${who.id}`} className="text-text hover:text-accent">
             <AgentName name={who.name} preset={who.presetName} />
           </Link>{" "}
           finished the match <span className={`font-mono ${netTone(net)}`}>{signed(net)}</span>
@@ -94,7 +94,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
         </p>
         <Link
           href={`/m/${bluff.id}`}
-          className="rounded-panel mt-3 block border border-red px-3 py-2 text-center text-[13px] text-red"
+          className="rounded-panel mt-3 block border border-accent px-3 py-2 text-center text-[13px] text-accent"
         >
           Read the hand
         </Link>
@@ -133,7 +133,7 @@ export function LiveFeed({
   const rows = [...latest, ...older.filter((m) => !seen.has(m.id))];
   return (
     <section className={`rounded-panel border border-line bg-panel ${className}`}>
-      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+      <h2 className="flex items-center justify-between border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-accent">
         <span>Live matches</span>
         <span className="flex items-center gap-1.5 font-mono normal-case tracking-normal">
           {live.status === "open" ? (
@@ -206,22 +206,22 @@ function FinishedRow({ m, now }: { m: FeedItem; now: number | null }) {
       <div className="flex items-baseline gap-2 text-[13px]">
         {o ? (
           <span className="min-w-0 flex-1 truncate">
-            <Link href={`/a/${o.ahead.id}`} className="hover:text-red">
+            <Link href={`/a/${o.ahead.id}`} className="hover:text-accent">
               <AgentName name={o.ahead.name} preset={o.ahead.presetName} />
             </Link>{" "}
             <span className="font-mono text-win">{signed(o.amount)}</span>
             <span className="text-muted"> from </span>
-            <Link href={`/a/${o.behind.id}`} className="text-muted hover:text-red">
+            <Link href={`/a/${o.behind.id}`} className="text-muted hover:text-accent">
               <AgentName name={o.behind.name} preset={o.behind.presetName} />
             </Link>
           </span>
         ) : (
           <span className="min-w-0 flex-1 truncate">
-            <Link href={`/a/${m.a.id}`} className="hover:text-red">
+            <Link href={`/a/${m.a.id}`} className="hover:text-accent">
               <AgentName name={m.a.name} preset={m.a.presetName} />
             </Link>
             <span className="text-muted"> level with </span>
-            <Link href={`/a/${m.b.id}`} className="hover:text-red">
+            <Link href={`/a/${m.b.id}`} className="hover:text-accent">
               <AgentName name={m.b.name} preset={m.b.presetName} />
             </Link>
           </span>
@@ -258,7 +258,7 @@ function FinishedRow({ m, now }: { m: FeedItem; now: number | null }) {
             </>
           )}
         </span>
-        <span className="shrink-0 text-red">hand →</span>
+        <span className="shrink-0 text-accent">hand →</span>
       </Link>
       </div>
     </div>

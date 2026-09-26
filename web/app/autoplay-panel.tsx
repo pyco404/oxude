@@ -147,7 +147,7 @@ export function AutoplayPanel({
   return (
     <section className="rounded-panel mt-3 border border-line">
       <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-2">
-        <h3 className="text-[12px] uppercase tracking-wider text-muted">Autoplay</h3>
+        <h3 className="text-[12px] uppercase tracking-wider text-accent">Autoplay</h3>
         <span
           className={`font-mono text-[12px] uppercase tracking-wider ${
             state === "on" || state === "waiting" ? "text-text" : state === "paused" ? "text-loss" : "text-muted"
@@ -242,7 +242,7 @@ export function AutoplayPanel({
                 onClick={() => void save(!on)}
                 disabled={busy || !floorValid}
                 className={`px-3 py-2 text-[13px] font-medium disabled:bg-line disabled:text-muted ${
-                  on ? "border border-line text-text" : "bg-red text-ink"
+                  on ? "border border-line text-text" : "bg-accent text-ink"
                 }`}
               >
                 {busy ? "Saving…" : on ? "Turn off" : state === "paused" ? "Switch back on" : "Turn on"}

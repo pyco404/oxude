@@ -100,7 +100,7 @@ export function WithdrawPanel({
       <p className="mt-3 border-t border-line pt-3 text-[12px] leading-5" role="status">
         Withdrew <span className="font-mono text-gold">{phase.amount}</span> to your wallet; {agentName} is retired.{" "}
         {phase.signature ? (
-          <a href={explorerTx(phase.signature)} target="_blank" rel="noreferrer" className="text-red">
+          <a href={explorerTx(phase.signature)} target="_blank" rel="noreferrer" className="text-accent">
             view transaction
           </a>
         ) : null}
@@ -114,7 +114,7 @@ export function WithdrawPanel({
 
   return (
     <div className="mt-4 border-t border-line pt-3">
-      <h3 className="text-[12px] uppercase tracking-wider text-muted">Withdraw</h3>
+      <h3 className="text-[12px] uppercase tracking-wider text-accent">Withdraw</h3>
       <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
         <span>
           Withdrawable now <span className="font-mono text-gold">{info.withdrawable}</span>
@@ -141,7 +141,7 @@ export function WithdrawPanel({
           <button
             onClick={() => void withdraw("all")}
             disabled={busy}
-            className="rounded-panel mt-2 w-full bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+            className="rounded-panel mt-2 w-full bg-accent px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
           >
             Withdraw all <span className="font-mono">{info.withdrawable}</span>
           </button>
@@ -164,7 +164,7 @@ export function WithdrawPanel({
             <button
               onClick={() => void withdraw(n)}
               disabled={busy || !amountOk}
-              className="rounded-panel flex-1 border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
+              className="rounded-panel flex-1 border border-accent px-3 py-2 text-[13px] text-accent disabled:border-line disabled:text-muted"
             >
               Withdraw{amountOk ? ` ${n}` : ""}
             </button>
@@ -184,7 +184,7 @@ export function WithdrawPanel({
                 <button
                   onClick={() => void withdraw("all")}
                   disabled={busy}
-                  className="rounded-panel bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+                  className="rounded-panel bg-accent px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
                 >
                   Withdraw all and retire
                 </button>
@@ -197,7 +197,7 @@ export function WithdrawPanel({
             <button
               onClick={() => setConfirmAll(true)}
               disabled={busy}
-              className="rounded-panel mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:border-red hover:text-red disabled:hover:border-line disabled:hover:text-muted"
+              className="rounded-panel mt-3 w-full border border-line px-3 py-2 text-[13px] text-muted hover:border-accent hover:text-accent disabled:hover:border-line disabled:hover:text-muted"
             >
               Withdraw all and retire
             </button>
@@ -214,7 +214,7 @@ export function WithdrawPanel({
             Withdrew <span className="font-mono text-gold">{phase.amount}</span> to your wallet
             {phase.retired ? `; ${agentName} is retired` : ""}.{" "}
             {phase.signature ? (
-              <a href={explorerTx(phase.signature)} target="_blank" rel="noreferrer" className="text-red">
+              <a href={explorerTx(phase.signature)} target="_blank" rel="noreferrer" className="text-accent">
                 view transaction
               </a>
             ) : null}

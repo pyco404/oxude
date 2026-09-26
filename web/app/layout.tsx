@@ -3,6 +3,7 @@ import "./globals.css";
 import { Sidebar } from "./sidebar";
 import { WalletProvider } from "./wallet-context";
 import { SiteFooter } from "./site-header";
+import { palette } from "@/lib/palette";
 
 /**
  * Where the site lives. Open Graph needs absolute URLs; without this a shared
@@ -17,7 +18,7 @@ export const metadata: Metadata = {
   icons: { icon: "/oxude-cb.png", apple: "/oxude-cb.png" },
 };
 
-export const viewport: Viewport = { themeColor: "#09090a", width: "device-width", initialScale: 1 };
+export const viewport: Viewport = { themeColor: palette.ink, width: "device-width", initialScale: 1 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

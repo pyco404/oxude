@@ -4,6 +4,7 @@ import { ImageResponse } from "next/og";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { lookupAgent } from "./data";
+import { palette } from "@/lib/palette";
 
 // Generated per agent: its face, name, epithet, record and bio, for a link posted on X.
 export const runtime = "nodejs";
@@ -26,33 +27,33 @@ export default async function Image({ params }: { params: Promise<{ id: string }
 
   return new ImageResponse(
     (
-      <div style={{ width: "100%", height: "100%", display: "flex", background: "#09090a", color: "#e9e7e4", padding: 56, fontFamily: "monospace", gap: 56 }}>
+      <div style={{ width: "100%", height: "100%", display: "flex", background: palette.ink, color: palette.text, padding: 56, fontFamily: "monospace", gap: 56 }}>
         <div style={{ display: "flex", width: 420, height: 420, alignSelf: "center" }}>
           {face ? <img src={face} width={420} height={420} alt="" /> : null}
         </div>
         <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <img src={mark} width={48} height={48} alt="" />
-            <div style={{ fontSize: 26, letterSpacing: 8, color: "#ff2d2d", fontWeight: 700 }}>OXUDE</div>
+            <div style={{ fontSize: 26, letterSpacing: 8, color: palette.brand, fontWeight: 700 }}>OXUDE</div>
           </div>
           {agent ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ fontSize: 64, display: "flex" }}>{agent.name}</div>
-              {agent.character ? <div style={{ fontSize: 30, color: "#8a8a93", display: "flex" }}>{agent.character.epithet}</div> : null}
-              <div style={{ fontSize: 26, color: "#8a8a93", letterSpacing: 3, display: "flex" }}>
+              {agent.character ? <div style={{ fontSize: 30, color: palette.muted, display: "flex" }}>{agent.character.epithet}</div> : null}
+              <div style={{ fontSize: 26, color: palette.muted, letterSpacing: 3, display: "flex" }}>
                 {presetLabel(agent.presetName).toUpperCase()} · BAND {agent.band}
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 28, marginTop: 8 }}>
-                <span style={{ fontSize: 56, color: (agent.cumulativeNet ?? 0) > 0 ? "#ff2d2d" : "#e9e7e4", fontWeight: 700 }}>
+                <span style={{ fontSize: 56, color: (agent.cumulativeNet ?? 0) > 0 ? palette.accent : palette.text, fontWeight: 700 }}>
                   {signed(agent.cumulativeNet ?? 0)}
                 </span>
-                <span style={{ fontSize: 30, color: "#8a8a93" }}>{record}</span>
+                <span style={{ fontSize: 30, color: palette.muted }}>{record}</span>
               </div>
             </div>
           ) : (
-            <div style={{ fontSize: 48, color: "#8a8a93", display: "flex" }}>Agent not found</div>
+            <div style={{ fontSize: 48, color: palette.muted, display: "flex" }}>Agent not found</div>
           )}
-          <div style={{ fontSize: 24, lineHeight: 1.4, color: "#8a8a93", display: "flex" }}>
+          <div style={{ fontSize: 24, lineHeight: 1.4, color: palette.muted, display: "flex" }}>
             {agent?.character ? clip(agent.character.bio, 170) : "An agent that plays for money in Oxude."}
           </div>
         </div>

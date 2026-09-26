@@ -130,7 +130,7 @@ export function ExitPanel({
               )
             }
             disabled={busy || info.balance <= 0}
-            className="rounded-panel mt-2 border border-red px-3 py-2 text-[13px] text-red disabled:border-line disabled:text-muted"
+            className="rounded-panel mt-2 border border-accent px-3 py-2 text-[13px] text-accent disabled:border-line disabled:text-muted"
           >
             Start a 30-minute exit for {info.balance}
           </button>
@@ -185,14 +185,14 @@ export function ExitPanel({
       )}
 
       {note ? (
-        <p className={`mt-2 text-[12px] ${note.kind === "err" ? "text-red" : "text-gold"}`} role="status">
+        <p className={`mt-2 text-[12px] ${note.kind === "err" ? "text-loss" : "text-gold"}`} role="status">
           {note.text}
         </p>
       ) : null}
       <p className="mt-2 text-[11px] leading-4 text-muted">
         This goes straight to Solana and never through us: your wallet signs it, and nothing here can stop it or
         delay it. The same three instructions work from{" "}
-        <a href="/exit/" className="text-red">
+        <a href="/exit/" className="text-accent">
           a plain HTML page
         </a>{" "}
         that needs no server of ours at all. Save it while you can.
@@ -225,7 +225,7 @@ function ClaimButton({
         })
       }
       disabled={busy}
-      className="rounded-panel mt-2 bg-red px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
+      className="rounded-panel mt-2 bg-accent px-3 py-2 text-[13px] font-medium text-ink disabled:bg-line disabled:text-muted"
     >
       Claim now
     </button>

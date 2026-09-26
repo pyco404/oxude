@@ -52,7 +52,7 @@ export function FaucetPanel({ onFunded }: { onFunded?: () => void }) {
 
   return (
     <div className="mt-4 border-t border-line pt-3">
-      <h3 className="text-[12px] uppercase tracking-wider text-muted">Test tokens</h3>
+      <h3 className="text-[12px] uppercase tracking-wider text-accent">Test tokens</h3>
       <p className="mt-2 text-[13px] leading-5 text-muted">
         This is devnet, so the tokens are free and worth nothing. Take{" "}
         <span className="font-mono text-gold">{info.chips.toLocaleString()}</span> to pay an agent&apos;s rent and fund
