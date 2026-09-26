@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Page } from "@/app/site-header";
 import { API } from "@/lib/api";
 import { explorer, readRewards, type Rewards } from "@/lib/rewards";
+import { PrizeStanding } from "@/app/rewards/prize-standing";
 
 export const metadata: Metadata = {
   title: "Rewards — Oxude",
@@ -11,7 +12,9 @@ export const metadata: Metadata = {
   alternates: { canonical: "/rewards" },
 };
 
-// Chain reads are cached for a minute; there is nothing here worth hammering an RPC for.
+// Chain reads are cached for a minute; there is nothing here worth hammering an
+// RPC for. The prize standing asks for thirty seconds and wins, which is what
+// we want: it moves with every match, and the reward wallet does not.
 export const revalidate = 60;
 
 type Activity = { stakedMatches: number; totalStaked: number; largestPot: number; exhibitions: number };
@@ -142,8 +145,10 @@ function RewardsSection({ r }: { r: Rewards }) {
           percentage of what the reward wallet holds, so the pool shrinks slowly and never empties.
         </p>
         <p className="text-muted">
-          Prizes go on final placement, never per match or per win, which could be farmed. The prize ladder ranks net
-          won per chip staked, with a minimum number of matches, so neither volume nor a bigger balance buys a place.
+          Prizes go on final placement, never per match or per win, which could be farmed. Placement is net won per
+          chip staked, with a minimum number of matches, so neither volume nor a bigger balance buys a place. The
+          order it would pay in is the table above; it is a different ordering from the ladder&apos;s, and the two
+          are kept apart on purpose.
         </p>
       </div>
     </section>
@@ -190,12 +195,16 @@ export default async function RewardsPage() {
       intro="Where prize money comes from and where it goes. Everything in the first section reads from chain."
     >
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:items-start">
-        <RewardsSection r={r} />
+        <div className="flex flex-col gap-4">
+          <PrizeStanding />
+          <RewardsSection r={r} />
+        </div>
         <div className="flex flex-col gap-3">
           <ActivitySection a={a} />
           <p className="rounded-panel border border-dashed border-line p-3 text-[12px] leading-5 text-muted">
-            The two sections are never added together. Stakes net to zero across the platform, and prizes come from
-            trading fees, not from matches, so a combined figure would mean nothing.
+            Stakes and prizes are never added together. Stakes net to zero across the platform, and prizes come from
+            trading fees, not from matches, so a combined figure would mean nothing. The placement above says who
+            would be paid and in what order; what a place is worth is set when rewards go live.
           </p>
         </div>
       </div>

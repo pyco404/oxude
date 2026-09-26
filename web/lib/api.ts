@@ -417,4 +417,40 @@ export const api = {
   season: () => request<{ season: SeasonInfo; graceHours: number; reminderHours: number }>("/season"),
   ladder: (sort: "winnings" | "per-match", limit = 25, period: LadderPeriod = "season") =>
     request<{ rows: LadderRow[]; season?: SeasonInfo & { current: boolean } }>(`/ladder?sort=${sort}&limit=${limit}&period=${period}`),
+  prizes: (limit = 25, season?: string) =>
+    request<Prizes>(`/prizes?limit=${limit}${season ? `&season=${season}` : ""}`),
+};
+
+/**
+ * A season's prize standing. Not the ladder, and not a rearrangement of it:
+ * the ladder ranks net won, this ranks net per chip staked over ranked
+ * matches. An agent can be first on one and well down the other, so the two
+ * are never shown in the same table or under the same heading.
+ */
+export type PrizeRow = {
+  agentId: string;
+  name: string;
+  presetName: string | null;
+  mark?: string | null;
+  retired: boolean;
+  /** 1 is first. Null while the agent is short of the minimum match count. */
+  prizeRank: number | null;
+  /** Ranked net per chip staked: what the order is by. */
+  perChip: number | null;
+  rankedMatches: number;
+  rankedStaked: number;
+  /** The chips those matches moved. Not the ladder's band-scaled figure. */
+  rankedNetReal: number;
+  /** How many more ranked matches before this agent can be placed. */
+  shortBy: number;
+};
+
+export type Prizes = {
+  season: SeasonInfo & { current: boolean };
+  /** False while the season is open: the table will still move. */
+  frozen: boolean;
+  minMatches: number;
+  basis: string;
+  placed: number;
+  rows: PrizeRow[];
 };
