@@ -417,6 +417,7 @@ export const api = {
   season: () => request<{ season: SeasonInfo; graceHours: number; reminderHours: number }>("/season"),
   ladder: (sort: "winnings" | "per-match", limit = 25, period: LadderPeriod = "season") =>
     request<{ rows: LadderRow[]; season?: SeasonInfo & { current: boolean } }>(`/ladder?sort=${sort}&limit=${limit}&period=${period}`),
+  admin: (token: string | null) => request<AdminHealth>("/admin", { token }),
   prizes: (limit = 25, season?: string) =>
     request<Prizes>(`/prizes?limit=${limit}${season ? `&season=${season}` : ""}`),
 };
@@ -453,4 +454,58 @@ export type Prizes = {
   basis: string;
   placed: number;
   rows: PrizeRow[];
+};
+
+/** An op the operator should look at: one given up on, or one still being retried. */
+export type OpTrouble = {
+  id: string;
+  seq: number;
+  kind: string;
+  status: string;
+  agentId: string | null;
+  agentName: string | null;
+  amount: number;
+  attempts: number;
+  lastError: string | null;
+  ageMs: number;
+};
+
+/**
+ * Operational health. Every figure here is read from somewhere that already
+ * measured it; nothing on the page is a number this page invented.
+ */
+export type AdminHealth = {
+  at: string;
+  settlement: {
+    lagMs: number | null;
+    alarmAfterMs: number;
+    stalled: boolean;
+    oldest: OpTrouble | null;
+  };
+  settlers: { flow: string; address: string; sol: number; floorSol: number; low: boolean }[];
+  /** Null when no settlement program is reachable: not zero, which would read as healthy. */
+  books: {
+    reconcile: {
+      checked: number;
+      mismatches: { agentId: string; name: string; ledger: number; chain: number | null }[];
+      surpluses: { agentId: string; name: string; ledger: number; chain: number; surplus: number }[];
+      explained: { agentId: string; name: string; claimed: number; claimedSlot: number }[];
+    };
+    solvency: {
+      ledger: number;
+      chain: number;
+      difference: number;
+      counted: number;
+      unreachable: number;
+      inFlight: number;
+    };
+  } | null;
+  ops: { failed: OpTrouble[]; stuck: OpTrouble[] };
+  volume: {
+    agents: { active: number; retired: number; house: number };
+    deposits: { confirmed: number; chips: number; pending: number };
+    withdrawals: { confirmed: number; chips: number; pending: number };
+    rentals: { confirmed: number; burnedChips: number; pending: number };
+    matches: { staked: number; ranked: number; exhibitions: number; last24h: number };
+  };
 };
