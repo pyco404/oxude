@@ -145,7 +145,7 @@ export const agents = pgTable(
  * pauses and need the owner. `season` is the boundary: every player agent's
  * autoplay stops when a season ends, renewed or not.
  */
-export type AutoplayStop = "floor" | "insolvent" | "retired" | "withdrawal" | "season";
+export type AutoplayStop = "floor" | "insolvent" | "retired" | "withdrawal" | "season" | "exit";
 
 /** Whether a stop clears itself, or waits for the owner to switch autoplay back on. */
 export const AUTOPLAY_SELF_CLEARING: Record<AutoplayStop, boolean> = {
@@ -154,6 +154,9 @@ export const AUTOPLAY_SELF_CLEARING: Record<AutoplayStop, boolean> = {
   insolvent: false,
   retired: false,
   season: false,
+  // An owner who asked to leave did not ask to start playing again thirty
+  // minutes later. If they cancel and stay, they switch it back on themselves.
+  exit: false,
 };
 
 /**
@@ -188,9 +191,15 @@ export type AgentEventKind =
   /** Not renewed by the boundary: cannot play, can still be renewed for the grace period. */
   | "expired"
   /** The grace period passed: retired, balance still withdrawable. */
-  | "lapsed";
+  | "lapsed"
+  /** An exit was seen on chain: the agent stops playing until it resolves. */
+  | "exit-requested"
+  /** The owner took their money without this server co-signing. */
+  | "exit-claimed"
+  /** The exit went away before it was claimed: cancelled, and the agent is free. */
+  | "exit-cancelled";
 
-export type AgentEventSource = "owner" | "autoplay" | "season";
+export type AgentEventSource = "owner" | "autoplay" | "season" | "exit";
 
 /**
  * Why an agent stopped. "unpaid" is a rental whose transaction never landed:
@@ -469,7 +478,12 @@ export type LedgerReason =
   /** Money out of an agent's vault to its owner. */
   | "withdrawal"
   /** A withdrawal that could never land on chain, put back. */
-  | "withdrawal-reversed";
+  | "withdrawal-reversed"
+  /**
+   * An exit the owner took themselves, read back off the chain. The only
+   * reason the ledger ever follows the chain rather than leading it.
+   */
+  | "exit";
 
 /** One row per model call, so the first elicitation for an owner can be free. */
 export const elicitations = pgTable(
