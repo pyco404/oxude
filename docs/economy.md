@@ -21,7 +21,6 @@ In order. Each step ships to devnet before the next begins, until the last, whic
 
 | | |
 |---|---|
-| Mint | `6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump` |
 | Network | Solana mainnet |
 | Supply | 1,000,000,000 |
 | Decimals | 6 |
