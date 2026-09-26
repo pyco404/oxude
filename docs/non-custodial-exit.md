@@ -165,6 +165,28 @@ still have 900" after their wallet has the tokens.
 gap — that is the whole point of the third state. The settlement-lag alarm is
 untouched: it watches op age and an exit creates no op.
 
+## Server changes — built
+
+The watcher is `src/db/exits.ts`, run on its own clock by the chain worker
+every 30 seconds. Its own clock because nothing in the outbox knows about
+exits: an exit is owner-signed, so it reaches this server only by being looked
+for. `exits()` reads every Exit account in one call, which is how a *request*
+is noticed at all — a request moves no money, so no vault is short and nothing
+else would ever look at that address.
+
+**Frozen** is derived, not stored: an agent is frozen while it has an `exits`
+row with `ingested_at` null. So setting `ingested_at` *is* the unfreeze, in the
+same transaction as the ledger debit, and the two can never disagree. It bites
+in three places — `runMatch` refuses to stake, `dueAgents` stops scheduling,
+and `withdrawable` closes the instant co-signed path.
+
+One case worth naming: a request that vanishes before this server saw a claim
+is read as a cancel. It could in principle be a claim that was missed, and the
+thing that makes it safe is the program refusing to close a claimed exit for a
+whole window while passes run every thirty seconds. If that grace were ever
+wrong, the reconciler would see a vault short with nothing explaining it and
+say so — which is the third state doing its job.
+
 ## Server changes
 
 - **Watcher.** A worker pass reads the Exit PDA for agents with a live exit and
