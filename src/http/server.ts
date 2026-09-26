@@ -25,6 +25,7 @@ import {
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
 import { prizeTable } from "../db/standings.js";
+import { seasonStatement } from "../db/statement.js";
 import { characterOf, createCharacter, isDefaultName, NO_MODEL, ownerCharacter, portraitSvg, publicCharacter, type CharacterDeps } from "../character/store.js";
 import { moderate, type Verdict } from "../character/moderation.js";
 import { traitsOf } from "../character/trait-store.js";
@@ -274,6 +275,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/roster$/, getRoster],
     ["GET", /^\/season$/, getSeason],
     ["GET", /^\/prizes$/, getPrizes],
+    ["GET", /^\/statement$/, getStatement],
     ["POST", /^\/agents\/([^/]+)\/deposits$/, postDeposit],
     ["POST", /^\/deposits\/([^/]+)\/submit$/, postDepositSubmit],
     ["POST", /^\/rentals\/([^/]+)\/submit$/, postRentalSubmit],
@@ -794,6 +796,25 @@ export function createApp(options: AppOptions): Server {
       placed: table.rows.filter((r) => r.prizeRank !== null).length,
       rows: table.rows.slice(0, limit),
     };
+  }
+
+  /**
+   * A season's statement: what the season did, and what it would pay.
+   *
+   * The prize side is empty on purpose and says so - `funded` is false and
+   * every amount is null rather than zero, because "nothing was paid" and "we
+   * do not know yet" must not look alike. What it does carry is the order the
+   * places would pay in.
+   */
+  async function getStatement(ctx: Ctx) {
+    const now = new Date();
+    let season;
+    try {
+      season = ctx.query.get("season") ? seasonByKey(ctx.query.get("season")!) : seasonAt(now);
+    } catch {
+      throw new HttpError(400, "season must be a Monday, as YYYY-MM-DD");
+    }
+    return { statement: await seasonStatement(db, season.key) };
   }
 
   async function getSeason() {
