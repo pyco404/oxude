@@ -478,36 +478,41 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         </p>
       ) : null}
 
-      {/* Two columns from lg: the game on the left, renting on the right. Below lg they stack in this order. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
-        <div className="flex min-w-0 flex-col gap-3 *:m-0">
-          {/* Signed out, the game comes first: a bluff and the live feed, then the ask. */}
-          {session ? null : (
-            <>
-              <BluffCard bluff={feed?.bluff ?? null} />
-              <LiveFeed feed={feed} />
-            </>
-          )}
-          {session ? agentOrRent : null}
-          {session ? <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} /> : null}
-          {session ? <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} /> : null}
+      {/*
+        Three columns, each with one job: the live feed, playing, and who else is out there.
+        From xl they sit side by side, the feed leftmost so it is the first thing seen.
+        At lg the feed and the field share the left column and playing takes the right.
+        Below lg they stack: the feed first, except for someone signed in, whose own agent leads.
+      */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)] lg:grid-rows-[auto_1fr] lg:items-start xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)] xl:grid-rows-[auto]">
+        <div className="flex min-w-0 flex-col gap-3 *:m-0 lg:col-start-1 lg:row-start-1">
+          <LiveFeed feed={feed} />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-3 *:m-0">
+        <div
+          className={`flex min-w-0 flex-col gap-3 *:m-0 lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1 xl:row-span-1 ${
+            session ? "order-first" : ""
+          }`}
+        >
+          {/* Signed out: a bluff worth reading, then the ask. */}
+          {session ? null : <BluffCard bluff={feed?.bluff ?? null} />}
           {session ? null : <ConnectPanel
               wallets={wallets}
               onConnect={connect}
               busy={wallet.busy === "connect"}
             />}
-          {session ? null : agentOrRent}
-          {session ? null : <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />}
+          {agentOrRent}
+          <PreviewPanel preview={preview} previewing={previewing} tab={agent ? null : tab} />
+          {session ? <Transcript text={transcript} {...(lastPlay ? { matchId: lastPlay.matchId } : {})} /> : null}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-3 *:m-0 lg:col-start-1 lg:row-start-2 xl:col-start-3 xl:row-start-1">
           <RosterPanel
             // The band the list was fetched for: the agent's own once it has one, not the rent form's choice.
             band={shownBand}
             agents={roster ? roster.filter((a) => a.agentId !== (agent?.id ?? agent?.agentId)) : roster}
             fromAgent={Boolean(agent)}
           />
-          {session ? <LiveFeed feed={feed} /> : null}
           <LadderPanel refreshKey={ladderKey} mine={agent?.id ?? agent?.agentId} />
         </div>
       </div>
