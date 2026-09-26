@@ -165,7 +165,7 @@ export type OxudeSettlement = {
         "Before a claim this is a cancel, and needs no wait: changing your mind",
         "costs nobody anything.",
         "",
-        "After a claim it waits `EXIT_WINDOW_SLOTS`, and that wait is",
+        "After a claim it waits one window, and that wait is",
         "load-bearing. A claimed exit is the only evidence on chain that the",
         "vault is legitimately smaller than the server's ledger. Erase it before",
         "the server has read it and the shortfall becomes indistinguishable from",
@@ -191,6 +191,29 @@ export type OxudeSettlement = {
           "relations": [
             "exit"
           ]
+        },
+        {
+          "name": "exitConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "exit",
@@ -329,6 +352,94 @@ export type OxudeSettlement = {
         },
         {
           "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initExitConfig",
+      "docs": [
+        "Turns exits on, with the window they wait.",
+        "",
+        "Its own account rather than a field on `Config`, and the reason is",
+        "concrete: `Config` is already live on devnet at 137 bytes with no room",
+        "spare, so growing it would need a realloc of an account that the",
+        "migration instruction cannot itself deserialize. A separate singleton",
+        "costs one more account read and leaves the deployed config untouched.",
+        "",
+        "It also means exits are off until an admin turns them on: `request_exit`",
+        "needs this account, so a deployment that has not created it has no exit",
+        "path at all. That is the right default for rolling this out."
+      ],
+      "discriminator": [
+        198,
+        230,
+        207,
+        227,
+        176,
+        216,
+        90,
+        82
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "exitConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "slots",
           "type": "u64"
         }
       ]
@@ -773,7 +884,7 @@ export type OxudeSettlement = {
         "",
         "The owner alone signs, and alone pays. Nothing moves here: this records",
         "the intent and starts the clock, and `claim_exit` pays out once",
-        "`EXIT_WINDOW_SLOTS` have passed. The gap is the point - it is the",
+        "the configured window has passed. The gap is the point - it is the",
         "server's chance to settle every match this agent has already played,",
         "before money that may already be owed elsewhere leaves the vault.",
         "",
@@ -810,6 +921,29 @@ export type OxudeSettlement = {
               {
                 "kind": "const",
                 "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "exitConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116,
+                  95,
                   99,
                   111,
                   110,
@@ -967,6 +1101,85 @@ export type OxudeSettlement = {
       "args": [
         {
           "name": "chipRate",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "setExitWindow",
+      "docs": [
+        "Moves the exit window.",
+        "",
+        "Lengthening is free: a longer window only means more time to settle and",
+        "a longer wait for the owner, both safe. Shortening is capped at half",
+        "per step, the same shape as the chip rate's band, so that walking a",
+        "live deployment down to nothing takes many transactions rather than",
+        "one, and every one of them is on chain."
+      ],
+      "discriminator": [
+        78,
+        210,
+        217,
+        160,
+        43,
+        141,
+        57,
+        161
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "exitConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "slots",
           "type": "u64"
         }
       ]
@@ -1554,6 +1767,19 @@ export type OxudeSettlement = {
       ]
     },
     {
+      "name": "exitConfig",
+      "discriminator": [
+        85,
+        178,
+        65,
+        30,
+        75,
+        105,
+        80,
+        59
+      ]
+    },
+    {
       "name": "outflow",
       "discriminator": [
         243,
@@ -1657,6 +1883,19 @@ export type OxudeSettlement = {
         196,
         149,
         70
+      ]
+    },
+    {
+      "name": "exitWindowChanged",
+      "discriminator": [
+        199,
+        9,
+        117,
+        235,
+        250,
+        174,
+        23,
+        156
       ]
     },
     {
@@ -1881,6 +2120,16 @@ export type OxudeSettlement = {
       "code": 6025,
       "name": "exitEvidenceNeeded",
       "msg": "A claimed exit stays on chain a while, so the ledger can catch up before the record goes"
+    },
+    {
+      "code": 6026,
+      "name": "exitWindowTooShort",
+      "msg": "The exit window cannot be shorter than the program's floor"
+    },
+    {
+      "code": 6027,
+      "name": "exitWindowShrinkTooFast",
+      "msg": "The exit window cannot be more than halved in one step"
     }
   ],
   "types": [
@@ -2118,6 +2367,25 @@ export type OxudeSettlement = {
       }
     },
     {
+      "name": "exitConfig",
+      "docs": [
+        "The live exit window, in slots. One per deployment."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "slots",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "exitRequested",
       "type": {
         "kind": "struct",
@@ -2141,6 +2409,22 @@ export type OxudeSettlement = {
           },
           {
             "name": "unlockSlot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exitWindowChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "u64"
+          },
+          {
+            "name": "slots",
             "type": "u64"
           }
         ]

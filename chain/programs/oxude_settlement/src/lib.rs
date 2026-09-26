@@ -66,6 +66,7 @@ pub const WITHDRAWAL_SEED: &[u8] = b"withdrawal";
 pub const OUTFLOW_SEED: &[u8] = b"outflow";
 pub const RENTAL_SEED: &[u8] = b"rental";
 pub const EXIT_SEED: &[u8] = b"exit";
+pub const EXIT_CONFIG_SEED: &[u8] = b"exit_config";
 /// Mixed into every agent id, so an id can't be confused with any other hash.
 pub const AGENT_ID_DOMAIN: &[u8] = b"oxude-agent-v1";
 /// A rate-limit window: about ten minutes of slots.
@@ -98,8 +99,8 @@ pub const MAX_SETTLEMENT_CEILING_CHIPS: u64 = 900;
 /// The least one vault can pay out through settlements in one window, in chips.
 /// A small vault is allowed this much even though a quarter of it is less.
 pub const OUTFLOW_FLOOR_CHIPS: u64 = 120;
-/// How long an owner-signed exit waits before it can be claimed: about thirty
-/// minutes of slots.
+/// The exit window this deployment is set up with: about thirty minutes of
+/// slots.
 ///
 /// This is the whole safety argument for an exit that nobody co-signs. A
 /// match's result exists in the server's ledger before it exists here, so a
@@ -112,7 +113,25 @@ pub const OUTFLOW_FLOOR_CHIPS: u64 = 120;
 /// In slots rather than wall clock, like every other interval here. Slots
 /// running slow makes the window *longer*, which is the safe direction: more
 /// time to settle, and the owner waits a little more.
-pub const EXIT_WINDOW_SLOTS: u64 = 4_500;
+///
+/// A default, not a law: the live value is in `ExitConfig`, so the window can
+/// follow the settlement alarm without a program upgrade.
+pub const DEFAULT_EXIT_WINDOW_SLOTS: u64 = 4_500;
+/// The shortest window the program will accept, ever.
+///
+/// Its job is to make a window of zero unrepresentable. A zero window is not a
+/// short guarantee, it is no guarantee: `request_exit` and `claim_exit` in the
+/// same block, with no chance for a settlement to land between them, which is
+/// precisely the race the whole design exists to close.
+///
+/// It is not a substitute for choosing a real window. Four seconds of slots is
+/// enough to refuse zero and the absurd, not enough to settle anything. What
+/// stops a live deployment being walked down to it is the other rule:
+/// `set_exit_window` will not more than halve the window in one step, so
+/// collapsing thirty minutes takes nine separate admin transactions, each of
+/// them on chain and visible. Against an admin key willing to do that, the
+/// upgrade authority is the larger exposure anyway (security.md, limitation 2).
+pub const MIN_EXIT_WINDOW_SLOTS: u64 = 10;
 /// The least a vault may be left holding, in chips, if it is not left empty.
 ///
 /// **Not** a band's worst match, and deliberately below the cheapest one - band
@@ -442,11 +461,48 @@ pub mod oxude_settlement {
         Ok(())
     }
 
+    /// Turns exits on, with the window they wait.
+    ///
+    /// Its own account rather than a field on `Config`, and the reason is
+    /// concrete: `Config` is already live on devnet at 137 bytes with no room
+    /// spare, so growing it would need a realloc of an account that the
+    /// migration instruction cannot itself deserialize. A separate singleton
+    /// costs one more account read and leaves the deployed config untouched.
+    ///
+    /// It also means exits are off until an admin turns them on: `request_exit`
+    /// needs this account, so a deployment that has not created it has no exit
+    /// path at all. That is the right default for rolling this out.
+    pub fn init_exit_config(ctx: Context<InitExitConfig>, slots: u64) -> Result<()> {
+        require!(slots >= MIN_EXIT_WINDOW_SLOTS, OxudeError::ExitWindowTooShort);
+        let c = &mut ctx.accounts.exit_config;
+        c.slots = slots;
+        c.bump = ctx.bumps.exit_config;
+        emit!(ExitWindowChanged { previous: 0, slots });
+        Ok(())
+    }
+
+    /// Moves the exit window.
+    ///
+    /// Lengthening is free: a longer window only means more time to settle and
+    /// a longer wait for the owner, both safe. Shortening is capped at half
+    /// per step, the same shape as the chip rate's band, so that walking a
+    /// live deployment down to nothing takes many transactions rather than
+    /// one, and every one of them is on chain.
+    pub fn set_exit_window(ctx: Context<SetExitWindow>, slots: u64) -> Result<()> {
+        require!(slots >= MIN_EXIT_WINDOW_SLOTS, OxudeError::ExitWindowTooShort);
+        let c = &mut ctx.accounts.exit_config;
+        let previous = c.slots;
+        require!(window_shrink_ok(previous, slots), OxudeError::ExitWindowShrinkTooFast);
+        c.slots = slots;
+        emit!(ExitWindowChanged { previous, slots });
+        Ok(())
+    }
+
     /// Starts an exit that this server does not co-sign.
     ///
     /// The owner alone signs, and alone pays. Nothing moves here: this records
     /// the intent and starts the clock, and `claim_exit` pays out once
-    /// `EXIT_WINDOW_SLOTS` have passed. The gap is the point - it is the
+    /// the configured window has passed. The gap is the point - it is the
     /// server's chance to settle every match this agent has already played,
     /// before money that may already be owed elsewhere leaves the vault.
     ///
@@ -461,7 +517,7 @@ pub mod oxude_settlement {
         exit.owner = ctx.accounts.owner.key();
         exit.amount = amount;
         exit.requested_slot = slot;
-        exit.unlock_slot = slot.saturating_add(EXIT_WINDOW_SLOTS);
+        exit.unlock_slot = slot.saturating_add(ctx.accounts.exit_config.slots);
         // Recorded for the server, not used by any rule here: a vault smaller
         // at claim than at request is a settlement having landed in the
         // window, which is the system working.
@@ -525,7 +581,7 @@ pub mod oxude_settlement {
     /// Before a claim this is a cancel, and needs no wait: changing your mind
     /// costs nobody anything.
     ///
-    /// After a claim it waits `EXIT_WINDOW_SLOTS`, and that wait is
+    /// After a claim it waits one window, and that wait is
     /// load-bearing. A claimed exit is the only evidence on chain that the
     /// vault is legitimately smaller than the server's ledger. Erase it before
     /// the server has read it and the shortfall becomes indistinguishable from
@@ -537,7 +593,7 @@ pub mod oxude_settlement {
         if exit.claimed_slot > 0 {
             let slot = Clock::get()?.slot;
             require!(
-                slot >= exit.claimed_slot.saturating_add(EXIT_WINDOW_SLOTS),
+                slot >= exit.claimed_slot.saturating_add(ctx.accounts.exit_config.slots),
                 OxudeError::ExitEvidenceNeeded
             );
         }
@@ -600,6 +656,17 @@ pub fn in_base_units(chips: u64, chip_rate: u64) -> Result<u64> {
 /// A fixed-window budget: `(window_start, spent)` after charging `amount` at
 /// `slot`, or None if it would go over `cap`. A window that has run its course
 /// starts again from this slot.
+/// Whether the exit window may move from `previous` to `next`.
+///
+/// Growing is always fine. Shrinking is capped at half in one step, so walking
+/// a window down to the floor takes many visible transactions instead of one.
+/// `saturating_mul` rather than `*`: doubling a window near `u64::MAX` would
+/// otherwise overflow, and the answer for an absurdly large `next` is plainly
+/// yes.
+pub fn window_shrink_ok(previous: u64, next: u64) -> bool {
+    next.saturating_mul(2) >= previous
+}
+
 /// What a claim pays out: at most what was asked, at most what is there, and
 /// never leaving dust behind.
 ///
@@ -941,6 +1008,40 @@ pub struct Exit {
     pub bump: u8,
 }
 
+/// The live exit window, in slots. One per deployment.
+#[account]
+#[derive(InitSpace)]
+pub struct ExitConfig {
+    pub slots: u64,
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+pub struct InitExitConfig<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
+    pub config: Account<'info, Config>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + ExitConfig::INIT_SPACE,
+        seeds = [EXIT_CONFIG_SEED],
+        bump
+    )]
+    pub exit_config: Account<'info, ExitConfig>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetExitWindow<'info> {
+    pub admin: Signer<'info>,
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = admin @ OxudeError::NotAdmin)]
+    pub config: Account<'info, Config>,
+    #[account(mut, seeds = [EXIT_CONFIG_SEED], bump = exit_config.bump)]
+    pub exit_config: Account<'info, ExitConfig>,
+}
+
 #[derive(Accounts)]
 #[instruction(agent_id: [u8; 16])]
 pub struct RequestExit<'info> {
@@ -949,6 +1050,8 @@ pub struct RequestExit<'info> {
     pub owner: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, Config>,
+    #[account(seeds = [EXIT_CONFIG_SEED], bump = exit_config.bump)]
+    pub exit_config: Account<'info, ExitConfig>,
     #[account(seeds = [OWNER_SEED, agent_id.as_ref()], bump = agent_owner.bump, has_one = owner @ OxudeError::NotOwner)]
     pub agent_owner: Account<'info, AgentOwner>,
     #[account(seeds = [VAULT_SEED, agent_id.as_ref()], bump, token::mint = config.mint)]
@@ -997,6 +1100,8 @@ pub struct ClaimExit<'info> {
 pub struct CloseExit<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
+    #[account(seeds = [EXIT_CONFIG_SEED], bump = exit_config.bump)]
+    pub exit_config: Account<'info, ExitConfig>,
     #[account(
         mut,
         close = owner,
@@ -1005,6 +1110,12 @@ pub struct CloseExit<'info> {
         has_one = owner @ OxudeError::NotOwner
     )]
     pub exit: Account<'info, Exit>,
+}
+
+#[event]
+pub struct ExitWindowChanged {
+    pub previous: u64,
+    pub slots: u64,
 }
 
 #[event]
@@ -1141,11 +1252,33 @@ pub enum OxudeError {
     ExitAlreadyClaimed,
     #[msg("A claimed exit stays on chain a while, so the ledger can catch up before the record goes")]
     ExitEvidenceNeeded,
+    #[msg("The exit window cannot be shorter than the program's floor")]
+    ExitWindowTooShort,
+    #[msg("The exit window cannot be more than halved in one step")]
+    ExitWindowShrinkTooFast,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_exit_window_grows_freely_and_shrinks_by_halves() {
+        // Growing: always allowed, however far.
+        assert!(window_shrink_ok(4_500, 9_000));
+        assert!(window_shrink_ok(4_500, u64::MAX));
+        // Exactly half is the edge, and it is allowed.
+        assert!(window_shrink_ok(4_500, 2_250));
+        assert!(!window_shrink_ok(4_500, 2_249));
+        // Thirty minutes to the floor is nine steps, not one.
+        let mut slots = 4_500u64;
+        let mut steps = 0;
+        while slots > MIN_EXIT_WINDOW_SLOTS {
+            slots = (slots / 2).max(MIN_EXIT_WINDOW_SLOTS);
+            steps += 1;
+        }
+        assert_eq!(steps, 9);
+    }
 
     #[test]
     fn an_exit_pays_what_was_asked_when_the_vault_still_covers_it() {
