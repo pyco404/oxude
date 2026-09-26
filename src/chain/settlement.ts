@@ -9,7 +9,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, type TransactionInstruction } from "@solana/web3.js";
-import { uuidBytes, type PreparedWithdrawal } from "./common.js";
+import { uuidBytes, uuidFromBytes, type PreparedWithdrawal } from "./common.js";
 import { DEVNET_CHIP_RATE, STAKE_DECIMALS } from "../chips.js";
 import idl from "./idl.json" with { type: "json" };
 import type { OxudeSettlement } from "./idl-types.js";
@@ -73,6 +73,41 @@ export async function stakeMintOf(connection: Connection): Promise<PublicKey> {
     new AnchorProvider(connection, new Wallet(Keypair.generate()), { commitment: "confirmed" }),
   ).account.config.fetch(pdas.config());
   return config.mint;
+}
+
+/** An exit as the chain records it. Slots and amounts are the program's own units. */
+export type ChainExit = {
+  agentId: string;
+  owner: string;
+  amount: number;
+  requestedSlot: number;
+  unlockSlot: number;
+  vaultAtRequest: number;
+  /** 0 until claimed. */
+  claimedSlot: number;
+  claimedAmount: number;
+};
+
+function exitFrom(e: {
+  agentId: number[];
+  owner: PublicKey;
+  amount: BN;
+  requestedSlot: BN;
+  unlockSlot: BN;
+  vaultAtRequest: BN;
+  claimedSlot: BN;
+  claimedAmount: BN;
+}): ChainExit {
+  return {
+    agentId: uuidFromBytes(e.agentId),
+    owner: e.owner.toBase58(),
+    amount: Number(e.amount),
+    requestedSlot: Number(e.requestedSlot),
+    unlockSlot: Number(e.unlockSlot),
+    vaultAtRequest: Number(e.vaultAtRequest),
+    claimedSlot: Number(e.claimedSlot),
+    claimedAmount: Number(e.claimedAmount),
+  };
 }
 
 export class ChainClient {
@@ -408,27 +443,24 @@ export class ChainClient {
    * what turns "this vault holds less than the ledger says" from an alarm into
    * an explanation.
    */
-  async exitOf(agentId: string): Promise<{
-    amount: number;
-    requestedSlot: number;
-    unlockSlot: number;
-    vaultAtRequest: number;
-    claimedSlot: number;
-    claimedAmount: number;
-  } | null> {
+  async exitOf(agentId: string): Promise<ChainExit | null> {
     try {
-      const e = await this.program.account.exit.fetch(pdas.exit(agentId));
-      return {
-        amount: Number(e.amount),
-        requestedSlot: Number(e.requestedSlot),
-        unlockSlot: Number(e.unlockSlot),
-        vaultAtRequest: Number(e.vaultAtRequest),
-        claimedSlot: Number(e.claimedSlot),
-        claimedAmount: Number(e.claimedAmount),
-      };
+      return exitFrom(await this.program.account.exit.fetch(pdas.exit(agentId)));
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Every exit the program holds, requested or claimed.
+   *
+   * This is how the server finds out an exit was asked for at all. A request
+   * moves no money, so no vault is short and nothing else here would ever look
+   * at that agent's exit address - and the request is exactly the moment the
+   * agent has to stop playing. One call for the lot, rather than one per agent.
+   */
+  async exits(): Promise<ChainExit[]> {
+    return (await this.program.account.exit.all()).map((e) => exitFrom(e.account));
   }
 
   async deposit(input: { agentId: string; amount: number }): Promise<string> {

@@ -16,6 +16,13 @@ export function uuidBytes(uuid: string): number[] {
   return Array.from(Buffer.from(hex, "hex"));
 }
 
+/** The inverse of `uuidBytes`: 16 raw bytes back to the id the database uses. */
+export function uuidFromBytes(bytes: ArrayLike<number>): string {
+  const hex = Buffer.from(Array.from(bytes)).toString("hex");
+  if (hex.length !== 32) throw new Error(`not 16 bytes: ${hex}`);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function loadKeypair(path: string): Keypair {
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8")) as number[]));
 }

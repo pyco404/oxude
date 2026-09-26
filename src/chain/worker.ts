@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import type { SeedOpenVaultInput } from "./seed-settlement.js";
+import type { ChainExit } from "./settlement.js";
 import { balancesOf, record } from "../db/ledger.js";
 import { agents, chainOps, deposits, exits, rentals, withdrawals, type ChainOpRow } from "../db/schema.js";
 import type { Funding } from "../chips.js";
@@ -62,14 +63,9 @@ export type ChainPort = {
    * no exits: a port without this simply never explains a shortfall, which is
    * the right answer there.
    */
-  exitOf?(agentId: string): Promise<{
-    amount: number;
-    requestedSlot: number;
-    unlockSlot: number;
-    vaultAtRequest: number;
-    claimedSlot: number;
-    claimedAmount: number;
-  } | null>;
+  exitOf?(agentId: string): Promise<ChainExit | null>;
+  /** Every exit the program holds. Absent on the seed program, for the same reason. */
+  exits?(): Promise<ChainExit[]>;
 };
 
 export type DrainResult = {

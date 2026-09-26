@@ -1,5 +1,6 @@
 import { agentIdFor } from "../src/agent-id.js";
 import type { ChainPort } from "../src/chain/worker.js";
+import type { ChainExit } from "../src/chain/settlement.js";
 import type { SeedOpenVaultInput } from "../src/chain/seed-settlement.js";
 
 /**
@@ -67,22 +68,42 @@ export class FakeChain implements ChainPort {
     return false;
   }
   /** Exits the chain knows about, as the deposit program would report them. */
-  exits = new Map<string, { amount: number; requestedSlot: number; unlockSlot: number; vaultAtRequest: number; claimedSlot: number; claimedAmount: number }>();
+  onChain = new Map<string, ChainExit>();
   async exitOf(agentId: string) {
-    return this.exits.get(agentId) ?? null;
+    return this.onChain.get(agentId) ?? null;
   }
-  /** An owner took `amount` out of their own vault, as claim_exit would. */
-  claimExit(agentId: string, amount: number, slot = 1_000) {
-    const held = this.vaults.get(agentId) ?? 0;
-    this.vaults.set(agentId, held - amount);
-    this.exits.set(agentId, {
+  async exits() {
+    return [...this.onChain.values()];
+  }
+  /** The owner asks to leave, as request_exit would. Moves nothing. */
+  requestExit(agentId: string, amount: number, slot = 100, window = 4_500) {
+    this.onChain.set(agentId, {
+      agentId,
+      owner: this.owners.get(agentId) ?? "owner",
       amount,
-      requestedSlot: slot - 4_500,
-      unlockSlot: slot,
-      vaultAtRequest: held,
-      claimedSlot: slot,
-      claimedAmount: amount,
+      requestedSlot: slot,
+      unlockSlot: slot + window,
+      vaultAtRequest: this.vaults.get(agentId) ?? 0,
+      claimedSlot: 0,
+      claimedAmount: 0,
     });
+  }
+  /**
+   * An owner took money out of their own vault, as claim_exit would: the
+   * smaller of what was asked and what is there. With no request on record,
+   * one is made for `amount` first, so a test about the claim alone can skip it.
+   */
+  claimExit(agentId: string, amount: number, slot = 1_000) {
+    if (!this.onChain.has(agentId) || this.onChain.get(agentId)!.claimedSlot !== 0) this.requestExit(agentId, amount, slot - 4_500);
+    const exit = this.onChain.get(agentId)!;
+    const held = this.vaults.get(agentId) ?? 0;
+    const paid = Math.min(exit.amount, held);
+    this.vaults.set(agentId, held - paid);
+    this.onChain.set(agentId, { ...exit, claimedSlot: slot, claimedAmount: paid });
+  }
+  /** close_exit: a cancel before the claim, or clearing the record after one. */
+  closeExit(agentId: string) {
+    this.onChain.delete(agentId);
   }
   async blockHeightPassed() {
     return false;

@@ -146,7 +146,9 @@ describe("a vault short because its owner exited", () => {
     const agent = await settled(db, chain, "Seeded");
     chain.vaults.set(agent.id, (chain.vaults.get(agent.id) ?? 0) - 70);
     // An exit exists on chain, and must still not be consulted.
-    chain.exits.set(agent.id, {
+    chain.onChain.set(agent.id, {
+      agentId: agent.id,
+      owner: "owner",
       amount: 70,
       requestedSlot: 0,
       unlockSlot: 1,
