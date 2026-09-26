@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { agentEvents, agents, exits } from "../src/db/schema.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
-import { checkExitWindow, drainChainOps, reconcile } from "../src/chain/worker.js";
+import { checkExitWindow, drainChainOps, reconcile, startChainWorker } from "../src/chain/worker.js";
 import { ingestExits, isExiting } from "../src/db/exits.js";
 import { balanceOf, StakeError } from "../src/db/ledger.js";
 import { dueAgents } from "../src/db/autoplay.js";
@@ -351,5 +351,73 @@ describe("what the owner's own view says", () => {
     expect(w.reason).toBeNull();
     expect(w.withdrawable).toBe(600);
     await close();
+  });
+});
+
+describe("the window moving under a running server", () => {
+  const fresh = async () => {
+    const c = await connect();
+    await migrate(c.db);
+    return c;
+  };
+
+  /** Runs passes until `want` alarms have arrived, or gives up. */
+  const settleOn = async (seen: unknown[], want: number) => {
+    for (let i = 0; i < 40 && seen.length < want; i++) await new Promise((r) => setTimeout(r, 25));
+    return seen.length;
+  };
+
+  it("alarms when it drops below the line, and says so again when it comes back", async () => {
+    const { db, close } = await fresh();
+    const chain = new FakeChain();
+    const seen: { ok: boolean; slots: number }[] = [];
+    const worker = startChainWorker(db, { seed: chain, deposit: chain }, {
+      intervalMs: 50,
+      exitIntervalMs: 50,
+      onExitWindow: (s) => seen.push({ ok: s.ok, slots: s.slots }),
+    });
+    try {
+      // The first reading is always reported, so a server that starts healthy
+      // still says what it is running against.
+      await settleOn(seen, 1);
+      expect(seen[0]).toEqual({ ok: true, slots: 4_500 });
+
+      // Past the line. What counts as "too short" is relative to the pass
+      // interval, and this worker reads every 50ms, so it takes a very small
+      // window indeed: one slot is 400ms of grace against 500ms needed.
+      chain.window = 1;
+      await settleOn(seen, 2);
+      expect(seen[1]).toEqual({ ok: false, slots: 1 });
+
+      // And back.
+      chain.window = 4_500;
+      await settleOn(seen, 3);
+      expect(seen[2]).toEqual({ ok: true, slots: 4_500 });
+
+      // Once per crossing, not once per pass: the condition can last days.
+      const before = seen.length;
+      await new Promise((r) => setTimeout(r, 250));
+      expect(seen.length).toBe(before);
+    } finally {
+      worker.stop();
+      await close();
+    }
+  });
+
+  it("keeps ingesting while the window is wrong, because the money still has to be right", async () => {
+    const { db, close } = await fresh();
+    const chain = new FakeChain();
+    const a = await player(db, chain, "Regardless");
+    chain.window = 1;
+    chain.claimExit(a.id, 200, 5_000);
+
+    const worker = startChainWorker(db, { seed: chain, deposit: chain }, { intervalMs: 50, exitIntervalMs: 50 });
+    try {
+      for (let i = 0; i < 40 && (await balanceOf(db, a.id)) === 900; i++) await new Promise((r) => setTimeout(r, 25));
+      expect(await balanceOf(db, a.id)).toBe(700);
+    } finally {
+      worker.stop();
+      await close();
+    }
   });
 });

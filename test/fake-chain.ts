@@ -75,6 +75,11 @@ export class FakeChain implements ChainPort {
   async exits() {
     return [...this.onChain.values()];
   }
+  /** The live exit window, which an admin can move under a running server. */
+  window: number | null = 4_500;
+  async exitWindow() {
+    return this.window;
+  }
   /** The owner asks to leave, as request_exit would. Moves nothing. */
   requestExit(agentId: string, amount: number, slot = 100, window = 4_500) {
     this.onChain.set(agentId, {

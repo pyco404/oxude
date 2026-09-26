@@ -404,6 +404,14 @@ if (chain && rpc) {
         console.log(`chain: ${r.confirmed} confirmed, ${r.alreadyOnChain} already on chain${held}`);
       }
     },
+    // The window can be moved under a running server by set_exit_window, and
+    // everything the watcher does assumes a claim cannot vanish between two
+    // passes. Said once on each crossing, and loudly: while this is wrong, an
+    // owner taking their money reads as an owner changing their mind.
+    onExitWindow: (state) => {
+      if (!state.ok) console.error(`exits:   EXIT WINDOW TOO SHORT - ${state.reason}`);
+      else console.log(`exits:   window is long enough again - ${state.reason}`);
+    },
     // Said once when the outbox stops moving and once when it starts again.
     // Loud on purpose: the failure it names looks identical to a quiet hour.
     onLag: ({ stalled, lagMs }) => {

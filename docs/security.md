@@ -109,10 +109,12 @@ constant can see the problem alone - it is only visible from both at once, and
 startup is where both are known. The program's floor stays where it is; it
 makes zero unrepresentable, which is a different job.
 
-Still true, and still worth knowing: an admin can walk a **running**
-deployment's window below the line with `set_exit_window`, and nothing
-re-checks until the next restart. The reconciler is what catches that, as
-below.
+The watcher re-checks it on **every pass** as well, since `set_exit_window` can
+move the window under a running server, and alarms once on each crossing - it
+already reads the chain every pass, so this costs one more small account read.
+That turns what would have been an after-the-fact catch by the reconciler into
+an immediate one. Ingestion carries on regardless while the alarm is up: the
+window being wrong does not make the money any less real.
 
 ## Known limitations
 

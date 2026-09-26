@@ -67,6 +67,8 @@ export type ChainPort = {
   exitOf?(agentId: string): Promise<ChainExit | null>;
   /** Every exit the program holds. Absent on the seed program, for the same reason. */
   exits?(): Promise<ChainExit[]>;
+  /** The live exit window in slots, or null where exits are not turned on. */
+  exitWindow?(): Promise<number | null>;
 };
 
 export type DrainResult = {
@@ -769,6 +771,13 @@ export function startChainWorker(
      */
     exitIntervalMs?: number;
     onExits?: (pass: ExitPass) => void;
+    /**
+     * The exit window went under what this watcher can cover, or came back.
+     * Once on each crossing, like the other alarms here: the condition can
+     * persist for days, and an alarm that repeats every pass is one nobody
+     * reads.
+     */
+    onExitWindow?: (state: ExitWindowCheck & { slots: number }) => void;
   } = {},
 ): { stop: () => void } {
   let stopped = false;
@@ -800,11 +809,28 @@ export function startChainWorker(
   // them: an exit is owner-signed, so it reaches this server only by being
   // looked for.
   let exitTimer: ReturnType<typeof setTimeout> | undefined;
+  const exitEvery = options.exitIntervalMs ?? 30_000;
+  // Null until the first reading, so the first answer is always reported.
+  let windowOk: boolean | null = null;
   const exitPass = async () => {
     if (stopped) return;
     try {
       const ports = portsOf(chain);
       if (ports.deposit?.exits) {
+        // The window is checked on every pass, not only at startup, because
+        // set_exit_window can move it under a running server. Everything below
+        // this line assumes a claim cannot vanish between two passes, and this
+        // is the only thing that notices when that stops being true.
+        if (ports.deposit.exitWindow) {
+          const slots = await ports.deposit.exitWindow();
+          if (slots !== null) {
+            const check = checkExitWindow(slots, exitEvery);
+            if (check.ok !== windowOk) {
+              windowOk = check.ok;
+              options.onExitWindow?.({ ...check, slots });
+            }
+          }
+        }
         const result = await ingestExits(db, await ports.deposit.exits());
         if (result.frozen.length || result.ingested.length || result.cleared.length) options.onExits?.(result);
       }
@@ -813,7 +839,7 @@ export function startChainWorker(
       // one picks up everything this one missed, because it reads the chain
       // rather than a queue.
     }
-    if (!stopped) exitTimer = setTimeout(() => void exitPass(), options.exitIntervalMs ?? 30_000);
+    if (!stopped) exitTimer = setTimeout(() => void exitPass(), exitEvery);
   };
 
   void pass();
