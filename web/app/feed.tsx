@@ -52,7 +52,10 @@ export function useFeed(initial: Feed | null, limit = 12, keep = false): LiveFee
   return useMemo(() => {
     if (!base && live.arrivals.length === 0) return null;
     const known = new Set(base?.matches.map((m) => m.id));
-    const fresh = live.arrivals.filter((a) => !a.match.exhibition && !known.has(a.match.id)).map((a) => a.match);
+    // Exhibitions included. They are most of what is played while players wait
+    // for an opponent, and leaving them out makes a working site look dead.
+    // Every row says which it is, so nobody has to guess.
+    const fresh = live.arrivals.filter((a) => !known.has(a.match.id)).map((a) => a.match);
     const matches = [...fresh, ...(base?.matches ?? [])];
     const played = live.arrivals.find(
       (a) =>
@@ -87,7 +90,7 @@ export function BluffCard({ bluff }: { bluff: FeedItem | null }) {
             <AgentName name={who.name} preset={who.presetName} />
           </Link>{" "}
           finished the match <span className={`font-mono ${netTone(net)}`}>{signed(net)}</span>
-          {bluff.exhibition ? " in an exhibition between house agents, with nothing staked" : ""}.
+          {bluff.exhibition ? " in an exhibition, with nothing staked" : ""}.
         </p>
         <Link
           href={`/m/${bluff.id}`}
@@ -224,7 +227,12 @@ function FinishedRow({ m, now }: { m: FeedItem; now: number | null }) {
           </span>
         )}
         {m.exhibition ? (
-          <span className="rounded-panel shrink-0 border border-line px-1 font-mono text-[11px] uppercase tracking-wider text-muted">
+          // Readable rather than merely present: somebody landing on the site
+          // must not take an exhibition for staked play.
+          <span
+            className="rounded-panel shrink-0 border border-muted px-1 font-mono text-[11px] uppercase tracking-wider text-text"
+            title="Nothing is staked in an exhibition: no money moves and it counts toward no ladder."
+          >
             exhibition
           </span>
         ) : null}
@@ -241,7 +249,7 @@ function FinishedRow({ m, now }: { m: FeedItem; now: number | null }) {
             <>
               <span className="font-mono">{m.rounds}</span> rounds,{" "}
               {m.exhibition ? (
-                "nothing staked"
+                <span className="text-text">nothing staked</span>
               ) : (
                 <>
                   staked <span className="font-mono text-gold">{m.stake}</span>
