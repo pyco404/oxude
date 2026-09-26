@@ -2,7 +2,7 @@ import { and, asc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import type { Db } from "./client.js";
 import { recordEvent } from "./events.js";
-import { standings } from "./standings.js";
+import { prizeOrder, standings } from "./standings.js";
 import { GRACE_MS, nextSeason, RENEWAL_REMINDER_MS, seasonAt, seasonByKey, type Season } from "../season.js";
 import { agents, seasonStandings, seasons, type AgentRow } from "./schema.js";
 
@@ -73,7 +73,15 @@ export async function closeSeason(db: Db, key: string, now = new Date()): Promis
     // Final placement: frozen now, never recomputed. The grace period that
     // follows cannot change it - an agent renewed tomorrow plays in the next
     // season, not this one.
+    //
+    // Both orderings are frozen, because they are two different questions
+    // about the same season and the answers must not move. `rank` is the
+    // ladder's: ranked net won. `prizeRank` is what prizes pay on: ranked net
+    // per chip staked, with a minimum match count. The numbers alone would not
+    // be enough - re-deriving an order later would let a change to the minimum
+    // or the tie-break quietly reorder a season that has already paid.
     const table = await standings(t, { season: key });
+    const prizes = new Map(prizeOrder(table).map((p) => [p.agentId, p.prizeRank]));
     if (table.length > 0) {
       await tx
         .insert(seasonStandings)
@@ -82,6 +90,7 @@ export async function closeSeason(db: Db, key: string, now = new Date()): Promis
             season: key,
             agentId: s.agentId,
             rank: i + 1,
+            prizeRank: prizes.get(s.agentId) ?? null,
             rankedMatches: s.rankedMatches,
             rankedNet: s.rankedNet,
             rankedStaked: s.rankedStaked,

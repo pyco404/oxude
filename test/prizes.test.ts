@@ -4,7 +4,15 @@ import {
   perChip,
   prizeOrder,
   type Standing,
+  standings,
 } from "../src/db/standings.js";
+import { eq } from "drizzle-orm";
+import { connect, migrate } from "../src/db/client.js";
+import { agents, seasonStandings } from "../src/db/schema.js";
+import { createAgent, runMatch } from "../src/db/runner.js";
+import { closeSeason } from "../src/db/seasons.js";
+import { seasonAt } from "../src/season.js";
+import { someWallet } from "./helpers.js";
 
 /** A standing with everything but the figures under test filled in plausibly. */
 const standing = (agentId: string, s: Partial<Standing> = {}): Standing => ({
@@ -112,5 +120,66 @@ describe("the prize order", () => {
     expect(order.length).toBe(3);
     expect(new Set(order.map((s) => s.agentId))).toEqual(new Set(["p1", "p2", "p3"]));
     expect(order.filter((s) => s.prizeRank !== null).map((s) => s.agentId)).toEqual(["p1"]);
+  });
+});
+
+describe("freezing both orderings at the boundary", () => {
+  const fresh = async () => {
+    const c = await connect();
+    await migrate(c.db);
+    return c;
+  };
+
+  it("writes the ladder's rank and the prize placement, and never recomputes either", async () => {
+    const { db, close } = await fresh();
+    const current = seasonAt(new Date());
+    const a = await createAgent(db, { name: "Pa", presetName: "Bully", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Pb", presetName: "Anchor", ownerId: someWallet() });
+    for (let i = 0; i < 6; i++) await runMatch(db, a.id, b.id, { seed: 100 + i });
+
+    const live = await standings(db, { season: current.key });
+    expect(live.length).toBe(2);
+
+    await db.update(agents).set({ rentalEndsAt: new Date(current.end.getTime()) }).where(eq(agents.id, a.id));
+    const result = await closeSeason(db, current.key, new Date(current.end.getTime() + 60_000));
+    expect(result.standings).toBe(2);
+
+    const frozen = await db.select().from(seasonStandings).where(eq(seasonStandings.season, current.key));
+    expect(frozen.length).toBe(2);
+    // Both orderings are complete: every agent has a ladder rank, and the
+    // per-chip numerator it is placed on is stored beside it.
+    expect(new Set(frozen.map((f) => f.rank))).toEqual(new Set([1, 2]));
+    for (const f of frozen) {
+      const l = live.find((s) => s.agentId === f.agentId)!;
+      expect(Number(f.rankedNetReal)).toBe(l.rankedNetReal);
+      expect(Number(f.rankedStaked)).toBe(l.rankedStaked);
+    }
+    // Six matches is under the minimum, so nobody is placed for prizes - and
+    // that is recorded as a null rank, not as an absent row.
+    expect(frozen.every((f) => f.prizeRank === null)).toBe(true);
+
+    // Closing again finds it closed and changes nothing.
+    const again = await closeSeason(db, current.key, new Date(current.end.getTime() + 120_000));
+    expect(again.closed).toBe(false);
+    await close();
+  });
+
+  it("places the agents that met the minimum, in per-chip order", async () => {
+    const { db, close } = await fresh();
+    const current = seasonAt(new Date());
+    const a = await createAgent(db, { name: "Qa", presetName: "Bully", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Qb", presetName: "Mirage", ownerId: someWallet() });
+    for (let i = 0; i < MIN + 5; i++) await runMatch(db, a.id, b.id, { seed: 900 + i });
+
+    const expected = prizeOrder(await standings(db, { season: current.key }));
+    await closeSeason(db, current.key, new Date(current.end.getTime() + 60_000));
+
+    const frozen = await db.select().from(seasonStandings).where(eq(seasonStandings.season, current.key));
+    for (const e of expected) {
+      expect(frozen.find((f) => f.agentId === e.agentId)!.prizeRank).toBe(e.prizeRank);
+    }
+    // A head-to-head is zero sum, so one of the two is above water and placed first.
+    expect(expected.map((e) => e.prizeRank)).toEqual([1, 2]);
+    await close();
   });
 });
