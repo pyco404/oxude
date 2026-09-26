@@ -22,3 +22,6 @@ chain/test-ledger/
 
 # recorded demo videos
 demo/
+
+# local scratch scripts, never shipped
+scratch-tmp/
