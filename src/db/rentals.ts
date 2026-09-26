@@ -208,6 +208,45 @@ export async function expireRental(db: Db, rentalId: string, why: string): Promi
   });
 }
 
+/**
+ * The owner said no at the wallet prompt, so stop waiting for a signature that
+ * is never coming.
+ *
+ * The sweep would get here eventually - `PREPARED_GRACE_MS` later - because it
+ * cannot tell "still deciding" from "closed the tab". The browser can: a
+ * wallet rejection is an answer, not a silence, and waiting fifteen minutes on
+ * an answer we already have leaves a 0-balance agent on the owner's page and
+ * holds their one-agent slot for no reason.
+ *
+ * It still asks the chain rather than believing the caller. A client saying
+ * "rejected" about a rental that actually landed would otherwise retire a paid
+ * agent, and this is reachable by anyone holding the owner's session. So the
+ * vault decides, exactly as it does in the sweep, and the claim only chooses
+ * whether to wait.
+ *
+ * Only a `prepared` rental. A `submitted` one has been broadcast and may yet
+ * land whatever the wallet told the page, so that stays the sweep's business.
+ */
+export async function rejectRental(
+  db: Db,
+  chain: RentalChain,
+  rentalId: string,
+  ownerId: string,
+): Promise<"expired" | "confirmed" | "already-settled" | "in-flight"> {
+  const [r] = await db.select().from(rentals).where(eq(rentals.id, rentalId)).limit(1);
+  if (!r || r.ownerId !== ownerId) throw new RentalError(404, "no such rental");
+  if (r.status === "confirmed" || r.status === "expired") return "already-settled";
+  if (r.status === "submitted") return "in-flight";
+
+  if ((await chain.vaultBalance(r.agentId)) !== null) {
+    // It landed after all. Whatever the page saw, the money moved.
+    await confirmRental(db, r.id, r.signature);
+    return "confirmed";
+  }
+  await expireRental(db, r.id, "the owner declined to sign it");
+  return "expired";
+}
+
 export type SweepResult = { confirmed: string[]; expired: string[] };
 
 /**

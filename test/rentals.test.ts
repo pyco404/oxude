@@ -9,6 +9,7 @@ import {
   openRental,
   prepareRental,
   submitRental,
+  rejectRental,
   sweepRentals,
   RentalError,
   PREPARED_GRACE_MS,
@@ -254,5 +255,72 @@ describe("renting on the deposit flow", () => {
     await expect(
       prepareRental(db, chain, { name: "Nil", presetName: "Bully", ownerId: someWallet(), fee: FEE, deposit: 0 }),
     ).rejects.toBeInstanceOf(RentalError);
+  });
+});
+
+describe("a rejected wallet prompt", () => {
+  it("expires at once instead of waiting out the grace", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const owner = Keypair.generate();
+    const p = await rent(db, chain, owner);
+
+    // The sweep would leave it alone: the grace has not passed.
+    expect((await sweepRentals(db, chain)).expired).toEqual([]);
+    expect((await db.select().from(agents).where(eq(agents.id, p.agent.id)))[0]!.retiredAt).toBeNull();
+
+    expect(await rejectRental(db, chain, p.rentalId, p.ownerId)).toBe("expired");
+
+    const [row] = await db.select().from(rentals).where(eq(rentals.id, p.rentalId));
+    expect(row!.status).toBe("expired");
+    expect(row!.error).toMatch(/declined to sign/);
+    const [a] = await db.select().from(agents).where(eq(agents.id, p.agent.id));
+    expect(a!.retiredAt).not.toBeNull();
+    expect(a!.retiredReason).toBe("unpaid");
+    // And the owner's one-agent slot comes back, which is the point.
+    expect(await activeAgentsOf(db, p.ownerId)).toEqual([]);
+  });
+
+  it("confirms rather than expires when the transaction actually landed", async () => {
+    // The page can be wrong, and this is the direction where being wrong costs
+    // someone an agent they paid for. The vault decides, not the claim.
+    const db = await fresh();
+    const chain = new FakeChain();
+    const owner = Keypair.generate();
+    const p = await rent(db, chain, owner);
+    chain.vaults.set(p.agent.id, DEPOSIT);
+
+    expect(await rejectRental(db, chain, p.rentalId, p.ownerId)).toBe("confirmed");
+    expect((await db.select().from(rentals).where(eq(rentals.id, p.rentalId)))[0]!.status).toBe("confirmed");
+    expect((await db.select().from(agents).where(eq(agents.id, p.agent.id)))[0]!.retiredAt).toBeNull();
+    expect(await balanceOf(db, p.agent.id)).toBe(DEPOSIT);
+  });
+
+  it("leaves a submitted rental to the sweep, because it may still land", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const owner = Keypair.generate();
+    const p = await rent(db, chain, owner);
+    await db.update(rentals).set({ status: "submitted" }).where(eq(rentals.id, p.rentalId));
+
+    expect(await rejectRental(db, chain, p.rentalId, p.ownerId)).toBe("in-flight");
+    expect((await db.select().from(rentals).where(eq(rentals.id, p.rentalId)))[0]!.status).toBe("submitted");
+  });
+
+  it("belongs to its owner and nobody else", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const p = await rent(db, chain, Keypair.generate());
+    await expect(rejectRental(db, chain, p.rentalId, someWallet())).rejects.toThrow(/no such rental/);
+    expect((await db.select().from(rentals).where(eq(rentals.id, p.rentalId)))[0]!.status).toBe("prepared");
+  });
+
+  it("says so plainly when it has already been settled", async () => {
+    const db = await fresh();
+    const chain = new FakeChain();
+    const owner = Keypair.generate();
+    const p = await rent(db, chain, owner);
+    expect(await rejectRental(db, chain, p.rentalId, p.ownerId)).toBe("expired");
+    expect(await rejectRental(db, chain, p.rentalId, p.ownerId)).toBe("already-settled");
   });
 });
