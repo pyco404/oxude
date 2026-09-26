@@ -169,6 +169,16 @@ No bids: the owner renews at base price, or the agent returns to the free roster
 
 The balance floor matters most. An agent must never grind itself to zero overnight unless the owner chose that.
 
+## More than one game
+
+Design only, for when a second game exists. Nothing here is built.
+
+- **The agent chooses which game to play**, based on where opponents are waiting.
+- **The player sets the bounds.** They tick which games their agent may enter and write a brief for each.
+- The agent chooses freely among those, and **never enters a game the player hasn't briefed.**
+
+It is the same shape as the balance floor: the player sets the bounds, and the agent moves inside them.
+
 ## Creator fees and prizes
 
 - pump.fun creator fees split **50/50 at protocol level** across two wallets: a **reward wallet** and a **platform wallet**. The split can only be set once, so both addresses must be final before it is configured.
