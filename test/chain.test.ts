@@ -765,6 +765,127 @@ describe.skipIf(!RUN)("settlement program", () => {
     });
   });
 
+  /**
+   * The owner-signed exit: `request_exit`, a window, `claim_exit`.
+   *
+   * Everything here is signed by the **owner's** keypair and nothing else. A
+   * ChainClient built around an owner is the whole of it, which is the
+   * property being tested as much as any assertion below: if these pass, a
+   * player can do this with an RPC and a wallet and no server at all.
+   *
+   * What is not here is a claim actually paying out, because the window is
+   * 4,500 slots and the fastest a test validator makes slots is about 25 a
+   * second - three minutes of wall clock for one test. The payout arithmetic
+   * is `exit_payout`, unit-tested in the program; what these cover is that the
+   * lock holds, that only the owner passes, and that the record says what the
+   * server will need to read.
+   */
+  describe("exits nobody co-signs", () => {
+    it("records the window and needs no settler", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      const before = await connection.getSlot("confirmed");
+      await asOwner.requestExit({ agentId: agent, amount: 300 * CHIP });
+      const exit = (await asOwner.exitOf(agent))!;
+
+      expect(exit.amount).toBe(300 * CHIP);
+      expect(exit.vaultAtRequest).toBe(900 * CHIP);
+      expect(exit.claimedSlot).toBe(0);
+      expect(exit.claimedAmount).toBe(0);
+      // Thirty minutes of slots from when it was asked for.
+      expect(exit.unlockSlot - exit.requestedSlot).toBe(4_500);
+      expect(exit.requestedSlot).toBeGreaterThanOrEqual(before);
+      // Nothing moved: a request is a clock starting, not a payment.
+      expect(await asOwner.vaultBalance(agent)).toBe(900 * CHIP);
+    });
+
+    it("refuses a claim before its window has passed", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+      await asOwner.requestExit({ agentId: agent, amount: 900 * CHIP });
+
+      await expect(asOwner.claimExit(agent)).rejects.toThrow(/ExitLocked/);
+      expect(await asOwner.vaultBalance(agent)).toBe(900 * CHIP);
+    });
+
+    it("allows one live exit per agent, so a second request cannot reset the clock", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+      await asOwner.requestExit({ agentId: agent, amount: 100 * CHIP });
+      const first = (await asOwner.exitOf(agent))!;
+
+      // The PDA is seeded by the agent alone, so a second one cannot exist.
+      expect(await refusal(() => asOwner.requestExit({ agentId: agent, amount: 900 * CHIP }))).toMatch(
+        /already in use|custom program error/i,
+      );
+      expect((await asOwner.exitOf(agent))!.unlockSlot).toBe(first.unlockSlot);
+    });
+
+    it("is the owner's alone: nobody else can start one or claim it", async () => {
+      const owner = Keypair.generate();
+      const stranger = Keypair.generate();
+      await airdrop(owner, 1);
+      await airdrop(stranger, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+
+      const asStranger = new ChainClient(connection, stranger, stakeMint);
+      expect(await refusal(() => asStranger.requestExit({ agentId: agent, amount: 900 * CHIP }))).toMatch(/NotOwner/);
+
+      // Nor can the settler, which is the point: this path does not go through us.
+      expect(await refusal(() => chain.requestExit({ agentId: agent, amount: 900 * CHIP }))).toMatch(/NotOwner/);
+      expect(await asStranger.exitOf(agent)).toBeNull();
+    });
+
+    it("cancels an unclaimed exit and gives the rent back", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      await asOwner.requestExit({ agentId: agent, amount: 900 * CHIP });
+      const spent = await connection.getBalance(owner.publicKey, "confirmed");
+      await asOwner.closeExit(agent);
+
+      expect(await asOwner.exitOf(agent)).toBeNull();
+      // The rent came back, less the fee for the closing transaction.
+      expect(await connection.getBalance(owner.publicKey, "confirmed")).toBeGreaterThan(spent);
+      // And the agent can start again, with a fresh clock.
+      await asOwner.requestExit({ agentId: agent, amount: 50 * CHIP });
+      expect((await asOwner.exitOf(agent))!.amount).toBe(50 * CHIP);
+    });
+
+    it("lets settlements through while an exit waits, which is what the window is for", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const winner = await houseVault(0);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      await asOwner.requestExit({ agentId: agent, amount: 900 * CHIP });
+      // The agent loses a match. The exit is live and does not block it.
+      await chain.settle({ matchId: randomUUID(), fromAgent: agent, toAgent: winner, amount: 60 * CHIP });
+
+      expect(await asOwner.vaultBalance(agent)).toBe(840 * CHIP);
+      // The request still says 900, and the vault says 840. The gap is the
+      // settlement, and exit_payout is what turns it into 840 paid rather than
+      // a refusal - which is the whole reason the claim clamps.
+      const exit = (await asOwner.exitOf(agent))!;
+      expect(exit.amount).toBe(900 * CHIP);
+      expect(exit.vaultAtRequest).toBe(900 * CHIP);
+      expect(exit.vaultAtRequest - (await asOwner.vaultBalance(agent))!).toBe(60 * CHIP);
+    });
+  });
+
+  // Note for anything added below: this block moves the chip rate, and
+  // max_settlement follows it. A test appended after this one is playing at
+  // half the limits the ones above it use.
   describe("the season rate", () => {
     /** Mirrors the program's ceiling on tokens per chip. */
     const MAX_CHIP_RATE = 1_000 * CHIP;
