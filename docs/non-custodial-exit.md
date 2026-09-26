@@ -284,6 +284,13 @@ proven on devnet by all means — that is the point of it owing nothing to this
 server — but it must not be the advertised route until ingestion is there to
 catch what it does.
 
+## Proving it
+
+[exit-test.md](exit-test.md) is the procedure: a real wallet takes money out
+twice, once partially and once for the lot, with the second run driven from a
+copy of the page saved to disk. Until that has been done the mechanism is
+built, not proven.
+
 ## Open questions
 
 1. **Seed-flow agents.** The seed program is frozen and its settler key is
