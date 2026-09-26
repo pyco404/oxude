@@ -387,8 +387,13 @@ export const api = {
       `/withdrawals/${withdrawalId}`,
       { token },
     ),
+  /**
+   * Everything, exhibitions included. The live stream carries them, so asking
+   * for staked-only here would show one thing on first paint and another a
+   * second later. Every row says which it is.
+   */
   feed: (limit = 12, before?: number) =>
-    request<Feed>(`/matches?limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
+    request<Feed>(`/matches?staked=false&limit=${limit}${before === undefined ? "" : `&before=${before}`}`),
   prepareDeposit: (token: string | null, agentId: string, chips: number) =>
     request<{ deposit: { depositId: string; amount: number; chips: number; transaction: string } }>(
       `/agents/${agentId}/deposits`,

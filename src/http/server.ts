@@ -853,8 +853,11 @@ export function createApp(options: AppOptions): Server {
     const beforeParam = ctx.query.get("before");
     const before = beforeParam === null ? undefined : Number(beforeParam);
     if (before !== undefined && !Number.isSafeInteger(before)) throw new HttpError(400, "before must be a match seq");
-    // Staked-only by default: exhibitions are filler, and one every thirty
-    // seconds buries the real matches. `?staked=false` asks for everything.
+    // Staked-only by default, which is the conservative answer for anything
+    // that has not thought about it. It made more sense when an exhibition was
+    // only ever house filler; now that a house match is an exhibition, most of
+    // what is played is one, and the site asks for everything and marks each
+    // row. `?staked=false` asks for everything.
     const stakedOnly = (ctx.query.get("staked") ?? "true") !== "false";
     const t = (options.now ?? Date.now)();
     if (!bluffCache || t - bluffCache.at > BLUFF_TTL_MS) bluffCache = { at: t, value: await latestBluff(db) };
