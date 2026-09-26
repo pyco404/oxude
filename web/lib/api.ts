@@ -99,6 +99,11 @@ export type AgentView = {
    * topped up: a "seed" one's vault holds the frozen program's token.
    */
   funding?: "seed" | "deposit";
+  /**
+   * Owner view only: why it cannot be topped up, or null when it can. Set for
+   * an agent whose rental has not been paid for, which has no vault yet.
+   */
+  depositBlocked?: string | null;
   /** Portrait, epithet and bio. Null for an agent not yet given one. */
   character?: Character | null;
   traits?: Traits;
@@ -428,6 +433,15 @@ export const api = {
     request<{ rental: { status: RentalState["status"]; signature: string | null; playable: boolean } }>(
       `/rentals/${rentalId}/submit`,
       { method: "POST", token, body: JSON.stringify({ transaction }) },
+    ),
+  /**
+   * The wallet said no, so stop waiting for a signature that is not coming.
+   * The server still asks the chain before believing it.
+   */
+  rejectRental: (token: string | null, rentalId: string) =>
+    request<{ rental: { outcome: "expired" | "confirmed" | "already-settled" | "in-flight"; message: string } }>(
+      `/rentals/${rentalId}/reject`,
+      { method: "POST", token },
     ),
   rentalState: (token: string | null, rentalId: string) =>
     request<{ rental: RentalState }>(`/rentals/${rentalId}`, { token }),

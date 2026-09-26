@@ -363,6 +363,14 @@ export default function Home({ initialFeed }: { initialFeed: Feed | null }) {
         } catch (error) {
           // Nothing was charged. The fee, the vault and the deposit are one
           // transaction, so a refusal here leaves the wallet exactly as it was.
+          //
+          // Tell the server, rather than leaving the sweep to work it out
+          // fifteen minutes from now. A rejection is an answer: waiting it out
+          // leaves a 0-balance agent on the page and holds the owner's
+          // one-agent slot for no reason. Best effort - if this call fails the
+          // sweep still gets there, which is why nothing is awaited on its
+          // result and no error from it reaches the owner.
+          void api.rejectRental(token, rental.rentalId).catch(() => {});
           setRentalStep({ at: "error", message: (error as Error).message });
           throw error;
         }
@@ -1163,6 +1171,7 @@ function AgentCard({
           <DepositPanel
             agentId={(agent.id ?? agent.agentId)!}
             canDeposit={agent.funding === "deposit" && !retired}
+            blocked={agent.depositBlocked ?? null}
             onChanged={onWithdrawn}
           />
         )}
