@@ -3,7 +3,7 @@ import { firstFreeMark } from "../marks.js";
 import { newAgentId } from "../agent-id.js";
 import { randomInt } from "node:crypto";
 import { policyAgent, policyFromAgent, type Policy } from "../agents/policy.js";
-import { OXUDE_RULES, type Stakes } from "../round.js";
+import { maxNet, OXUDE_RULES, type Stakes } from "../round.js";
 import { playMatch } from "../engine.js";
 import { PRESETS, PRESET_VERSION, type PresetName } from "../presets.js";
 import { renderTranscript } from "../transcript.js";
@@ -136,6 +136,31 @@ export function assertSameFlow(a: Pick<AgentRow, "name" | "funding">, b: Pick<Ag
   if (a.funding !== b.funding) {
     throw new StakeError(
       `${a.name} is funded by ${a.funding} and ${b.name} by ${b.funding}; their vaults are under different programs and cannot settle against each other`,
+    );
+  }
+}
+
+/**
+ * Refuses a match whose result is larger than the engine says it can produce.
+ *
+ * Every piece of money safety downstream rests on this bound: both vaults were
+ * checked against the band's worst match before the match was played, the
+ * settlement program refuses anything above `max_settlement`, and the outflow
+ * cap is sized from it. All of that was written against a comment saying the
+ * engine cannot produce more. This asks the engine instead, every time.
+ *
+ * It should never fire. If it does, the rules have changed under the money
+ * code, and refusing to record the match is the only safe answer: recording it
+ * would move more than either vault was checked to cover, and queue a
+ * settlement the chain would then refuse, leaving the ledger and the vaults
+ * disagreeing for good.
+ */
+export function assertNetWithinBound(net: number, stakes: Stakes, what: string): void {
+  const bound = maxNet(stakes);
+  if (Math.abs(net) > bound) {
+    throw new StakeError(
+      `${what} produced a net of ${net} at ante ${stakes.ante}/${stakes.baseBet}/${stakes.raisedBet}, ` +
+        `which can move at most ${bound}. The engine's rules and the money code disagree; nothing was recorded.`,
     );
   }
 }
@@ -299,6 +324,9 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   // No display names in the log: the match row references both agents, and a
   // name-free log is exactly what a replay reproduces.
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
+  // The engine's own bound, asked of the engine rather than assumed by the
+  // code that spends the answer. Before anything is recorded or moved.
+  assertNetWithinBound(log.nets.A, rules.stakes, `${rowA.name} against ${rowB.name}`);
 
   // One transaction: a recorded match and the ratings derived from it move together.
   // Nothing is capped: the engine cannot produce more than the band's worst
@@ -411,6 +439,9 @@ export async function runExhibition(db: Db, agentAId: string, agentBId: string, 
   assertSameFlow(rowA, rowB);
   const seed = options.seed ?? newSeed();
   const log = playMatch(resolveAgent(rowA), resolveAgent(rowB), { seed, ...rules });
+  // The engine's own bound, asked of the engine rather than assumed by the
+  // code that spends the answer. Before anything is recorded or moved.
+  assertNetWithinBound(log.nets.A, rules.stakes, `${rowA.name} against ${rowB.name}`);
   const settledA = settle(log.nets.A);
   const [match] = await db
     .insert(matches)
