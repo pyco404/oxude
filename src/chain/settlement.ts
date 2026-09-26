@@ -58,6 +58,7 @@ export const pdas = {
    * can find it - which is what lets the server explain a shrunken vault
    * without having been told an id it never chose.
    */
+  exitConfig: () => PublicKey.findProgramAddressSync([Buffer.from("exit_config")], PROGRAM_ID)[0],
   exit: (agentId: string) =>
     PublicKey.findProgramAddressSync([Buffer.from("exit"), Buffer.from(uuidBytes(agentId))], PROGRAM_ID)[0],
 };
@@ -315,6 +316,36 @@ export class ChainClient {
    * Deposits from this client's own signer. That is the treasury funding a
    * house agent, never a player: a player's deposit is signed in their wallet.
    */
+  /** Turns exits on for this deployment, with the window they wait. Admin only. */
+  async initExitConfig(slots: number): Promise<string> {
+    return this.program.methods
+      .initExitConfig(new BN(slots))
+      .accountsPartial({
+        admin: this.signer.publicKey,
+        config: pdas.config(),
+        exitConfig: pdas.exitConfig(),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+  }
+
+  /** Moves the exit window. Admin only; grows freely, shrinks by halves. */
+  async setExitWindow(slots: number): Promise<string> {
+    return this.program.methods
+      .setExitWindow(new BN(slots))
+      .accountsPartial({ admin: this.signer.publicKey, config: pdas.config(), exitConfig: pdas.exitConfig() })
+      .rpc();
+  }
+
+  /** The live exit window in slots, or null if exits are not turned on here. */
+  async exitWindow(): Promise<number | null> {
+    try {
+      return Number((await this.program.account.exitConfig.fetch(pdas.exitConfig())).slots);
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Starts an exit that nobody co-signs.
    *
@@ -328,6 +359,7 @@ export class ChainClient {
       .accountsPartial({
         owner: this.signer.publicKey,
         config: pdas.config(),
+        exitConfig: pdas.exitConfig(),
         agentOwner: pdas.owner(input.agentId),
         vault: pdas.vault(input.agentId),
         exit: pdas.exit(input.agentId),
@@ -365,7 +397,7 @@ export class ChainClient {
   async closeExit(agentId: string): Promise<string> {
     return this.program.methods
       .closeExit(uuidBytes(agentId))
-      .accountsPartial({ owner: this.signer.publicKey, exit: pdas.exit(agentId) })
+      .accountsPartial({ owner: this.signer.publicKey, exitConfig: pdas.exitConfig(), exit: pdas.exit(agentId) })
       .rpc();
   }
 

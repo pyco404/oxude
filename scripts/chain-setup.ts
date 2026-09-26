@@ -108,6 +108,23 @@ if (await connection.getAccountInfo(pdas.config(), "confirmed")) {
   console.log(`         chip rate ${CHIP_RATE} base units, limit ${bandByName("C").worstMatch} chips, rent ${RENT_CHIPS} chips`);
 }
 
+// Exits the server does not co-sign, and the window they wait. Its own account
+// rather than a field on the config, which is already live at a fixed size.
+// Idempotent, and the window is left alone once set: moving it is
+// set-exit-window's job, and that has rules of its own.
+const EXIT_WINDOW = Number(process.env["CHAIN_EXIT_WINDOW_SLOTS"] ?? 4_500);
+{
+  const client = new ChainClient(connection, admin, mint);
+  const live = await client.exitWindow();
+  if (live === null) {
+    const signature = await client.initExitConfig(EXIT_WINDOW);
+    console.log(`exits    on, window ${EXIT_WINDOW} slots (~${Math.round((EXIT_WINDOW * 0.4) / 60)} min) (${signature})`);
+  } else {
+    console.log(`exits    on, window ${live} slots (~${Math.round((live * 0.4) / 60)} min)`);
+    if (live !== EXIT_WINDOW) console.log(`         CHAIN_EXIT_WINDOW_SLOTS says ${EXIT_WINDOW}; use set-exit-window to move it`);
+  }
+}
+
 // The settler pays rent for each vault, settlement, withdrawal and rental record it creates.
 const have = await sol(settler.publicKey);
 if (have < SETTLER_FLOOR) {
