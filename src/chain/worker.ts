@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import type { SeedOpenVaultInput } from "./seed-settlement.js";
 import { balancesOf, record } from "../db/ledger.js";
-import { agents, chainOps, deposits, rentals, withdrawals, type ChainOpRow } from "../db/schema.js";
+import { agents, chainOps, deposits, exits, rentals, withdrawals, type ChainOpRow } from "../db/schema.js";
 import type { Funding } from "../chips.js";
 import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
 
@@ -57,6 +57,19 @@ export type ChainPort = {
   blockHeightPassed(lastValidBlockHeight: number): Promise<boolean>;
   /** Recovers the signature of a settlement that landed while its confirmation was lost. */
   settlementSignature?(matchId: string): Promise<string | null>;
+  /**
+   * An agent's exit as the chain has it. Absent on the seed program, which has
+   * no exits: a port without this simply never explains a shortfall, which is
+   * the right answer there.
+   */
+  exitOf?(agentId: string): Promise<{
+    amount: number;
+    requestedSlot: number;
+    unlockSlot: number;
+    vaultAtRequest: number;
+    claimedSlot: number;
+    claimedAmount: number;
+  } | null>;
 };
 
 export type DrainResult = {
@@ -400,6 +413,25 @@ export type Mismatch = { agentId: string; name: string; ledger: number; chain: n
  * being involved at all, and a deposit whose confirmation was lost looks the
  * same from here. Either way the money is the agent's and the ledger is behind.
  */
+/**
+ * A vault holding less than the ledger says, where the difference is exactly
+ * an exit the owner claimed and the ledger has not yet absorbed.
+ *
+ * Not a mismatch. An exit is owner-signed and needs nobody here, so the chain
+ * moves first and the ledger follows - the one place in this system where that
+ * is the correct order rather than a bug.
+ */
+export type Explained = {
+  agentId: string;
+  name: string;
+  ledger: number;
+  chain: number;
+  /** What the claim took, from the chain's own record of it. */
+  claimed: number;
+  claimedSlot: number;
+  funding: Funding;
+};
+
 export type Surplus = {
   agentId: string;
   name: string;
@@ -418,7 +450,7 @@ export type Surplus = {
 export async function reconcile(
   db: Db,
   chain: ChainPort | ChainPorts,
-): Promise<{ checked: number; mismatches: Mismatch[]; surpluses: Surplus[] }> {
+): Promise<{ checked: number; mismatches: Mismatch[]; surpluses: Surplus[]; explained: Explained[] }> {
   const ports = portsOf(chain);
   const involved = await db
     .select({ id: agents.id, name: agents.name, funding: agents.funding })
@@ -436,6 +468,7 @@ export async function reconcile(
   );
   const mismatches: Mismatch[] = [];
   const surpluses: Surplus[] = [];
+  const explained: Explained[] = [];
   for (const agent of involved) {
     const port = ports[agent.funding];
     // An agent whose program this server cannot reach is not a disagreement:
@@ -456,11 +489,74 @@ export async function reconcile(
         surplus: onChain - ledger,
         funding: agent.funding,
       });
-    } else {
-      mismatches.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain });
+      continue;
     }
+
+    // Short. Before calling it a disagreement, ask the chain whether the owner
+    // took it themselves. The evidence is the Exit account, not a row this
+    // server wrote when it thought it saw a claim: a server that missed the
+    // request entirely still reconciles correctly.
+    const claim = onChain === null ? null : await claimedExit(db, port, agent.id);
+    if (claim !== null && onChain !== null) {
+      const unexplained = ledger - onChain - claim.claimedAmount;
+      if (unexplained === 0) {
+        explained.push({
+          agentId: agent.id,
+          name: agent.name,
+          ledger,
+          chain: onChain,
+          claimed: claim.claimedAmount,
+          claimedSlot: claim.claimedSlot,
+          funding: agent.funding,
+        });
+        continue;
+      }
+      // A claim does not excuse the rest. Reporting the shortfall as though the
+      // exit explained all of it is how this design would hide the very bug it
+      // exists to expose, so what is reported is what the exit does not cover.
+      if (unexplained > 0) {
+        mismatches.push({ agentId: agent.id, name: agent.name, ledger: ledger - claim.claimedAmount, chain: onChain });
+        continue;
+      }
+      // Less short than the claim accounts for: money arrived after it.
+      surpluses.push({
+        agentId: agent.id,
+        name: agent.name,
+        ledger: ledger - claim.claimedAmount,
+        chain: onChain,
+        surplus: -unexplained,
+        funding: agent.funding,
+      });
+      continue;
+    }
+    mismatches.push({ agentId: agent.id, name: agent.name, ledger, chain: onChain });
   }
-  return { checked: involved.length, mismatches, surpluses };
+  return { checked: involved.length, mismatches, surpluses, explained };
+}
+
+/**
+ * An exit this agent claimed on chain that the ledger has not yet absorbed, or
+ * null.
+ *
+ * Two conditions, and both matter. The chain must say it was claimed, which is
+ * the evidence. And this server must not already have written the debit for
+ * *that* claim - otherwise a claim absorbed weeks ago would go on explaining
+ * every later shortfall, and a genuinely drained vault would read as fine. The
+ * slot is what ties the local record to the chain's, because an agent's second
+ * exit reuses the same address as its first.
+ */
+async function claimedExit(
+  db: Db,
+  port: ChainPort,
+  agentId: string,
+): Promise<{ claimedSlot: number; claimedAmount: number } | null> {
+  if (!port.exitOf) return null;
+  const onChain = await port.exitOf(agentId);
+  if (!onChain || onChain.claimedSlot === 0) return null;
+  const [row] = await db.select().from(exits).where(eq(exits.agentId, agentId)).limit(1);
+  const absorbed = row?.ingestedAt !== null && row?.ingestedAt !== undefined && row.claimedSlot === onChain.claimedSlot;
+  if (absorbed) return null;
+  return { claimedSlot: onChain.claimedSlot, claimedAmount: onChain.claimedAmount };
 }
 
 /**
