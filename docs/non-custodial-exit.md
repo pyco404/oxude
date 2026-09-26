@@ -128,10 +128,10 @@ that is up has the remaining ~30 minutes to settle anything it started.
 What survives: the server starts a match microseconds before it ingests the
 request, then dies for more than thirty minutes. The claim succeeds and that
 settlement never lands. Exposure is one match's worst case —
-`max_settlement`, 60 chips. **Accepted, not mitigated.** A reserve would strand
-60 chips on every honest exit to cover a compound failure; that is a bad trade,
-and this belongs in [security.md](security.md) as a bounded known limitation
-rather than as a tax on everyone.
+`max_settlement`, 60 chips. **Accepted, not mitigated**, decided 2026-09-26. A
+reserve would strand 60 chips on every honest exit to cover a compound
+failure; that is a bad trade. Recorded as limitation 13 in
+[security.md](security.md#known-limitations).
 
 **What the player sees.** Not the ledger. Once an exit is ingested the agent is
 in an explicit `exiting` state with the unlock time, and the panel reads the
@@ -184,6 +184,20 @@ well enough to build the transaction by hand.
 Until that exists, this is a better withdrawal, not a non-custodial one, and
 should be described that way.
 
+## After a partial claim, the agent plays on
+
+Decided 2026-09-26. Taking everything retires the agent, as it does today.
+Taking part of it does not: an owner who left a playable balance left it on
+purpose, and retiring them for it would be the wrong default.
+
+**It unfreezes on ingest of the claim, not on the claim itself.** The chain
+knows the vault is smaller the moment the claim lands; the ledger does not
+until the watcher runs. Unfreezing on the claim would let the agent be matched
+in exactly the gap where the two disagree, staking against money the ledger
+still thinks is there. So the order is: claim lands → watcher ingests → ledger
+debited → exit cleared → matchable. The agent stays frozen across the whole
+gap, which is the same rule that makes the gap safe in the first place.
+
 ## Order of work
 
 1. Program: `request_exit`, `claim_exit`, `close_exit`, the Exit account,
@@ -193,18 +207,25 @@ should be described that way.
 2. Deploy to devnet. Program changes ship before anything that uses them.
 3. Reconcile's third state, with tests that a claim plus a real drain still
    reports the drain.
-4. Watcher, freeze, ingest.
-5. `withdrawable()` states and the API.
-6. UI, instant path untouched.
-7. The standalone exit page.
+4. Watcher, freeze, ingest, unfreeze.
+5. **The standalone exit page** — plain HTML, an RPC and a wallet, nothing
+   else. Ahead of the in-app path, because it is the thing that makes the
+   guarantee real; the in-app path is only convenience.
+6. `withdrawable()` states and the API.
+7. In-app UI, instant path untouched.
+
+It cannot go earlier than 5, and the reason is worth stating rather than
+rediscovering: **before step 4 exists, every use of the page is an
+unexplained mismatch.** The ledger never learns the money left, the agent is
+never unfrozen, and reconcile alarms correctly and forever. Built early and
+proven on devnet by all means — that is the point of it owing nothing to this
+server — but it must not be the advertised route until ingestion is there to
+catch what it does.
 
 ## Open questions
 
-1. **Does a claim also retire the agent?** Taking everything retires it today.
-   An exit that leaves a playable balance probably should not, but then the
-   agent unfreezes, and nothing has been decided about when.
-2. **Seed-flow agents.** The seed program is frozen and its settler key is
+1. **Seed-flow agents.** The seed program is frozen and its settler key is
    exposed, so this can only be built on v2. Seed agents retire at cutover;
    this assumes that has happened.
-3. **`close_exit` after how long**, and does anyone but the owner need to call
+2. **`close_exit` after how long**, and does anyone but the owner need to call
    it? Rent is the owner's, so nobody else has an incentive.
