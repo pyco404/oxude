@@ -38,6 +38,7 @@ import {
   type RulesConfig,
 } from "./schema.js";
 import { balanceOf, balancesOf, record, retireIfBroke, settle, stakeBetween, StakeError } from "./ledger.js";
+import { isExiting } from "./exits.js";
 import { recordEvent } from "./events.js";
 import { baseUnits, chips, rateOf, type Funding } from "../chips.js";
 import { rentalEndFor, rentalOpen, rentalOpenSql } from "./rental.js";
@@ -294,6 +295,12 @@ export async function runMatch(db: Db, agentAId: string, agentBId: string, optio
   for (const row of [rowA, rowB]) {
     if (row.retiredAt !== null) throw new StakeError(`${row.name} is retired`);
     if (!rentalOpen(row)) throw new StakeError(`${row.name}'s rental ended with the season; renew it to play`);
+    // An exit is on chain for this agent and the money may be about to leave.
+    // Checked here as well as at the sources that pick opponents, because this
+    // is the one place every staked match passes through.
+    if (await isExiting(db, row.id)) {
+      throw new StakeError(`${row.name} has an exit waiting on chain, so it can't stake anything until that resolves`);
+    }
   }
 
   /**

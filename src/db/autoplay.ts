@@ -5,6 +5,7 @@ import { pickOpponent, runMatch } from "./runner.js";
 import { balanceOf, StakeError } from "./ledger.js";
 import { chips, rateOf } from "../chips.js";
 import { recordEvent } from "./events.js";
+import { exitingSql } from "./exits.js";
 import { rentalOpen, rentalOpenSql } from "./rental.js";
 import { headlineFor } from "../transcript.js";
 import {
@@ -153,6 +154,10 @@ export async function dueAgents(db: Db, intervalMs: number, now = new Date()): P
         isNull(agents.retiredAt),
         // Expired: nothing to play until the owner renews, so not due.
         rentalOpenSql(now),
+        // Mid-exit: the money may be about to leave the vault. Excluded here
+        // as well as refused in runMatch, so the scheduler does not pick it up
+        // every ten minutes only to be turned away.
+        sql`not ${exitingSql}`,
         or(isNull(agents.autoplayLastMatchAt), lte(agents.autoplayLastMatchAt, due)),
       ),
     )
@@ -358,6 +363,12 @@ function describeStop(
             message: "Paused: the season ended and this rental wasn't renewed.",
             action: "Renew it within 24 hours of the boundary to keep it and its record; after that it retires, and its balance stays withdrawable.",
           };
+    case "exit":
+      return {
+        message: "Paused: you asked to take this agent's money out on chain.",
+        action:
+          "It can't play while an exit is waiting - the money may be about to leave. Claim it once the window is up, or cancel the exit and switch autoplay back on.",
+      };
   }
 }
 

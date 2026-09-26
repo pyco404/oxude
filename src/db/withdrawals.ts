@@ -3,6 +3,7 @@ import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { PreparedWithdrawal } from "../chain/common.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
+import { isExiting } from "./exits.js";
 import { agents, chainOps, STAKE_BANDS, withdrawals, type WithdrawalStatus } from "./schema.js";
 import { baseUnits, chips, rateOf } from "../chips.js";
 
@@ -123,6 +124,7 @@ export async function withdrawable(db: Db, agentId: string): Promise<Withdrawabl
   const lapsed = agent.retiredReason === "lapsed";
   if (agent.retiredAt !== null && !lapsed) reason = "this agent is retired";
   else if (!agent.ownerId) reason = "house agents have no owner";
+  else if (await isExiting(db, agentId)) reason = "an exit is waiting on chain: claim or cancel it first";
   else if (await openWithdrawal(db, agentId)) reason = "a withdrawal is already on its way";
   else if (pending.some((op) => op.kind === "settle")) reason = "a match is still settling on chain";
   else if (pending.length > 0 || !(await ownerRegistered(db, agentId))) reason = "the vault is still being set up on chain";
