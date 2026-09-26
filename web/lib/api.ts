@@ -236,6 +236,26 @@ export type Withdrawable = {
   maxPartial: number;
   minStake: number;
   reason: string | null;
+  /**
+   * An exit the owner started on chain, which this server neither co-signs nor
+   * can stop. Null in the ordinary case: the instant path is the front door,
+   * and this is only the state of something the owner started themselves.
+   */
+  exit: ExitState | null;
+};
+
+export type ExitState = {
+  /** Chips asked for. The claim pays at most this, and at most what the vault still holds. */
+  amount: number;
+  requestedSlot: number;
+  unlockSlot: number;
+  /** About when the window is up. An estimate: the chain's clock is slots. */
+  unlockAt: string;
+  claimable: boolean;
+  claimed: boolean;
+  claimedAmount: number | null;
+  /** True once the ledger has taken account of the claim, which is when the agent is free again. */
+  settled: boolean;
 };
 
 /**

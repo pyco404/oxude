@@ -1143,6 +1143,17 @@ export function createApp(options: AppOptions): Server {
         locked: toChips(state.locked, rate),
         maxPartial: toChips(state.maxPartial, rate),
         minStake: toChips(state.minStake, rate),
+        // The owner's own exit, in chips like everything else here. Sent even
+        // when the instant path is available, because an owner with one under
+        // way needs to see it wherever they look - and never sent as an
+        // alternative to that path, only as the state of a thing they started.
+        exit: state.exit
+          ? {
+              ...state.exit,
+              amount: toChips(state.exit.amount, rate),
+              claimedAmount: state.exit.claimedAmount === null ? null : toChips(state.exit.claimedAmount, rate),
+            }
+          : null,
       },
     };
   }
