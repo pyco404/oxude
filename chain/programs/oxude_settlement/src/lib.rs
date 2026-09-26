@@ -97,9 +97,18 @@ pub const MAX_SETTLEMENT_CEILING_CHIPS: u64 = 900;
 /// The least one vault can pay out through settlements in one window, in chips.
 /// A small vault is allowed this much even though a quarter of it is less.
 pub const OUTFLOW_FLOOR_CHIPS: u64 = 120;
-/// The smallest stake a match can have, in chips: band A's worst match. A vault
-/// left with less than this could never play again, so a withdrawal must leave
-/// nothing or at least this.
+/// The least a vault may be left holding, in chips, if it is not left empty.
+///
+/// **Not** a band's worst match, and deliberately below the cheapest one - band
+/// A's is 20. This program does not know the bands and should not: they are the
+/// product's arrangement of the same money, and they have already changed once.
+/// What this asks is only that a withdrawal leave a vault empty or non-trivial,
+/// so that nobody is left holding dust they can neither play nor withdraw.
+///
+/// The server keeps its own, stricter floor at the cheapest band's cover
+/// (src/db/withdrawals.ts), which is what an owner actually runs into. This one
+/// sits underneath as a backstop that holds even if that rule is wrong, which
+/// is the whole reason for having two.
 pub const MIN_STAKE_CHIPS: u64 = 10;
 
 #[program]
