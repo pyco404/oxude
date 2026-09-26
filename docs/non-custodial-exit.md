@@ -70,6 +70,28 @@ Window in slots, not wall clock, to match `WINDOW_SLOTS` and
 `MIN_RATE_INTERVAL_SLOTS`. If slots run slow the window is longer than 30
 minutes, which is the safe direction: more time to settle, and the player waits.
 
+**The window is configuration, not a constant.** It lives in an `ExitConfig`
+singleton, set when an admin turns exits on and moved by `set_exit_window`,
+so it can follow the settlement alarm without a program upgrade — and so the
+full claim path is testable in seconds rather than twenty minutes.
+
+Its own account rather than a field on `Config`, for a concrete reason:
+`Config` is already live on devnet at 137 bytes with no spare room, so growing
+it would need a realloc of an account the migration instruction cannot itself
+deserialize. A separate singleton costs one extra account read and leaves the
+deployed config untouched. It also means **exits are off until an admin turns
+them on**, since `request_exit` needs the account — the right default for a
+staged rollout.
+
+Two rules guard it. `MIN_EXIT_WINDOW_SLOTS` makes zero unrepresentable: a zero
+window is not a short guarantee but no guarantee, request and claim in one
+block with no room for a settlement between them. And `set_exit_window` will
+not more than halve the window in one step, the same shape as the chip rate's
+band, so walking thirty minutes down to the floor takes nine separate on-chain
+transactions instead of one. The floor alone is a sanity bound, not a
+substitute for choosing a real window; the shrink rule is what makes a quiet
+collapse impossible.
+
 The existing rules still apply to a claim: `remaining` is 0 or at least
 `MIN_STAKE_CHIPS`, and the destination must be the owner's own account.
 

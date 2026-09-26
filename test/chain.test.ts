@@ -9,6 +9,7 @@ import {
   AuthorityType,
   createMint,
   getMint,
+  getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
   mintTo,
   setAuthority,
@@ -54,6 +55,8 @@ let initRefusals: { mintable: string; decimals: string };
 const CHIP = DEVNET_CHIP_RATE;
 /** Band C's worst match, which is what max_settlement is set to. */
 const MAX = 60 * CHIP;
+/** Slots an exit waits here. The program's floor is 10; production uses 4,500. */
+const TEST_EXIT_WINDOW = 12;
 /** What a rental costs, burned. */
 const RENT = 200 * CHIP;
 /** Must match the program's constants, converted at the rate. */
@@ -154,6 +157,11 @@ describe.skipIf(!RUN)("settlement program", () => {
     };
 
     await new ChainClient(connection, admin, stakeMint).initialize(settler.publicKey, MAX, RENT, CHIP);
+    // Exits on, with a window this file can outlast. Production's is 4,500
+    // slots (~30 minutes); at the validator's ~2.5 slots a second that would
+    // be twenty minutes of test. TEST_EXIT_WINDOW is a few seconds, which is
+    // the whole reason the window is configurable rather than compiled in.
+    await new ChainClient(connection, admin, stakeMint).initExitConfig(TEST_EXIT_WINDOW);
     chain = new ChainClient(connection, settler, stakeMint);
   }, 60_000);
 
@@ -795,8 +803,8 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(exit.vaultAtRequest).toBe(900 * CHIP);
       expect(exit.claimedSlot).toBe(0);
       expect(exit.claimedAmount).toBe(0);
-      // Thirty minutes of slots from when it was asked for.
-      expect(exit.unlockSlot - exit.requestedSlot).toBe(4_500);
+      // The configured window, from when it was asked for.
+      expect(exit.unlockSlot - exit.requestedSlot).toBe(TEST_EXIT_WINDOW);
       expect(exit.requestedSlot).toBeGreaterThanOrEqual(before);
       // Nothing moved: a request is a clock starting, not a payment.
       expect(await asOwner.vaultBalance(agent)).toBe(900 * CHIP);
@@ -859,6 +867,120 @@ describe.skipIf(!RUN)("settlement program", () => {
       // And the agent can start again, with a fresh clock.
       await asOwner.requestExit({ agentId: agent, amount: 50 * CHIP });
       expect((await asOwner.exitOf(agent))!.amount).toBe(50 * CHIP);
+    });
+
+    /** Waits until the chain is at or past `slot`. */
+    const reachSlot = async (slot: number) => {
+      for (let i = 0; i < 200; i++) {
+        if ((await connection.getSlot("confirmed")) >= slot) return;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      throw new Error(`the validator never reached slot ${slot}`);
+    };
+
+    it("pays the owner once the window has passed, with nobody else signing", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      await asOwner.requestExit({ agentId: agent, amount: 300 * CHIP });
+      await reachSlot((await asOwner.exitOf(agent))!.unlockSlot);
+      await asOwner.claimExit(agent);
+
+      // The money is the owner's, and the vault keeps the rest.
+      expect(await asOwner.vaultBalance(agent)).toBe(600 * CHIP);
+      const held = await connection.getTokenAccountBalance(
+        getAssociatedTokenAddressSync(stakeMint, owner.publicKey),
+        "confirmed",
+      );
+      expect(Number(held.value.amount)).toBe(300 * CHIP);
+
+      // And the record says so, which is what the server reads to explain the
+      // smaller vault rather than alarm about it.
+      const exit = (await asOwner.exitOf(agent))!;
+      expect(exit.claimedAmount).toBe(300 * CHIP);
+      expect(exit.claimedSlot).toBeGreaterThan(0);
+
+      // Once only.
+      await expect(asOwner.claimExit(agent)).rejects.toThrow(/ExitAlreadyClaimed/);
+    });
+
+    it("pays what is left when a settlement took some of it in the window", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const winner = await houseVault(0);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      await asOwner.requestExit({ agentId: agent, amount: 900 * CHIP });
+      // The agent loses while the exit waits. This is the race the window
+      // exists for, and the settlement wins it.
+      await chain.settle({ matchId: randomUUID(), fromAgent: agent, toAgent: winner, amount: 60 * CHIP });
+      await reachSlot((await asOwner.exitOf(agent))!.unlockSlot);
+      await asOwner.claimExit(agent);
+
+      // 840, not 900, and not a refusal: it takes what is there.
+      expect((await asOwner.exitOf(agent))!.claimedAmount).toBe(840 * CHIP);
+      expect(await asOwner.vaultBalance(agent)).toBe(0);
+      expect(await chain.vaultBalance(winner)).toBe(60 * CHIP);
+    });
+
+    it("takes the lot rather than leaving dust it could never play", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      // MIN_STAKE is 10 chips, so asking for 895 of 900 would leave 5.
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      await asOwner.requestExit({ agentId: agent, amount: 895 * CHIP });
+      await reachSlot((await asOwner.exitOf(agent))!.unlockSlot);
+      await asOwner.claimExit(agent);
+
+      expect((await asOwner.exitOf(agent))!.claimedAmount).toBe(900 * CHIP);
+      expect(await asOwner.vaultBalance(agent)).toBe(0);
+    });
+
+    it("keeps a claimed exit on chain until the ledger has had time to read it", async () => {
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      const asOwner = new ChainClient(connection, owner, stakeMint);
+
+      await asOwner.requestExit({ agentId: agent, amount: 900 * CHIP });
+      await reachSlot((await asOwner.exitOf(agent))!.unlockSlot);
+      await asOwner.claimExit(agent);
+
+      // Closing now would erase the only evidence that the vault is smaller
+      // for a good reason, and the reconciler would alarm forever.
+      await expect(asOwner.closeExit(agent)).rejects.toThrow(/ExitEvidenceNeeded/);
+
+      await reachSlot((await asOwner.exitOf(agent))!.claimedSlot + TEST_EXIT_WINDOW);
+      await asOwner.closeExit(agent);
+      expect(await asOwner.exitOf(agent)).toBeNull();
+    });
+
+    it("will not accept a window of zero, or be walked down to one in a step", async () => {
+      const asAdmin = new ChainClient(connection, admin, stakeMint);
+      expect(await asAdmin.exitWindow()).toBe(TEST_EXIT_WINDOW);
+
+      // Zero is not a short guarantee, it is none: request and claim in the
+      // same block, with no room for a settlement between them.
+      await expect(asAdmin.setExitWindow(0)).rejects.toThrow(/ExitWindowTooShort/);
+      await expect(asAdmin.setExitWindow(9)).rejects.toThrow(/ExitWindowTooShort/);
+
+      // Growing is free; shrinking goes by halves.
+      await asAdmin.setExitWindow(4_500);
+      await expect(asAdmin.setExitWindow(2_249)).rejects.toThrow(/ExitWindowShrinkTooFast/);
+      await asAdmin.setExitWindow(2_250);
+      expect(await asAdmin.exitWindow()).toBe(2_250);
+
+      // Only the admin.
+      await expect(chain.setExitWindow(2_000)).rejects.toThrow(/NotAdmin/);
+
+      // Put it back for anything that runs after this.
+      for (const s of [1_125, 563, 282, 141, 71, 36, 18, 12]) await asAdmin.setExitWindow(s);
+      expect(await asAdmin.exitWindow()).toBe(TEST_EXIT_WINDOW);
     });
 
     it("lets settlements through while an exit waits, which is what the window is for", async () => {
