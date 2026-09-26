@@ -47,8 +47,8 @@ import { LiveStream, resumeFrom, type LiveOptions } from "./live.js";
 import { settlementStatus, settlementLag, SETTLEMENT_LAG_ALARM_MS } from "../chain/worker.js";
 import { DEVNET_CHIP_RATE, rateOf, type Funding } from "../chips.js";
 import { faucetStatus, grantFaucet, FaucetError, type FaucetChain } from "../db/faucet.js";
-import { prepareRental, submitRental, RentalError, type RentalChain } from "../db/rentals.js";
-import { prepareDeposit, submitDeposit, DepositError, type DepositChain } from "../db/deposits.js";
+import { prepareRental, rejectRental, submitRental, RentalError, type RentalChain } from "../db/rentals.js";
+import { checkDeposit, depositBlocked, prepareDeposit, submitDeposit, DepositError, type DepositChain } from "../db/deposits.js";
 import { rentals } from "../db/schema.js";
 import { baseUnits, chips as toChips } from "../chips.js";
 import { AuthError, isPublicKey, issueNonce, ownerForToken, revokeSession, verifySignIn } from "../auth/wallet.js";
@@ -292,6 +292,7 @@ export function createApp(options: AppOptions): Server {
     ["POST", /^\/agents\/([^/]+)\/deposits$/, postDeposit],
     ["POST", /^\/deposits\/([^/]+)\/submit$/, postDepositSubmit],
     ["POST", /^\/rentals\/([^/]+)\/submit$/, postRentalSubmit],
+    ["POST", /^\/rentals\/([^/]+)\/reject$/, postRentalReject],
     ["GET", /^\/rentals\/([^/]+)$/, getRental],
     ["GET", /^\/faucet$/, getFaucet],
     ["POST", /^\/faucet$/, postFaucet],
@@ -630,6 +631,8 @@ export function createApp(options: AppOptions): Server {
         autoplay: await autoplayStatus(db, full!, { intervalMs: autoplayIntervalMs }),
         // Where its rental stands: active, renewed, expired and renewable, or lapsed.
         rental: rentalStatus(full!),
+        // Why it cannot be topped up, if so: a vault exists only once the rental has landed.
+        depositBlocked: await depositBlocked(db, full!),
         sinceYouLeft: await sinceYouLeft(db, full!),
         view: "owner",
       };
@@ -995,12 +998,16 @@ export function createApp(options: AppOptions): Server {
     const agentId = requireUuid(ctx.params[0]);
     const deposit = options.deposit;
     if (!deposit) throw new HttpError(503, "deposits are unavailable on this server");
-    spendBoth(rentLimiter, rentByAddress, ownerId, ctx.clientKey, "deposits");
     const asked = ctx.body["amount"];
     if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) {
       throw new HttpError(400, "amount is required, in chips, and must be above zero");
     }
     try {
+      // Refusals that attempt nothing on chain - no vault, not theirs, retired -
+      // come before the limit, so pressing a button that cannot work does not
+      // cost an hour's allowance. The limit is for building transactions.
+      await checkDeposit(db, { agentId, ownerId });
+      spendBoth(rentLimiter, rentByAddress, ownerId, ctx.clientKey, "deposits");
       const out = await prepareDeposit(db, deposit.chain, {
         agentId,
         ownerId,
@@ -1047,6 +1054,39 @@ export function createApp(options: AppOptions): Server {
   }
 
   /** Owner only: where a rental's transaction has got to. */
+  /**
+   * The owner declined the wallet prompt, so this rental can stop waiting.
+   *
+   * Saves the fifteen minutes the sweep would otherwise take to work out that
+   * nobody is coming - during which a 0-balance agent sits on the owner's page
+   * holding their one-agent slot.
+   *
+   * The claim is not trusted with anything. It chooses whether to wait, and
+   * the chain decides what actually happened: a rental whose vault exists is
+   * confirmed here, not expired, however firmly the page believes otherwise.
+   */
+  async function postRentalReject(ctx: Ctx) {
+    const ownerId = ctx.requireOwner();
+    const id = requireUuid(ctx.params[0]);
+    if (!options.deposit) throw new HttpError(503, "the deposit flow is not configured on this server");
+    const outcome = await rejectRental(db, options.deposit.chain, id, ownerId);
+    return {
+      rental: {
+        rentalId: id,
+        outcome,
+        /** What the owner should be told, since only one of these is the ordinary case. */
+        message:
+          outcome === "expired"
+            ? "nothing was charged, and the agent is gone"
+            : outcome === "confirmed"
+              ? "it had already landed, so the agent is yours after all"
+              : outcome === "in-flight"
+                ? "it was already sent, so we have to wait and see whether it lands"
+                : "it was already settled one way or the other",
+      },
+    };
+  }
+
   async function getRental(ctx: Ctx) {
     const ownerId = ctx.requireOwner();
     const id = requireUuid(ctx.params[0]);
