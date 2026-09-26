@@ -60,6 +60,49 @@ The model's only job is to fill in a 30-cell decision table from a brief, once, 
 - **Privacy of strategies.** Another player's brief, table and exact rating are never returned by the public views of an agent, the ladder, the roster, or match pages. Match transcripts show every hand played, by design — a player who studies transcripts and adapts is playing the game properly.
 - **CORS** allows one configured web origin.
 
+## Invariants
+
+Things that are true today and that nothing currently enforces. Each one names
+the constants it depends on, because the way these break is that somebody
+changes a number without knowing this paragraph exists.
+
+### The close grace must comfortably exceed the watcher's pass interval
+
+**Depends on:** `exit_config.slots` (the exit window, on chain, default
+`DEFAULT_EXIT_WINDOW_SLOTS` = 4,500 slots ≈ 30 minutes) and
+`exitIntervalMs` in `startChainWorker` (default 30 seconds).
+
+An exit's record is the only evidence on chain that a vault is legitimately
+smaller than the ledger. `close_exit` refuses to remove a **claimed** exit
+until one whole window has passed since the claim, and the watcher reads every
+exit once a pass. So the server has about sixty passes in which to see a claim
+before its record can disappear.
+
+That margin is what makes the watcher's other rule safe. An exit that vanishes
+before this server ever saw a claim is read as a **cancel**: the agent is
+unfrozen and no debit is written. If a claim could be closed inside one pass
+interval, that reading would be wrong — the money would have left, the agent
+would go back to playing, and the ledger would never hear about it.
+
+**What breaks it.** Lengthening the pass interval, or shortening the window.
+The window is configuration, not a constant: `set_exit_window` can halve it
+per step, and `MIN_EXIT_WINDOW_SLOTS` is **10 slots, about four seconds —
+already shorter than one pass**. Nine halvings from the default reach it, so
+this invariant is reachable through ordinary admin transactions with no code
+change at all. Below roughly 750 slots (five minutes) the margin is gone.
+
+**If it breaks**, the failure is loud rather than silent, which is the reason
+to accept it rather than enforce it in the program: the vault is short, the
+exit record is gone, and nothing explains the difference, so `reconcile`
+reports a mismatch (see the third state in
+[non-custodial-exit.md](non-custodial-exit.md)). The money is still wrong, but
+nobody has to notice on their own.
+
+**Before mainnet**, either make the floor exceed the pass interval by a stated
+multiple, or have the server refuse to start when it reads a window that is
+too short for its own clock. The second is better: it compares the two numbers
+that actually matter, at the moment both are known.
+
 ## Known limitations
 
 These are real, and would each need fixing before anything of value were at stake.

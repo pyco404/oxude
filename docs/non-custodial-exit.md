@@ -183,9 +183,11 @@ and `withdrawable` closes the instant co-signed path.
 One case worth naming: a request that vanishes before this server saw a claim
 is read as a cancel. It could in principle be a claim that was missed, and the
 thing that makes it safe is the program refusing to close a claimed exit for a
-whole window while passes run every thirty seconds. If that grace were ever
-wrong, the reconciler would see a vault short with nothing explaining it and
-say so — which is the third state doing its job.
+whole window while passes run every thirty seconds. This is a **named
+invariant** in [security.md](security.md#invariants), because it is reachable
+through ordinary admin transactions: `MIN_EXIT_WINDOW_SLOTS` is four seconds,
+shorter than one pass. If it breaks, the reconciler sees a vault short with
+nothing explaining it and says so — the third state doing its job.
 
 ## Server changes
 
