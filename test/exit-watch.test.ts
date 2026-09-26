@@ -370,29 +370,31 @@ describe("the window moving under a running server", () => {
   it("alarms when it drops below the line, and says so again when it comes back", async () => {
     const { db, close } = await fresh();
     const chain = new FakeChain();
-    const seen: { ok: boolean; slots: number }[] = [];
+    const seen: { ok: boolean; slots: number; first: boolean }[] = [];
     const worker = startChainWorker(db, { seed: chain, deposit: chain }, {
       intervalMs: 50,
       exitIntervalMs: 50,
-      onExitWindow: (s) => seen.push({ ok: s.ok, slots: s.slots }),
+      onExitWindow: (s) => seen.push({ ok: s.ok, slots: s.slots, first: s.first }),
     });
     try {
       // The first reading is always reported, so a server that starts healthy
       // still says what it is running against.
       await settleOn(seen, 1);
-      expect(seen[0]).toEqual({ ok: true, slots: 4_500 });
+      // The first reading is flagged, so a healthy boot does not log a
+      // recovery from a failure that never happened.
+      expect(seen[0]).toEqual({ ok: true, slots: 4_500, first: true });
 
       // Past the line. What counts as "too short" is relative to the pass
       // interval, and this worker reads every 50ms, so it takes a very small
       // window indeed: one slot is 400ms of grace against 500ms needed.
       chain.window = 1;
       await settleOn(seen, 2);
-      expect(seen[1]).toEqual({ ok: false, slots: 1 });
+      expect(seen[1]).toEqual({ ok: false, slots: 1, first: false });
 
       // And back.
       chain.window = 4_500;
       await settleOn(seen, 3);
-      expect(seen[2]).toEqual({ ok: true, slots: 4_500 });
+      expect(seen[2]).toEqual({ ok: true, slots: 4_500, first: false });
 
       // Once per crossing, not once per pass: the condition can last days.
       const before = seen.length;

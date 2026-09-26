@@ -410,7 +410,7 @@ if (chain && rpc) {
     // owner taking their money reads as an owner changing their mind.
     onExitWindow: (state) => {
       if (!state.ok) console.error(`exits:   EXIT WINDOW TOO SHORT - ${state.reason}`);
-      else console.log(`exits:   window is long enough again - ${state.reason}`);
+      else if (!state.first) console.log(`exits:   window is long enough again - ${state.reason}`);
     },
     // Said once when the outbox stops moving and once when it starts again.
     // Loud on purpose: the failure it names looks identical to a quiet hour.

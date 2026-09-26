@@ -777,7 +777,7 @@ export function startChainWorker(
      * persist for days, and an alarm that repeats every pass is one nobody
      * reads.
      */
-    onExitWindow?: (state: ExitWindowCheck & { slots: number }) => void;
+    onExitWindow?: (state: ExitWindowCheck & { slots: number; first: boolean }) => void;
   } = {},
 ): { stop: () => void } {
   let stopped = false;
@@ -826,8 +826,13 @@ export function startChainWorker(
           if (slots !== null) {
             const check = checkExitWindow(slots, exitEvery);
             if (check.ok !== windowOk) {
+              // `first` separates "this is what we are running against" from
+              // "it was wrong and now is not". Without it a healthy boot logs
+              // a recovery from a failure that never happened, which is a
+              // thing an operator would go looking for.
+              const first = windowOk === null;
               windowOk = check.ok;
-              options.onExitWindow?.({ ...check, slots });
+              options.onExitWindow?.({ ...check, slots, first });
             }
           }
         }

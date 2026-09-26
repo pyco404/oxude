@@ -192,7 +192,7 @@ export function ExitPanel({
       <p className="mt-2 text-[11px] leading-4 text-muted">
         This goes straight to Solana and never through us: your wallet signs it, and nothing here can stop it or
         delay it. The same three instructions work from{" "}
-        <a href="/exit/" className="text-accent">
+        <a href="/exit" className="text-accent">
           a plain HTML page
         </a>{" "}
         that needs no server of ours at all. Save it while you can.
