@@ -1,13 +1,15 @@
 @import "tailwindcss";
 
 /*
- * Flat and dark: no gradients, no glow, no textures. Flat fills and 1px
- * borders only. Colour carries meaning rather than decoration, so each one
+ * Flat and dark: no gradients, no glow. Flat fills and 1px borders only,
+ * with one exception: a faint grain on the page itself, behind everything, so
+ * the background isn't dead flat. Panels stay solid over it. Colour carries meaning rather than decoration, so each one
  * has exactly one job. Every colour in the app is defined here; retune it
  * here, and mirror the change in lib/palette.ts, which carries the same values
  * to the share images, theme-color and the login modal, where CSS can't reach.
  *
  *   ink     the page: a desaturated blue-black, not pure black.
+ *   grain   the page's texture, a shade above ink. Barely there on purpose.
  *   panel   warm charcoal a step above the page, always with a 1px line.
  *   text    warm off-white body text.
  *   muted   secondary text, and only that.
@@ -26,6 +28,7 @@
  */
 @theme {
   --color-ink: #141a24;
+  --color-grain: #2a3446;
   --color-panel: #1f1d1a;
   --color-panel-2: #27241f;
   --color-line: #3b362e;
@@ -43,11 +46,28 @@
   --radius-panel: 6px;
 }
 
-html,
-body {
+html {
   background: var(--color-ink);
   color: var(--color-text);
   -webkit-text-size-adjust: 100%;
+}
+
+/*
+ * The grain. One fixed layer behind all content: its colour is --color-grain,
+ * its shape a noise mask, so retuning it stays a matter of the variable above.
+ * The body is left unfilled so the layer shows through; html carries the ink.
+ * Noise, not a dot grid: it should read as texture, never as a pattern.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--color-grain);
+  opacity: 0.35;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mask-size: 180px 180px;
 }
 
 /* Flat focus ring; no shadows anywhere in this app. */

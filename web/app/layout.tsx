@@ -23,7 +23,7 @@ export const viewport: Viewport = { themeColor: palette.ink, width: "device-widt
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-dvh bg-ink text-text antialiased">
+      <body className="min-h-dvh text-text antialiased">
         <WalletProvider>
           <div className="lg:flex">
             <Sidebar />

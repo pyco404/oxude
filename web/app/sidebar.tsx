@@ -205,7 +205,7 @@ export function Sidebar() {
 
       <aside
         id="site-nav"
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-line bg-ink transition-transform duration-200 motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:w-60 lg:shrink-0 lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-line bg-ink lg:bg-transparent transition-transform duration-200 motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:w-60 lg:shrink-0 lg:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-label="Site"
