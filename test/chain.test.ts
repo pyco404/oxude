@@ -810,6 +810,18 @@ describe.skipIf(!RUN)("settlement program", () => {
       expect(await asOwner.vaultBalance(agent)).toBe(900 * CHIP);
     });
 
+    it("is found by a server that was never told the agent's id", async () => {
+      // A request moves no money, so nothing short points the server at it.
+      // Listing every exit is how it learns one was asked for at all.
+      const owner = Keypair.generate();
+      await airdrop(owner, 1);
+      const { agent } = await playerVault(900 * CHIP, owner);
+      await new ChainClient(connection, owner, stakeMint).requestExit({ agentId: agent, amount: 200 * CHIP });
+
+      const found = (await chain.exits()).find((e) => e.agentId === agent);
+      expect(found).toMatchObject({ agentId: agent, owner: owner.publicKey.toBase58(), amount: 200 * CHIP, claimedSlot: 0 });
+    });
+
     it("refuses a claim before its window has passed", async () => {
       const owner = Keypair.generate();
       await airdrop(owner, 1);
