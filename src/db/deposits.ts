@@ -1,9 +1,9 @@
 import { Transaction } from "@solana/web3.js";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { PreparedWithdrawal } from "../chain/common.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
-import { agents, deposits, type RentalPaymentStatus } from "./schema.js";
+import { agents, chainOps, deposits, rentals, type AgentRow, type RentalPaymentStatus } from "./schema.js";
 
 /**
  * Topping up an agent's vault with its owner's own money.
@@ -36,6 +36,55 @@ export class DepositError extends Error {
   }
 }
 
+/**
+ * Why this agent cannot be topped up, or null when it can.
+ *
+ * The vault is the thing a deposit goes into, and it exists only once the
+ * rental that opens it has landed. An agent whose rental was declined at the
+ * wallet, or has not landed yet, is on the owner's page all the same - so this
+ * has to be asked before offering the button, not discovered by pressing it.
+ */
+export async function depositBlocked(
+  db: Db,
+  agent: Pick<AgentRow, "id" | "funding" | "retiredAt" | "retiredReason">,
+): Promise<string | null> {
+  // A seed agent's vault is a token account for the frozen program's mint, and
+  // this deposit is denominated in the other one. There is nowhere to put it.
+  if (agent.funding !== "deposit") return "this agent was rented before deposits and cannot be topped up";
+  if (agent.retiredReason === "unpaid") return NEVER_PAID;
+  if (agent.retiredAt !== null) return "this agent is retired";
+  const [vault] = await db
+    .select({ id: chainOps.id })
+    .from(chainOps)
+    .where(and(eq(chainOps.agentId, agent.id), eq(chainOps.kind, "open_vault"), eq(chainOps.status, "confirmed")))
+    .limit(1);
+  if (vault) return null;
+  const [rental] = await db
+    .select({ status: rentals.status })
+    .from(rentals)
+    .where(eq(rentals.agentId, agent.id))
+    .orderBy(desc(rentals.createdAt))
+    .limit(1);
+  return rental?.status === "prepared" || rental?.status === "submitted"
+    ? "this agent's rental hasn't been paid for yet, so it has no vault to put money in"
+    : NEVER_PAID;
+}
+
+const NEVER_PAID = "this agent's rental was never paid for, so it has no vault to put money in";
+
+/**
+ * Everything that can refuse a top-up without touching the chain: ownership,
+ * the agent's state, its vault. Separate from preparing one so the caller can
+ * ask it before charging a rate limit - a refusal here attempted nothing.
+ */
+export async function checkDeposit(db: Db, input: { agentId: string; ownerId: string }): Promise<void> {
+  const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
+  if (!agent) throw new DepositError(404, "no such agent");
+  if (agent.ownerId !== input.ownerId) throw new DepositError(403, "that agent belongs to someone else");
+  const blocked = await depositBlocked(db, agent);
+  if (blocked) throw new DepositError(409, blocked);
+}
+
 /** Builds a top-up for the owner to sign. */
 export async function prepareDeposit(
   db: Db,
@@ -45,15 +94,7 @@ export async function prepareDeposit(
   if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
     throw new DepositError(400, "the amount must be a whole number of base units above zero");
   }
-  const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
-  if (!agent) throw new DepositError(404, "no such agent");
-  if (agent.ownerId !== input.ownerId) throw new DepositError(403, "that agent belongs to someone else");
-  // A seed agent's vault is a token account for the frozen program's mint, and
-  // this deposit is denominated in the other one. There is nowhere to put it.
-  if (agent.funding !== "deposit") {
-    throw new DepositError(409, "this agent was rented before deposits and cannot be topped up");
-  }
-  if (agent.retiredAt !== null) throw new DepositError(409, "this agent is retired");
+  await checkDeposit(db, input);
 
   const [row] = await db
     .insert(deposits)

@@ -105,7 +105,7 @@ const tokens = new Map<string, string>();
  * because a wallet may only hold one agent at a time and every rental here
  * leaves one behind.
  */
-const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard", "dep-chips", "dep-withdraw", "dep-partial", "dep-floor", "dep-retire"] as const;
+const DEPOSITORS = ["dep-tells-apart", "dep-unplayable", "dep-funds", "dep-refuses", "dep-private", "dep-topup", "dep-guard", "dep-chips", "dep-withdraw", "dep-partial", "dep-floor", "dep-retire", "dep-unpaid", "dep-limit"] as const;
 const onDepositFlow = new Set(DEPOSITORS.map(walletOf));
 
 async function tokenFor(label: string): Promise<string> {
@@ -123,8 +123,8 @@ async function tokenFor(label: string): Promise<string> {
   return token!;
 }
 
-const api = async (path: string, init: { method?: string; body?: unknown; as: string }) => {
-  const res = await fetch(`${url}${path}`, {
+const api = async (path: string, init: { method?: string; body?: unknown; as: string }, base = url) => {
+  const res = await fetch(`${base}${path}`, {
     method: init.method ?? "GET",
     headers: { "content-type": "application/json", authorization: `Bearer ${await tokenFor(init.as)}` },
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
@@ -279,6 +279,28 @@ describe("renting over HTTP", () => {
       expect(String(out.body.error)).toMatch(/rented before deposits/);
     });
 
+    it("refuses a top-up before the rental is paid for, and says so on the owner's view", async () => {
+      // Declined at the wallet, or not landed yet: the agent is on the owner's
+      // page, but there is no vault for the money to go into.
+      const who = "dep-unpaid";
+      const rented = await api("/agents", { method: "POST", body: { presetName: "Anchor", deposit: 900 }, as: who });
+      const agentId = rented.body.agent.id as string;
+
+      const out = await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 100 }, as: who });
+      expect(out.status).toBe(409);
+      expect(String(out.body.error)).toMatch(/hasn't been paid for yet/);
+      expect((await api(`/agents/${agentId}`, { as: who })).body.depositBlocked).toMatch(/hasn't been paid for yet/);
+
+      const tx = Transaction.from(Buffer.from(rented.body.rental.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      await api(`/rentals/${rented.body.rental.rentalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      });
+      expect((await api(`/agents/${agentId}`, { as: who })).body.depositBlocked).toBeNull();
+    });
+
     it("refuses anyone but the owner, and an amount of nothing", async () => {
       const who = "dep-guard";
       const agentId = await funded(who, 900);
@@ -289,6 +311,44 @@ describe("renting over HTTP", () => {
   });
 
 
+
+  describe("the deposit limit", () => {
+    // Its own server, with room for one rental and one top-up an hour.
+    let tight: string;
+    let closeTight: () => Promise<void>;
+    beforeAll(async () => {
+      ({ url: tight, close: closeTight } = await listen({
+        db,
+        deposit: { chain, fee: FEE, chipRate: RATE, allow: (o) => onDepositFlow.has(o) },
+        rentRateLimit: { limit: 2, windowMs: 3_600_000 },
+        rentAddressRateLimit: { limit: 1000, windowMs: 60_000 },
+        nonceRateLimit: { limit: 1000, windowMs: 60_000 },
+      }));
+    });
+    afterAll(async () => closeTight());
+
+    it("is not spent by a top-up refused before anything was attempted on chain", async () => {
+      const who = "dep-limit";
+      const rented = await api("/agents", { method: "POST", body: { presetName: "Anchor", deposit: 900 }, as: who }, tight);
+      const agentId = rented.body.agent.id as string;
+      // Pressing a button that cannot work, over and over, costs nothing.
+      for (let i = 0; i < 5; i++) {
+        const out = await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 100 }, as: who }, tight);
+        expect(out.status).toBe(409);
+      }
+
+      const tx = Transaction.from(Buffer.from(rented.body.rental.transaction, "base64"));
+      tx.partialSign(keypairFor(who));
+      await api(`/rentals/${rented.body.rental.rentalId}/submit`, {
+        method: "POST",
+        body: { transaction: tx.serialize().toString("base64") },
+        as: who,
+      }, tight);
+      // The allowance the refusals did not touch is still there for the real one.
+      expect((await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 100 }, as: who }, tight)).status).toBe(201);
+      expect((await api(`/agents/${agentId}/deposits`, { method: "POST", body: { amount: 100 }, as: who }, tight)).status).toBe(429);
+    });
+  });
 
   describe("what a client is told about money", () => {
     // The ledger holds base units because it has to reconcile with a vault.
