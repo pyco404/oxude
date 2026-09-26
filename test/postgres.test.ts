@@ -109,8 +109,10 @@ describe.skipIf(!URL)("against a real Postgres", () => {
 
   it("reads the live feed's staked total as a number", async () => {
     const { db, close } = await fresh();
-    const a = await createAgent(db, { name: "Staker", presetName: "Anchor" });
-    const b = await createAgent(db, { name: "Caller", presetName: "Bully" });
+    // Both owned: a match involving a house agent is an exhibition and stakes
+    // nothing, so it would leave the counter this test is about at zero.
+    const a = await createAgent(db, { name: "Staker", presetName: "Anchor", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Caller", presetName: "Bully", ownerId: someWallet() });
     const played = await runMatch(db, a.id, b.id, { seed: 7 });
     const counters = await liveCounters(db, new Date());
     expect(typeof counters.totalStaked).toBe("number");
