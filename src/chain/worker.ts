@@ -6,6 +6,7 @@ import { balancesOf, record } from "../db/ledger.js";
 import { agents, chainOps, deposits, exits, rentals, withdrawals, type ChainOpRow } from "../db/schema.js";
 import type { Funding } from "../chips.js";
 import { expireWithdrawal, markWithdrawn } from "../db/withdrawals.js";
+import { ingestExits, type ExitPass } from "../db/exits.js";
 
 /**
  * Drains the outbox into the settlement program, in order.
@@ -706,6 +707,14 @@ export function startChainWorker(
      */
     onLag?: (state: { stalled: boolean; lagMs: number }) => void;
     lagAlarmMs?: number;
+    /**
+     * How often to read the exits off chain. Less often than the outbox
+     * because it is one call for every exit in existence, and the clock it
+     * serves is thirty minutes long - but not so seldom that an agent keeps
+     * playing for minutes after its owner asked to leave.
+     */
+    exitIntervalMs?: number;
+    onExits?: (pass: ExitPass) => void;
   } = {},
 ): { stop: () => void } {
   let stopped = false;
@@ -732,11 +741,34 @@ export function startChainWorker(
     }
     if (!stopped) timer = setTimeout(() => void pass(), options.intervalMs ?? 5_000);
   };
+
+  // Exits are read on a clock of their own. Nothing in the outbox knows about
+  // them: an exit is owner-signed, so it reaches this server only by being
+  // looked for.
+  let exitTimer: ReturnType<typeof setTimeout> | undefined;
+  const exitPass = async () => {
+    if (stopped) return;
+    try {
+      const ports = portsOf(chain);
+      if (ports.deposit?.exits) {
+        const result = await ingestExits(db, await ports.deposit.exits());
+        if (result.frozen.length || result.ingested.length || result.cleared.length) options.onExits?.(result);
+      }
+    } catch {
+      // An exit pass that fails must not stop the outbox draining; the next
+      // one picks up everything this one missed, because it reads the chain
+      // rather than a queue.
+    }
+    if (!stopped) exitTimer = setTimeout(() => void exitPass(), options.exitIntervalMs ?? 30_000);
+  };
+
   void pass();
+  void exitPass();
   return {
     stop: () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (exitTimer) clearTimeout(exitTimer);
     },
   };
 }
