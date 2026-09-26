@@ -57,7 +57,7 @@ Because the opponent's edge is hidden and a raise can be answered in the same ro
 
 ## Running it
 
-**Prerequisites:** Node 24 and npm. A Phantom or Solflare browser extension to sign in. `npm run check` also needs the Postgres binaries on the machine (Debian/Ubuntu: `apt install postgresql`) — it starts a throwaway cluster for the checks that must run against the real driver, and refuses to pass without one. For the chain: Rust, the Solana CLI (3.x) and Anchor 0.32.1.
+**Prerequisites:** Node 24 and npm. A Phantom or Solflare browser extension to sign in. `npm run check` also needs the Postgres binaries on the machine (Debian/Ubuntu: `apt install postgresql`) — it starts a throwaway cluster for the checks that must run against the real driver, and refuses to pass without one. For the chain: Rust, the Solana CLI (3.x) and Anchor 0.32.1; `check` runs the program's tests too when those are present, and skips them with a message when they are not.
 
 ```bash
 npm install

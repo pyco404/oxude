@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "balance": "tsx scripts/balance.ts",
-    "check": "npm run typecheck && npm run test:pg && npm run test",
+    "check": "npm run typecheck && npm run test:pg && npm run test:chain && npm run test",
     "sweep": "tsx scripts/sweep.ts",
     "search": "tsx scripts/search.ts",
     "inspect": "tsx scripts/inspect.ts",
@@ -26,7 +26,7 @@
     "serve": "tsx scripts/serve.ts",
     "chain:build": "cd chain && anchor build && cp target/idl/oxude_settlement.json ../src/chain/idl.json && cp target/types/oxude_settlement.ts ../src/chain/idl-types.ts",
     "stake-mint": "tsx scripts/stake-mint.ts",
-    "test:chain": "CHAIN=1 vitest run test/chain.test.ts",
+    "test:chain": "scripts/chain-test.sh",
     "test:pg": "scripts/pg-test.sh",
     "start": "tsx scripts/serve.ts --migrate"
   },

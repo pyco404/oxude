@@ -55,8 +55,31 @@ skips when there is no Postgres to run against.
 A bare `npx vitest run` still skips the file; its describe block says so in its
 own name. `npm run check` is the thing to trust before a commit or a deploy.
 
-`test/chain.test.ts` is the one path still outside the gate. It needs a
-validator, so `npm run test:chain` stays a deliberate act.
+## The gate, and the two paths that need more than Node
+
+`npm run check` is `typecheck && test:pg && test:chain && test` — cheapest
+first, so a driver disagreement surfaces in seconds and a program bug in a
+minute, rather than after the four-minute suite. Both of the extra paths used
+to be outside it, and both are where a units or flow bug hides: they are the
+only places the real Postgres driver and the real bytecode are exercised.
+
+They fail differently on purpose:
+
+| | missing prerequisite | why |
+| --- | --- | --- |
+| `test:pg` | **fails** | Postgres is one `apt install`. Every raw-SQL bigint depends on it. |
+| `test:chain` | **skips, loudly** | The Solana toolchain plus a built program is a much larger ask, and someone working on the web app or the engine should not be stopped by it. |
+
+The chain skip prints what is missing and how to get it, so it can never read
+as a pass, and `CHAIN_REQUIRED=1 npm run test:chain` turns it into a failure
+for anywhere that should have the toolchain.
+
+`scripts/chain-test.sh` also **warns when the `.so` is older than the Rust
+sources** — tests passing against bytecode nobody is going to ship is exactly
+the quiet failure the gate exists to prevent. A warning rather than a refusal,
+because a comment-only edit moves the source and not the binary, and stopping
+the suite for that would teach people to skip it. If you changed anything but
+comments, run `npm run chain:build` first.
 
 The rest of the suite **cannot** be pointed at Postgres as it stands: tests call
 `connect()` expecting a fresh empty database, which is true of PGlite and false
