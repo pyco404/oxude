@@ -3,7 +3,7 @@ import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { PreparedWithdrawal } from "../chain/common.js";
 import type { Db } from "./client.js";
 import { balanceOf, record } from "./ledger.js";
-import { isExiting } from "./exits.js";
+import { exitState, isExiting, type ExitState } from "./exits.js";
 import { agents, chainOps, STAKE_BANDS, withdrawals, type WithdrawalStatus } from "./schema.js";
 import { baseUnits, chips, rateOf } from "../chips.js";
 
@@ -100,6 +100,12 @@ export type Withdrawable = {
   minStake: number;
   /** Why nothing can be taken right now, if so. */
   reason: string | null;
+  /**
+   * An exit the owner started on chain, which this server does not co-sign and
+   * cannot stop. Null when there is none, which is the ordinary case: the
+   * instant path is the front door and this is the guarantee behind it.
+   */
+  exit: ExitState | null;
 };
 
 /**
@@ -110,7 +116,7 @@ export type Withdrawable = {
  * being converted down, because the balance is the thing that has to match a
  * vault exactly and a rounded one would not.
  */
-export async function withdrawable(db: Db, agentId: string): Promise<Withdrawable> {
+export async function withdrawable(db: Db, agentId: string, now = new Date()): Promise<Withdrawable> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agent) throw new WithdrawalError(404, "no such agent");
   const minToKeep = baseUnits(MIN_TO_KEEP_PLAYING_CHIPS, rateOf(agent));
@@ -131,6 +137,7 @@ export async function withdrawable(db: Db, agentId: string): Promise<Withdrawabl
   else if (balance <= 0) reason = "nothing to withdraw";
   const available = reason ? 0 : balance;
   return {
+    exit: await exitState(db, agentId, now),
     balance,
     withdrawable: available,
     locked,

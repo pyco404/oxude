@@ -196,6 +196,56 @@ async function absorbClaim(
   });
 }
 
+/**
+ * Roughly 400ms a slot. Only ever used to turn a slot count into something a
+ * person can read; nothing decides anything on it.
+ */
+const SLOT_MS = 400;
+
+export type ExitState = {
+  /** Base units the owner asked for. The claim pays at most this, and at most what is there. */
+  amount: number;
+  requestedSlot: number;
+  unlockSlot: number;
+  /**
+   * About when the window is up. An estimate from the slot count and when this
+   * row was written - the chain's own clock is slots, and a page that says
+   * "about twelve minutes" is more use than one that says "slot 4,502,118".
+   */
+  unlockAt: Date;
+  /** True once the window has passed and it can be claimed. */
+  claimable: boolean;
+  claimed: boolean;
+  claimedAmount: number | null;
+  /** True once the ledger has taken account of the claim, which is also when the agent is free. */
+  settled: boolean;
+};
+
+/**
+ * The exit an owner has going, if any, as this server last read it.
+ *
+ * From the database rather than the chain: every caller is rendering a page,
+ * and a page that costs an RPC call per view is one that stops working when
+ * the RPC does. The watcher is what keeps this current, and `settled` says
+ * plainly whether it has caught up yet.
+ */
+export async function exitState(db: Db, agentId: string, now = new Date()): Promise<ExitState | null> {
+  const [row] = await db.select().from(exits).where(eq(exits.agentId, agentId)).limit(1);
+  if (!row) return null;
+  const elapsed = (row.unlockSlot - row.requestedSlot) * SLOT_MS;
+  const unlockAt = new Date(row.createdAt.getTime() + elapsed);
+  return {
+    amount: row.amount,
+    requestedSlot: row.requestedSlot,
+    unlockSlot: row.unlockSlot,
+    unlockAt,
+    claimable: row.claimedSlot === null && now.getTime() >= unlockAt.getTime(),
+    claimed: row.claimedSlot !== null,
+    claimedAmount: row.claimedAmount,
+    settled: row.ingestedAt !== null,
+  };
+}
+
 /** Agents frozen by a live exit, for the views that need to say why. */
 export async function exitingAgents(db: Db): Promise<string[]> {
   const rows = await db.select({ id: exits.agentId }).from(exits).where(isNull(exits.ingestedAt));
