@@ -531,6 +531,60 @@ export async function reconcile(
   return { checked: involved.length, mismatches, surpluses, explained };
 }
 
+/**
+ * How much longer the close grace must be than the watcher's pass interval.
+ *
+ * Ten is not a calculation, it is a margin. What has to be true is that a
+ * claim cannot be seen, closed and gone between two passes; one pass would do
+ * arithmetically, and ten leaves room for a pass that is slow, a slot time
+ * that is not 400ms, and an RPC that drops a request.
+ */
+export const MIN_EXIT_GRACE_MULTIPLE = 10;
+/** Nominal Solana slot time. Only ever used to turn slots into a wall clock for this check. */
+export const NOMINAL_SLOT_MS = 400;
+
+export type ExitWindowCheck = {
+  ok: boolean;
+  /** How long a claimed exit's record is guaranteed to survive, in ms. */
+  graceMs: number;
+  /** The least that grace may be for this watcher interval. */
+  needMs: number;
+  reason: string;
+};
+
+/**
+ * Whether the on-chain exit window is long enough for this server's own
+ * watcher (docs/security.md, Invariants).
+ *
+ * The watcher reads an exit that has vanished as a cancel: it unfreezes the
+ * agent and writes no debit. That is only right because the program refuses to
+ * close a *claimed* exit until a whole window has passed, so a claim cannot
+ * disappear before a pass has seen it. Shorten the window far enough, or
+ * lengthen the interval far enough, and the same code silently starts reading
+ * "the owner took their money" as "the owner changed their mind".
+ *
+ * Nothing about that failure is visible from inside either constant. It is
+ * only visible from both at once, which is here - so this is checked at
+ * startup, where both are known, and refused rather than warned about.
+ */
+export function checkExitWindow(windowSlots: number, passIntervalMs: number, slotMs = NOMINAL_SLOT_MS): ExitWindowCheck {
+  const graceMs = windowSlots * slotMs;
+  const needMs = passIntervalMs * MIN_EXIT_GRACE_MULTIPLE;
+  const ok = graceMs >= needMs;
+  return {
+    ok,
+    graceMs,
+    needMs,
+    reason: ok
+      ? `exit window ${windowSlots} slots (~${Math.round(graceMs / 60_000)} min) against a ${Math.round(passIntervalMs / 1000)}s watcher pass`
+      : `the exit window is ${windowSlots} slots (~${Math.round(graceMs / 1000)}s) but this server reads exits every ` +
+        `${Math.round(passIntervalMs / 1000)}s, so a claim could be closed before any pass saw it and would be read as a ` +
+        `cancelled exit: the owner's money would leave and the ledger would never hear about it. ` +
+        `Either raise the window to at least ${Math.ceil(needMs / slotMs)} slots with set_exit_window, or lower ` +
+        `CHAIN_EXIT_INTERVAL_MS to ${Math.floor(graceMs / MIN_EXIT_GRACE_MULTIPLE)}ms or less`,
+  };
+}
+
 export type Solvency = {
   /** Base units the ledger says players own, across every agent with a vault. */
   ledger: number;

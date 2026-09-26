@@ -372,8 +372,32 @@ if (chain && rpc) {
   // Both programs. Without the second, a deposit-funded agent's settlements are
   // deferred for want of a client and wait for ever - which is what happened on
   // 2026-09-25, and what the lag alarm caught.
+  const exitIntervalMs = Number(process.env["CHAIN_EXIT_INTERVAL_MS"] ?? 30_000);
+
+  // The invariant in docs/security.md: the program's close grace has to be
+  // much longer than this watcher's pass, or a claim could be closed before
+  // any pass saw it and would be read as a cancelled exit. Neither constant
+  // can see the problem alone; both are known here, so it is checked here, and
+  // refused rather than warned about - the failure is a silent one, and a
+  // warning in a startup log is how silent failures stay silent.
+  if (depositClient) {
+    const { checkExitWindow } = await import("../src/chain/worker.js");
+    const windowSlots = await depositClient.exitWindow();
+    if (windowSlots === null) {
+      console.log("exits:   off - no exit config on this program, so there is no window to check");
+    } else {
+      const check = checkExitWindow(windowSlots, exitIntervalMs);
+      if (!check.ok) {
+        console.error(`exits:   REFUSING TO START - ${check.reason}`);
+        process.exit(1);
+      }
+      console.log(`exits:   ${check.reason}`);
+    }
+  }
+
   startChainWorker(db, depositClient ? { seed: chain, deposit: depositClient } : chain, {
     intervalMs: Number(process.env["CHAIN_INTERVAL_MS"] ?? 5000),
+    exitIntervalMs,
     onPass: (r) => {
       if (r.confirmed || r.alreadyOnChain || r.error) {
         const held = r.stoppedAt ? `, stopped: ${r.error!.slice(0, 160)}` : r.deferred ? `, ${r.deferred} refused for now: ${r.error!.slice(0, 160)}` : "";

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { connect, migrate, type Db } from "../src/db/client.js";
 import { agentEvents, agents, exits } from "../src/db/schema.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
-import { drainChainOps, reconcile } from "../src/chain/worker.js";
+import { checkExitWindow, drainChainOps, reconcile } from "../src/chain/worker.js";
 import { ingestExits, isExiting } from "../src/db/exits.js";
 import { balanceOf, StakeError } from "../src/db/ledger.js";
 import { dueAgents } from "../src/db/autoplay.js";
@@ -243,5 +243,36 @@ describe("an exit that goes away", () => {
     expect((await ingestExits(db, await chain.exits())).cleared).toEqual([a.id]);
     expect(await isExiting(db, a.id)).toBe(false);
     await close();
+  });
+});
+
+describe("the window a server will start against", () => {
+  it("accepts the shipped pair with room to spare", () => {
+    // 4,500 slots is about thirty minutes; passes are thirty seconds apart.
+    const check = checkExitWindow(4_500, 30_000);
+    expect(check.ok).toBe(true);
+    expect(check.graceMs).toBe(1_800_000);
+    expect(check.needMs).toBe(300_000);
+  });
+
+  it("refuses a window shorter than the watcher could notice", () => {
+    // The program's own floor, which is four seconds: shorter than one pass.
+    const check = checkExitWindow(10, 30_000);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toMatch(/would never hear about it|never hear about it/);
+    // The message says both ways out, with the numbers worked out.
+    expect(check.reason).toMatch(/raise the window to at least 750 slots/);
+    expect(check.reason).toMatch(/CHAIN_EXIT_INTERVAL_MS to 400ms or less/);
+  });
+
+  it("is a margin, not a threshold: exactly ten times passes, a hair under does not", () => {
+    expect(checkExitWindow(750, 30_000).ok).toBe(true);
+    expect(checkExitWindow(749, 30_000).ok).toBe(false);
+  });
+
+  it("breaks either way round, because it is about the pair", () => {
+    // A perfectly good window, read too seldom.
+    expect(checkExitWindow(4_500, 30_000).ok).toBe(true);
+    expect(checkExitWindow(4_500, 300_000).ok).toBe(false);
   });
 });

@@ -98,10 +98,21 @@ reports a mismatch (see the third state in
 [non-custodial-exit.md](non-custodial-exit.md)). The money is still wrong, but
 nobody has to notice on their own.
 
-**Before mainnet**, either make the floor exceed the pass interval by a stated
-multiple, or have the server refuse to start when it reads a window that is
-too short for its own clock. The second is better: it compares the two numbers
-that actually matter, at the moment both are known.
+**Enforced since 2026-09-26.** The server reads the on-chain window at startup
+and refuses to run when it is less than `MIN_EXIT_GRACE_MULTIPLE` (ten) times
+its own `CHAIN_EXIT_INTERVAL_MS`, naming both ways out with the numbers worked
+out. Refused rather than warned about: the failure is a silent one, and a
+warning in a startup log is how silent failures stay silent.
+
+This is the check to keep, rather than a floor in the program, because neither
+constant can see the problem alone - it is only visible from both at once, and
+startup is where both are known. The program's floor stays where it is; it
+makes zero unrepresentable, which is a different job.
+
+Still true, and still worth knowing: an admin can walk a **running**
+deployment's window below the line with `set_exit_window`, and nothing
+re-checks until the next restart. The reconciler is what catches that, as
+below.
 
 ## Known limitations
 

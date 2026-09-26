@@ -78,6 +78,7 @@ Open http://localhost:3000, connect a wallet, rent a preset and press play. Any 
 |---|---|---|
 | `ANTHROPIC_API_KEY` | API | Needed to rent an agent from a written brief; read from the environment or a `.env` file in the repo root. Without it, presets work and briefs return 503. |
 | `CHAIN_RPC_URL` | API | Settle to a chain, e.g. `https://api.devnet.solana.com`. Without it, settlements queue in the outbox. |
+| `CHAIN_EXIT_INTERVAL_MS` | API | How often exits are read off chain, default 30000. The server refuses to start if the on-chain exit window is under ten times this (docs/security.md, Invariants). |
 | `ADMIN_WALLETS` | API | Comma-separated wallets that may read `/admin`. Unset means no admin page at all, not an open one. |
 | `CHAIN_SETTLER_KEYPAIR` | API | Seed program's settler key, default `.keys/settler.json`. The deposit program has its own: `CHAIN_SETTLER_KEYPAIR_V2`, defaulting to the first of `.keys/settler-v2.json`, `.keys/settler-new.json`, `.keys/settler.json` that exists. |
 | `DATABASE_URL` | API | Postgres connection string. Required unless `--memory` is passed. |
