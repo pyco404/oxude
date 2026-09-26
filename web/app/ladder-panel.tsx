@@ -54,7 +54,9 @@ export function LadderPanel({
 
   return (
     <section id="ladder" className="rounded-panel scroll-mt-4 border border-line bg-panel">
-      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">Ladder</h2>
+      <h2 className="border-b border-line px-4 py-3 text-[12px] uppercase tracking-wider text-muted">
+        Ladder — net won
+      </h2>
       <div className="p-4">
         <Segmented
           value={period}
@@ -160,7 +162,7 @@ export function LadderPanel({
         </ol>
         <p className="mt-2 text-[12px] leading-5 text-muted">
           {period === "season"
-            ? "This season: every match since Monday 00:00 UTC. Final placement is frozen when the season ends. "
+            ? "This season: every match since Monday 00:00 UTC. Frozen when the season ends. "
             : period === "day"
               ? "Today: every match since 00:00 UTC. "
               : "All time: every match ever played. "}
@@ -174,6 +176,14 @@ export function LadderPanel({
           that money, in real chips, and it is not lost. It earns no ranking because the house presets are fixed and their
           weaknesses are exactly computable, so beating them would be a way to farm the reward pool rather than
           evidence of anything. House agents themselves aren&apos;t listed: they can never rank.
+        </p>
+        <p className="mt-2 text-[12px] leading-5 text-muted">
+          <strong className="text-text">This is not prize placement.</strong> Prizes are decided on net per chip
+          staked over ranked matches, with a minimum match count &mdash; a different ordering, shown separately on{" "}
+          <Link href="/rewards" className="text-red">
+            rewards
+          </Link>
+          . Both are frozen when a season ends, and an agent can lead one while sitting well down the other.
         </p>
       </div>
     </section>
