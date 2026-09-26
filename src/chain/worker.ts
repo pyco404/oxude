@@ -534,6 +534,88 @@ export async function reconcile(
   return { checked: involved.length, mismatches, surpluses, explained };
 }
 
+export type Solvency = {
+  /** Base units the ledger says players own, across every agent with a vault. */
+  ledger: number;
+  /** Base units those vaults actually hold. Null for a flow this server cannot reach. */
+  chain: number;
+  /** chain - ledger. Negative is the direction that matters. */
+  difference: number;
+  /** Agents counted, and agents skipped because their program is unreachable. */
+  counted: number;
+  unreachable: number;
+  /**
+   * Base units queued to move but not yet on chain. A settlement in the outbox
+   * has already been taken off one ledger balance and added to another, while
+   * the vaults still hold the old amounts - so it moves no total, and the
+   * difference above should not be read as explained by it. It is here because
+   * an operator looking at a non-zero difference will ask.
+   */
+  inFlight: number;
+};
+
+/**
+ * The solvency line: what the ledger says players own against what the vaults
+ * actually hold.
+ *
+ * Every other check here is per agent. This is the one that answers the
+ * question an operator actually has, which is whether the whole thing adds up.
+ * A settlement moves money between two vaults and nets to nothing, so in a
+ * healthy system these two figures are equal at every instant, whatever is
+ * queued.
+ *
+ * Unlike `reconcile` this counts agents with ops in flight too, because
+ * leaving them out would mean the total quietly excluded exactly the agents
+ * something is happening to.
+ */
+export async function solvency(db: Db, chain: ChainPort | ChainPorts): Promise<Solvency> {
+  const ports = portsOf(chain);
+  const withVaults = await db
+    .select({ id: agents.id, funding: agents.funding })
+    .from(agents)
+    .where(
+      sql`exists (select 1 from ${chainOps} where ${chainOps.agentId} = ${agents.id} and ${chainOps.kind} = 'open_vault' and ${chainOps.status} = 'confirmed')`,
+    );
+  const balances = await balancesOf(
+    db,
+    withVaults.map((a) => a.id),
+  );
+
+  let ledger = 0;
+  let onChain = 0;
+  let counted = 0;
+  let unreachable = 0;
+  for (const agent of withVaults) {
+    const port = ports[agent.funding];
+    if (!port) {
+      unreachable++;
+      continue;
+    }
+    const vault = await port.vaultBalance(agent.id);
+    if (vault === null) {
+      unreachable++;
+      continue;
+    }
+    ledger += balances.get(agent.id) ?? 0;
+    onChain += vault;
+    counted++;
+  }
+
+  const [flight] = await db
+    .select({ amount: sql<number>`coalesce(sum(${chainOps.amount}) filter (where ${chainOps.kind} = 'settle'), 0)::bigint` })
+    .from(chainOps)
+    .where(eq(chainOps.status, "pending"));
+
+  return {
+    ledger,
+    chain: onChain,
+    difference: onChain - ledger,
+    counted,
+    unreachable,
+    inFlight: Number(flight?.amount ?? 0),
+  };
+}
+
 /**
  * An exit this agent claimed on chain that the ledger has not yet absorbed, or
  * null.

@@ -110,6 +110,18 @@ export type AppOptions = {
   /** The chain, for withdrawals: the settler builds and co-signs them. Without it they are unavailable. */
   chain?: WithdrawalChain;
   /**
+   * Wallets that may read /admin. Defaults to ADMIN_WALLETS, and to nothing at
+   * all when that is unset - a deployment that forgets it gets no admin page,
+   * not an open one.
+   */
+  adminWallets?: string[];
+  /**
+   * What /admin reports. Built where the chain clients live (scripts/serve.ts),
+   * because the http layer has no settler, no connection and no business
+   * acquiring either. Without it /admin answers 503 for an allowed wallet.
+   */
+  health?: () => Promise<unknown>;
+  /**
    * The devnet faucet. Absent on every other cluster, and not by configuration:
    * what builds it refuses any chain but devnet (src/chain/faucet.ts). Without
    * it the faucet endpoints answer 503.
@@ -276,6 +288,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/season$/, getSeason],
     ["GET", /^\/prizes$/, getPrizes],
     ["GET", /^\/statement$/, getStatement],
+    ["GET", /^\/admin$/, getAdmin],
     ["POST", /^\/agents\/([^/]+)\/deposits$/, postDeposit],
     ["POST", /^\/deposits\/([^/]+)\/submit$/, postDepositSubmit],
     ["POST", /^\/rentals\/([^/]+)\/submit$/, postRentalSubmit],
@@ -806,6 +819,26 @@ export function createApp(options: AppOptions): Server {
    * do not know yet" must not look alike. What it does carry is the order the
    * places would pay in.
    */
+  /**
+   * Operational health, for the wallets in `adminWallets`.
+   *
+   * A reader, not a measurer. The settlement lag, the reconciler, the solvency
+   * line and the season statement each already know their piece; this puts
+   * them in one response so one page can show them together. The only thing it
+   * decides is who may see it.
+   *
+   * Signed out, or signed in as anyone else, it is a 404 rather than a 403:
+   * there is no reason to confirm to a stranger that the page exists.
+   */
+  async function getAdmin(ctx: Ctx) {
+    const wallet = ctx.requireOwner();
+    if (!adminWallets.has(wallet)) throw new HttpError(404, "not found");
+    if (!options.health) {
+      throw new HttpError(503, "this server has no chain configured, so there is no health to report");
+    }
+    return options.health();
+  }
+
   async function getStatement(ctx: Ctx) {
     const now = new Date();
     let season;
@@ -1258,6 +1291,16 @@ export function createApp(options: AppOptions): Server {
   }
 
   const corsOrigin = options.corsOrigin ?? process.env["CORS_ORIGIN"] ?? "http://localhost:3000";
+  /**
+   * Wallets allowed to read /admin. Empty by default and empty unless someone
+   * says otherwise, so a deployment that forgets to set it has no admin page
+   * rather than an open one.
+   */
+  const adminWallets = new Set(
+    (options.adminWallets ?? (process.env["ADMIN_WALLETS"] ?? "").split(","))
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0),
+  );
   const corsHeaders = {
     "access-control-allow-origin": corsOrigin,
     "access-control-allow-headers": "content-type, authorization",

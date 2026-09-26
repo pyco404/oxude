@@ -198,6 +198,69 @@ if (rpc && process.env["CHAIN_STAKE_MINT"] && process.env["FAUCET_ENABLED"] === 
 const characterModel = process.env["ANTHROPIC_API_KEY"]
   ? await import("../src/character/model.js").then(({ textCheck, bioWriter }) => ({ check: textCheck(), writeBio: bioWriter() }))
   : undefined;
+/**
+ * What /admin reports, assembled here because this is where the chain clients
+ * are. The http layer has no settler and no connection, and should not acquire
+ * either just to draw a page.
+ *
+ * Read fresh each request rather than cached: the page is opened when
+ * something looks wrong, which is exactly when a stale figure is worst.
+ */
+const health = rpc
+  ? async () => {
+      const { LAMPORTS_PER_SOL } = await import("@solana/web3.js");
+      const { reconcile, settlementLag, solvency, SETTLEMENT_LAG_ALARM_MS, SETTLER_SOL_FLOOR } = await import(
+        "../src/chain/worker.js"
+      );
+      const { troubledOps, oldestPending, volume } = await import("../src/db/admin.js");
+      const ports = { ...(chain ? { seed: chain } : {}), ...(depositClient ? { deposit: depositClient } : {}) };
+      const anyPort = depositClient ?? chain;
+      const now = new Date();
+
+      const lagMs = await settlementLag(db, now);
+      const [ops, oldest, vol] = await Promise.all([troubledOps(db, SETTLEMENT_LAG_ALARM_MS, now), oldestPending(db, now), volume(db, now)]);
+
+      // The reconciler and the solvency line both read every vault, so they
+      // are the slow part. Skipped entirely when no program is reachable,
+      // rather than reported as zeroes that would read as "all is well".
+      const books = anyPort
+        ? await (async () => {
+            const [check, sums] = await Promise.all([
+              reconcile(db, ports as never),
+              solvency(db, ports as never),
+            ]);
+            return { reconcile: check, solvency: sums };
+          })()
+        : null;
+
+      const settlers = [];
+      for (const [name, client] of [
+        ["seed", chain],
+        ["deposit", depositClient],
+      ] as const) {
+        if (!client) continue;
+        const address = client.signer.publicKey;
+        const lamports = await client.connection.getBalance(address, "confirmed");
+        const sol = lamports / LAMPORTS_PER_SOL;
+        settlers.push({ flow: name, address: address.toBase58(), sol, floorSol: SETTLER_SOL_FLOOR, low: sol < SETTLER_SOL_FLOOR });
+      }
+
+      return {
+        at: now,
+        settlement: {
+          lagMs,
+          alarmAfterMs: SETTLEMENT_LAG_ALARM_MS,
+          stalled: lagMs !== null && lagMs >= SETTLEMENT_LAG_ALARM_MS,
+          oldest,
+        },
+        settlers,
+        books,
+        ops,
+        volume: vol,
+      };
+    }
+  : undefined;
+
 const { url } = await listen({
   db,
   port: Number(process.env["PORT"] ?? arg("--port", 8787)),
@@ -210,6 +273,7 @@ const { url } = await listen({
   // cannot be renewed runs out there and lapses with its balance withdrawable.
   ...(process.env["SEED_CUTOVER"] === "closed" ? { seedCutover: { closed: true } } : {}),
   ...(characterModel ? { character: characterModel } : {}),
+  ...(health ? { health } : {}),
 });
 // Chosen names that could not be checked at rent: checked again until the model answers.
 if (characterModel) {
