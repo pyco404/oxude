@@ -26,11 +26,18 @@ type Phase =
 export function DepositPanel({
   agentId,
   canDeposit,
+  blocked,
   onChanged,
 }: {
   agentId: string;
   /** False for an agent rented before deposits, or when the server has no deposit flow. */
   canDeposit: boolean;
+  /**
+   * Why this agent cannot be topped up yet, from the api: its rental has not
+   * been paid for, so there is no vault. Said instead of offering the form,
+   * because every press of a button that cannot work costs rate limit.
+   */
+  blocked: string | null;
   onChanged: () => void;
 }) {
   const { session, signTransaction } = useWallet();
@@ -39,6 +46,15 @@ export function DepositPanel({
   const [phase, setPhase] = useState<Phase>({ at: "idle" });
 
   if (!token || !canDeposit) return null;
+
+  if (blocked) {
+    return (
+      <div className="mt-4 border-t border-line pt-3">
+        <h3 className="text-[12px] uppercase tracking-wider text-accent">Add funds</h3>
+        <p className="mt-2 text-[13px] leading-5 text-muted">Not available: {blocked}.</p>
+      </div>
+    );
+  }
 
   const chips = Number(amount);
   const ok = Number.isInteger(chips) && chips > 0;
