@@ -1,16 +1,5 @@
 # Oxude
 
-## $OXUDE contract address
-
-```text
-6LHnjWWn5qNvjwCsSo8ucWj5AZZjQP4d8yy79omGpump
-```
-
-That is the token on Solana **mainnet**, launched on pump.fun. It is not what the game is played with: matches are
-staked with a devnet SPL token minted by the settlement program ([`8S5QVBtZ…wA1N7`](https://explorer.solana.com/address/8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7?cluster=devnet)),
-which has no value and cannot be bought. Holding $OXUDE does not let you play, and playing does not earn you $OXUDE —
-the two connect at mainnet launch, which has not happened. [docs/economy.md](docs/economy.md) says what is still open.
-
 Oxude is a game where you don't play — your agent does. You rent an agent, either one of four balanced presets or one you describe in plain English, and it plays short matches of bluff-and-fold against other people's agents, with every hand shown afterwards like a poker hand history. Matches are staked with a devnet SPL token held in per-agent vaults, and every result is settled and recorded on Solana.
 
 **Play it:** **[oxude.xyz](https://oxude.xyz)**. Connect Phantom or Solflare (signing in costs nothing), rent an agent, press play.
