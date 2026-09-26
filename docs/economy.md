@@ -13,7 +13,7 @@ In order. Each step ships to devnet before the next begins, until the last, whic
 5. **Deposits and paid rent** — built, and deployed to devnet on 2026-09-25 at [`HTs42VFp…tvkdy`](https://explorer.solana.com/address/HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy?cluster=devnet). Nothing uses it yet: every agent on the live site is still seed-funded, and the flow is behind a flag until a season boundary flips it. The stake token is an ordinary mint with no mint authority left, so the program cannot create currency; renting burns a fee and funding is a deposit from the owner's own wallet, both in one transaction they sign. That last part also closes the consent gap in [security.md](security.md) — the server no longer creates agents for wallets that signed nothing. Still open from this step: the survival figures on the rent screen are still quoted against a fixed 900 rather than the chosen deposit (open question 3).
 6. **Rewards** — **placement is built**; the pool is not. A season now freezes two orderings and serves both, `/prizes` shows who would be paid and in what order, and `/statement` is the published statement with the prize amounts left empty ([What is built](#what-is-built)). What remains is the money: the creator-fee split cannot be configured before legal review (open question 5), and how many places pay and on what curve is open question 6.
 7. **Auctions** — expiry, bidding and transfer ([Expiry and auction](#expiry-and-auction)). What a character carries across a sale is open question 1.
-8. **Security hardening and mainnet** — close the known limitations in [security.md](security.md) (open question 4) and the rest of the [Open questions](#open-questions), then $OXUDE becomes the game's currency.
+8. **Security hardening and mainnet** — close the known limitations in [security.md](security.md) (open question 4) and the rest of the [Open questions](#open-questions), then $OXUDE becomes the game's currency. One of those limitations is already closed: the vaults are no longer custodial in practice ([non-custodial-exit.md](non-custodial-exit.md)), built out of order because it gates nothing and nothing gates it.
 
 ## Token
 
@@ -30,8 +30,9 @@ program-derived mint (`8S5QVBtZcBoKdKVGGUH2tCDpnoLYBxtGrPYDTBwwA1N7`, 0 decimals
 value and no relation to $OXUDE beyond the name. The two connect only at mainnet launch, which is what the open
 questions below gate.
 
-The launch came **ahead of the requirements this document lists** — no audit, no deposit instruction, withdrawals
-still needing a server co-signature, no legal review, and the chip rate undecided. That is recorded here as fact, not
+The launch came **ahead of the requirements this document lists** — no audit, no deposit instruction, no way out
+without the server, no legal review, and the chip rate undecided. The deposit and the non-custodial exit have since
+been built; the audit, the legal review and the chip rate have not. That is recorded here as fact, not
 as an argument: those requirements were written as gates on *real money in the game*, and they still are. What
 changed is that they are now pre-mainnet gates rather than pre-launch ones, and the token trading before them means
 there is an audience watching the gap close.
@@ -84,7 +85,7 @@ A season runs **Monday 00:00 UTC to the next Monday 00:00 UTC**, and every renta
 - **Settlement is by net position, not per match.** Matches move balances in the off-chain ledger, which stays authoritative. Each agent's net position settles on chain periodically, **hourly or on withdrawal**, whichever comes first.
 - **No pay-to-win.** A larger balance must never make an agent play better. Power comes from the brief only. This is non-negotiable.
 
-Withdrawals already work on devnet: the owner signs, and the settler co-signs to attest that nothing is in flight. The deposit does not exist — funding currently means the rental seed, so a busted agent cannot be revived. Both the deposit instruction and a withdrawal that needs no server co-signature have to land before mainnet (open question 3).
+Both halves of moving money now exist on devnet. A **deposit** puts the owner's own tokens into a vault, so a busted agent can be revived. A **withdrawal** is co-signed by the server and instant; behind it an **exit** the owner signs alone waits thirty minutes and then pays out whatever the vault holds, so a server that refuses or disappears cannot strand anything ([non-custodial-exit.md](non-custodial-exit.md)).
 
 ## Bands
 
@@ -238,7 +239,7 @@ These need resolving before **mainnet** — before $OXUDE becomes the game's cur
 2. **Which TWAP, over what window, published where.** The design is settled — a chip is a fixed USD value, converted to $OXUDE once per season from a time-weighted average rather than spot, inside a ±50% weekly band and a tokens-per-chip ceiling (see [The chip rate](#the-chip-rate)). What is not settled is the mechanics: which pool or aggregator the average is taken from, over what window, how a stale or missing reading is handled at a boundary, and where the number and its inputs are published so an owner can check the rate they were charged. The ±50% cap and the ceiling limit the damage of a bad reading; they don't make one acceptable.
 
    **A timing gap the ±50% band does not cover: renewal.** A rental is renewed for the *next* season, renewal opens 72 hours before the boundary, and the rate for that season does not exist until the boundary. So an owner renewing on the Friday pays the old season's rate for a week priced at the new one, and one renewing a minute after the boundary pays the new rate for the same week — the same rental at two prices, with the gap free to anyone who watches the token. Either the next season's rate is computed and published before renewal opens, which means a TWAP window ending 72 hours early rather than running the whole season, or renewal is quoted when the owner clicks and charged at the boundary. This does not block devnet, where the rate is fixed, but it has to be settled with the rest of the mechanics here.
-3. **The deposit instruction, and non-custodial withdrawal.** Two separate gaps. There is no deposit instruction at all, so deposit-funded agents need one before the funding model above is real. Withdrawal does exist and works on devnet, but the settler must co-sign: that co-signature is what attests no match is in flight and no net position is unsettled, and it is also what leaves the vaults custodial in practice — a server that refuses or disappears strands the money, even though it cannot move it anywhere else. Making withdrawal non-custodial before mainnet means replacing that attestation with something the chain can check for itself, such as an on-chain in-flight flag or a timelock the owner can always fall back on.
+3. **Survival figures against the chosen deposit.** Two of the three gaps this question carried are closed. The **deposit instruction** is built and deployed. **Non-custodial withdrawal** is built: the settler's co-signature attested that no match was in flight, and the replacement is a thirty-minute timelock the owner can always fall back on — `request_exit`, then `claim_exit`, neither needing us ([non-custodial-exit.md](non-custodial-exit.md)). What is left is below.
 
    **Deposits also invalidate every survival figure above.** They are all computed from a fixed 900 seed. Once the player chooses the amount, the seed stops being a constant the product picks, so the numbers on the rent screen have to be computed *from their deposit* — at rent time, for the band and preset they are choosing — rather than read from a table generated in advance. The simulation already sweeps starting balances, so the shape is known:
 
