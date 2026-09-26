@@ -4,7 +4,7 @@ import bs58 from "bs58";
 import { Keypair, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { PROGRAM_ID, pdas as realPdas } from "../src/chain/settlement.js";
-import * as exitPage from "../exit/exit.mjs";
+import * as exitPage from "../web/public/exit/exit.mjs";
 
 /**
  * The standalone exit page owes nothing to this repo at runtime: no npm, no

@@ -45,7 +45,7 @@ not by asking us — so it works for an agent we have never heard of, and it
 cannot be given a list that leaves one out.
 
 The window and the reasoning behind it are in
-[../docs/non-custodial-exit.md](../docs/non-custodial-exit.md).
+[the design notes](../../../docs/non-custodial-exit.md).
 
 ## Rebuilding a transaction by hand
 
@@ -53,3 +53,11 @@ The window and the reasoning behind it are in
 Anchor discriminators and the argument layout for each instruction are all in
 it, so a transaction can be assembled from that file alone with any Solana
 library, or none.
+
+## Why it sits in `web/public/`
+
+So that it is also served at `/exit/`, and so the in-app panel can build its
+transactions from this exact file rather than a second copy. Neither of those
+is the guarantee. The guarantee is that these two files need no server of
+ours: copy them anywhere, or open `index.html` from disk, and they work the
+same. Somewhere that is not our hosting is still the right home for a copy.

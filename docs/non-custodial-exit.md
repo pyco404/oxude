@@ -222,7 +222,7 @@ only when the server cannot co-sign.
 ## The part our server cannot serve — built
 
 An exit offered only by our web app is not non-custodial: if the server is
-down, so is the button. So [`exit/`](../exit/) is two files — `index.html` and
+down, so is the button. So [`web/public/exit/`](../web/public/exit/) is two files — `index.html` and
 `exit.mjs` — with no npm, no CDN, no build step and no call to our API. It
 finds a wallet's agents from the program's own `AgentOwner` records, so it
 works for an agent we have never heard of.
@@ -268,7 +268,13 @@ gap, which is the same rule that makes the gap safe in the first place.
    Read from the database rather than the chain, because every caller is
    rendering a page and a page that costs an RPC call per view stops working
    when the RPC does; `settled` says plainly whether the watcher has caught up.
-7. In-app UI, instant path untouched.
+7. In-app UI, instant path untouched. **Built.** `web/app/exit-panel.tsx`
+   renders nothing at all in the ordinary case. It appears only when an exit
+   is already under way - an owner needs to see that wherever they look - or
+   when the instant path has just failed with a 5xx, which is the one refusal
+   we cannot fix for them. It builds its transactions from the standalone
+   page's own module, so the in-app route and the one that works when we are
+   gone cannot disagree about what an exit is.
 
 It cannot go earlier than 5, and the reason is worth stating rather than
 rediscovering: **before step 4 exists, every use of the page is an
