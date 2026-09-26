@@ -226,6 +226,32 @@ export function resolveActions(actions: PerSeat<Action>, stakes: Stakes): Resolu
   return { outcome: "flipped", bet: A === "raise" || B === "raise" ? stakes.raisedBet : stakes.baseBet };
 }
 
+/**
+ * The most a match at these stakes can move, either way.
+ *
+ * The engine's own statement of its bound, so the money code does not have to
+ * infer one. Every round moves exactly one of `ante`, `baseBet` or `raisedBet`
+ * from loser to winner, and nothing when both fold; a seat can win at most
+ * `ROUNDS_TO_WIN` rounds, because the match stops when it does, and can lose at
+ * most that many for the same reason. Losses only bring a net back towards
+ * zero, so the extreme is winning every round it is allowed to win at the
+ * dearest bet.
+ *
+ * `Math.max` rather than `raisedBet` on purpose: the shipped stakes happen to
+ * make the raise the dearest, but this has to bound what the engine *can*
+ * produce, not what today's numbers happen to look like.
+ *
+ * The runner checks a finished match against this before it settles
+ * (src/db/runner.ts). A net beyond it would be a change to the rules that the
+ * money code had not been told about - and it would move more than a vault was
+ * checked to cover, and more than the settlement program's per-match limit
+ * allows, which is the point at which "the engine cannot produce that" stops
+ * being a comment and starts being a loss.
+ */
+export function maxNet(stakes: Stakes): number {
+  return ROUNDS_TO_WIN * Math.max(stakes.ante, stakes.baseBet, stakes.raisedBet);
+}
+
 /** State after a round: `bet` moves from loser to winner (nothing moves if winner is null). */
 export function advanceState(
   state: MatchState,
