@@ -130,7 +130,7 @@ request, then dies for more than thirty minutes. The claim succeeds and that
 settlement never lands. Exposure is one match's worst case —
 `max_settlement`, 60 chips. **Accepted, not mitigated**, decided 2026-09-26. A
 reserve would strand 60 chips on every honest exit to cover a compound
-failure; that is a bad trade. Recorded as limitation 13 in
+failure; that is a bad trade. Recorded as limitation 12 in
 [security.md](security.md#known-limitations).
 
 **What the player sees.** Not the ledger. Once an exit is ingested the agent is
