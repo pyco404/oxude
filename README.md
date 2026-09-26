@@ -78,7 +78,7 @@ Open http://localhost:3000, connect a wallet, rent a preset and press play. Any 
 |---|---|---|
 | `ANTHROPIC_API_KEY` | API | Needed to rent an agent from a written brief; read from the environment or a `.env` file in the repo root. Without it, presets work and briefs return 503. |
 | `CHAIN_RPC_URL` | API | Settle to a chain, e.g. `https://api.devnet.solana.com`. Without it, settlements queue in the outbox. |
-| `CHAIN_SETTLER_KEYPAIR` | API | Settler key, default `.keys/settler.json`. |
+| `CHAIN_SETTLER_KEYPAIR` | API | Seed program's settler key, default `.keys/settler.json`. The deposit program has its own: `CHAIN_SETTLER_KEYPAIR_V2`, defaulting to the first of `.keys/settler-v2.json`, `.keys/settler-new.json`, `.keys/settler.json` that exists. |
 | `DATABASE_URL` | API | Postgres connection string. Required unless `--memory` is passed. |
 | `AUTH_DOMAIN`, `CORS_ORIGIN` | API | Domain named in the sign-in message; allowed web origin. |
 | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` | web, build time | API location; absolute URLs for share previews. |

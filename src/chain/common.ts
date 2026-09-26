@@ -1,5 +1,5 @@
 import { Keypair, type Transaction } from "@solana/web3.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 /**
  * The small things both settlement clients need. There are two programs while
@@ -18,6 +18,26 @@ export function uuidBytes(uuid: string): number[] {
 
 export function loadKeypair(path: string): Keypair {
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8")) as number[]));
+}
+
+/**
+ * Where the deposit program's settler key lives, on a machine that has one.
+ *
+ * The deposit program has a settler of its own, and on this deployment it has
+ * already been rotated once - so `.keys/settler.json` is the *seed* program's
+ * key and pointing the deposit flow at it silently gets NotSettler. The
+ * candidates are tried in order and the first that exists wins, so a rotated
+ * setup and a fresh clone both land on the right file without either needing
+ * an environment variable.
+ *
+ * `CHAIN_SETTLER_KEYPAIR_V2` still overrides everything.
+ */
+export const V2_SETTLER_KEYS = [".keys/settler-v2.json", ".keys/settler-new.json", ".keys/settler.json"] as const;
+
+export function v2SettlerKeyPath(): string {
+  const named = process.env["CHAIN_SETTLER_KEYPAIR_V2"];
+  if (named) return named;
+  return V2_SETTLER_KEYS.find((p) => existsSync(p)) ?? V2_SETTLER_KEYS[V2_SETTLER_KEYS.length - 1]!;
 }
 
 /** A transaction built and co-signed by the settler, waiting for the owner's signature. */

@@ -2,7 +2,7 @@ import "./env.js";
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { getMint } from "@solana/spl-token";
 import { existsSync } from "node:fs";
-import { loadKeypair } from "../src/chain/common.js";
+import { loadKeypair, v2SettlerKeyPath } from "../src/chain/common.js";
 import { ChainClient, DEVNET_CHIP_RATE, PROGRAM_ID, pdas, STAKE_DECIMALS } from "../src/chain/settlement.js";
 import { bandByName } from "../src/db/schema.js";
 
@@ -11,8 +11,9 @@ import { bandByName } from "../src/db/schema.js";
 //
 //   CHAIN_RPC_URL=https://api.devnet.solana.com npx tsx scripts/chain-setup.ts
 //
-// Keys: .keys/admin.json pays for initialisation and funds the settler;
-// .keys/settler.json is the only key the program lets settle. The stake token
+// Keys: .keys/admin.json pays for initialisation and funds the settler; the
+// settler key is the only one the program lets settle, and it is NOT
+// .keys/settler.json - that belongs to the frozen seed program. The stake token
 // comes from CHAIN_STAKE_MINT, or from .keys/stake-mint.json if that is unset
 // (scripts/stake-mint.ts makes both).
 //
@@ -31,7 +32,11 @@ import { bandByName } from "../src/db/schema.js";
 const rpc = process.env["CHAIN_RPC_URL"] ?? "http://127.0.0.1:18899";
 const connection = new Connection(rpc, "confirmed");
 const admin = loadKeypair(process.env["CHAIN_ADMIN_KEYPAIR"] ?? ".keys/admin.json");
-const settler = loadKeypair(process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json");
+// Not .keys/settler.json: that is the seed program's key, and this program's
+// settler has been rotated since. v2SettlerKeyPath picks the right file on a
+// rotated machine and on a fresh clone alike.
+const settlerKey = process.env["CHAIN_SETTLER_KEYPAIR"] ?? v2SettlerKeyPath();
+const settler = loadKeypair(settlerKey);
 const SETTLER_FLOOR = Number(process.env["SETTLER_MIN_SOL"] ?? 0.5);
 
 const CHIP_RATE = Number(process.env["CHAIN_CHIP_RATE"] ?? DEVNET_CHIP_RATE);
@@ -60,7 +65,7 @@ if (!program?.executable) {
 }
 
 console.log(`admin    ${admin.publicKey.toBase58()}  ${(await sol(admin.publicKey)).toFixed(3)} SOL`);
-console.log(`settler  ${settler.publicKey.toBase58()}  ${(await sol(settler.publicKey)).toFixed(3)} SOL`);
+console.log(`settler  ${settler.publicKey.toBase58()}  ${(await sol(settler.publicKey)).toFixed(3)} SOL  (${settlerKey})`);
 
 // The token the program will be pointed at. Both of these are refused by
 // initialize, so say so here rather than letting it fail with a code.
@@ -85,6 +90,8 @@ if (await connection.getAccountInfo(pdas.config(), "confirmed")) {
   const config = await new ChainClient(connection, admin, mint).config();
   if (config.settler.toBase58() !== settler.publicKey.toBase58()) {
     console.error(`Already initialised with a different settler: ${config.settler.toBase58()}`);
+    console.error(`This run is using ${settlerKey}, which is ${settler.publicKey.toBase58()}.`);
+    console.error("Point CHAIN_SETTLER_KEYPAIR at the key the config names, or rotate with set-settler.");
     process.exit(1);
   }
   if (config.mint.toBase58() !== mint.toBase58()) {

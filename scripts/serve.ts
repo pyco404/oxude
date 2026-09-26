@@ -118,19 +118,19 @@ let depositClient: import("../src/chain/settlement.js").ChainClient | undefined;
 if (rpc && process.env["CHAIN_STAKE_MINT"]) {
   const { Connection, Keypair, PublicKey } = await import("@solana/web3.js");
   const { ChainClient } = await import("../src/chain/settlement.js");
-  const { loadKeypair } = await import("../src/chain/common.js");
+  const { loadKeypair, v2SettlerKeyPath } = await import("../src/chain/common.js");
   try {
     // The deposit program has a settler of its own. The seed program's cannot be
     // rotated - the deployed bytecode has no set_settler - so its key is stuck
     // with whatever history it has, and there is no reason to carry that into a
-    // program being deployed clean. Falls back to the seed key when unset, so a
-    // single-key setup still works.
+    // program being deployed clean. v2SettlerKeyPath falls back to the seed key
+    // only when this program has no key file of its own, so a single-key setup
+    // still works without a rotated one silently picking up the wrong file and
+    // failing every settlement with NotSettler.
     const secret = process.env["CHAIN_SETTLER_SECRET_V2"] ?? process.env["CHAIN_SETTLER_SECRET"];
     const settler = secret
       ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret) as number[]))
-      : loadKeypair(
-          process.env["CHAIN_SETTLER_KEYPAIR_V2"] ?? process.env["CHAIN_SETTLER_KEYPAIR"] ?? ".keys/settler.json",
-        );
+      : loadKeypair(v2SettlerKeyPath());
     const client = new ChainClient(
       new Connection(rpc, "confirmed"),
       settler,
