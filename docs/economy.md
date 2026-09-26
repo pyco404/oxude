@@ -11,7 +11,7 @@ In order. Each step ships to devnet before the next begins, until the last, whic
 3. **Weekly seasons** — built. One shared Monday-to-Monday UTC season for every rental ([Seasons](#seasons)). Placed here because three later pieces depend on it: rewards pay out on final season placement, auctions run at the season boundary, and [the chip rate](#the-chip-rate) can only change between seasons.
 4. **[Characters](#characters)** — built. Identity and presentation for every agent. Placed ahead of deposits because a character is presentation only: it touches no money, needs no program change and none of the [Open questions](#open-questions), so it can ship now and give players a reason to show up while the money pieces are still being built. It also comes before rewards and auctions, because both of them are about an agent's *standing*, and a standing is easier to care about, compete over and bid on when it belongs to someone with a name and a face.
 5. **Deposits and paid rent** — built, and deployed to devnet on 2026-09-25 at [`HTs42VFp…tvkdy`](https://explorer.solana.com/address/HTs42VFpHS4XT9Cr8xH7cJEMgqPL9uuzZn6QHGwtvkdy?cluster=devnet). Nothing uses it yet: every agent on the live site is still seed-funded, and the flow is behind a flag until a season boundary flips it. The stake token is an ordinary mint with no mint authority left, so the program cannot create currency; renting burns a fee and funding is a deposit from the owner's own wallet, both in one transaction they sign. That last part also closes the consent gap in [security.md](security.md) — the server no longer creates agents for wallets that signed nothing. Still open from this step: the survival figures on the rent screen are still quoted against a fixed 900 rather than the chosen deposit (open question 3).
-6. **Rewards** — the prize pools funded by the creator-fee split ([Creator fees and prizes](#creator-fees-and-prizes)).
+6. **Rewards** — **placement is built**; the pool is not. A season now freezes two orderings and serves both, `/prizes` shows who would be paid and in what order, and `/statement` is the published statement with the prize amounts left empty ([What is built](#what-is-built)). What remains is the money: the creator-fee split cannot be configured before legal review (open question 5), and how many places pay and on what curve is open question 6.
 7. **Auctions** — expiry, bidding and transfer ([Expiry and auction](#expiry-and-auction)). What a character carries across a sale is open question 1.
 8. **Security hardening and mainnet** — close the known limitations in [security.md](security.md) (open question 4) and the rest of the [Open questions](#open-questions), then $OXUDE becomes the game's currency.
 
@@ -188,6 +188,21 @@ It is the same shape as the balance floor: the player sets the bounds, and the a
 - **Only player-versus-player matches are ranked.** A match against a house agent settles on chain and moves both balances like any other, but earns no ranking, counts toward no minimum match count, and cannot win a prize. The house presets are fixed and their exact weaknesses are computable from `src/exact.ts`, so an owner who could rank against them would be farming the reward pool off our own bots rather than beating anyone. Whether a match was ranked is recorded on the match itself, not derived from who owns the agents now: agents change hands at auction, and a past result has to stay readable as the match it was.
 - Prize ladders rank on **net per chip staked, with a minimum match count**: net won divided by total staked, over ranked matches only. Not cumulative net, or volume grinding wins. Not net per match either: stake size follows balance, so net per match would reward bigger balances and bring back pay-to-win.
 - Publish the wallet addresses, and a regular statement of what came in and went out.
+
+### What is built
+
+Placement is built and runs every season. Two orderings exist and they are kept apart:
+
+- **The ladder** ranks **ranked net won**, normalised onto band B so results from different bands compare. It is what `/ladder` serves and what the ladder page shows.
+- **Placement** ranks **ranked net per chip staked**, with a minimum of `MIN_RANKED_MATCHES_FOR_PRIZE` ranked matches (20 as this is written; it is a parameter, not a constant nobody may touch). It is what `/prizes` serves and what the rewards page shows, and it is what a prize would pay on.
+
+They divide the **un-normalised** net, not the ladder's. The ladder's figure has already had the band correction applied, and dividing that by chips staked would apply it twice and hand band A a standing advantage over band C.
+
+Both are **frozen when the season closes** and neither is recomputed afterwards. The numbers alone would not be enough: re-deriving an order later would let a change to the minimum match count, or to how ties break, quietly reorder a season that had already paid. An agent short of the minimum is stored with a null placement — listed, with how many matches it still needs, never hidden.
+
+`/statement?season=...` is the statement above, as far as the game currently goes: what was played, what was staked, what rent burned, the order places would pay in, and a reconciliation line — every side's net across the season's staked matches, which is zero because a match is zero-sum between its two agents. A non-zero figure there means a settlement was written that no match accounts for.
+
+The **prize amounts are absent, not zero**: `funded` is false and `pool` and `paid` are null, because the reward wallet is funded by the creator-fee split and that cannot be configured before the legal review in [open question 5](#open-questions). "Nothing was paid" and "we do not know yet" must not look alike. When the pool opens, the work is to fill in the pool and a per-place amount; nothing has to be rearranged to make room. Open question 6 — how many places pay, and on what curve — is still open, and open question 8's reconciliation of burns against reward-wallet inflow needs the inflow side, which does not exist yet.
 
 ## Anti-farming
 
