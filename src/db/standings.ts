@@ -1,6 +1,6 @@
-import { and, eq, gte, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "./client.js";
-import { agents, matches, STAKE_BANDS } from "./schema.js";
+import { agents, matches, seasonStandings, seasons, STAKE_BANDS } from "./schema.js";
 
 /**
  * A match's net divided by its band's factor: onto band B's scale, so a band C
@@ -157,4 +157,98 @@ export function prizeOrder(table: Standing[], minMatches = MIN_RANKED_MATCHES_FO
     ...placed.map((s, i) => ({ ...s, prizeRank: i + 1 })),
     ...rest.map((s) => ({ ...s, prizeRank: null, shortBy: Math.max(s.shortBy, s.perChip === null ? minMatches : 0) })),
   ];
+}
+
+export type PrizeRow = {
+  agentId: string;
+  name: string;
+  presetName: string | null;
+  mark: string | null;
+  retired: boolean;
+  /** 1 is first. Null when short of the minimum. */
+  prizeRank: number | null;
+  /** Ranked net per chip staked: what the order is by. */
+  perChip: number | null;
+  rankedMatches: number;
+  rankedStaked: number;
+  /** The chips those matches moved. Not the ladder's normalised figure. */
+  rankedNetReal: number;
+  shortBy: number;
+};
+
+export type PrizeTable = {
+  season: string;
+  /** True once the season has closed and its placement is the stored one. */
+  frozen: boolean;
+  minMatches: number;
+  rows: PrizeRow[];
+};
+
+/**
+ * A season's prize standing: who would be paid, in what order, as things
+ * stand.
+ *
+ * While the season is open this is computed live and will move with every
+ * match. Once it has closed it is read back from what was frozen at the
+ * boundary and is never recomputed - so a change to the minimum match count,
+ * or to how ties break, cannot reorder a season that has already ended. The
+ * `frozen` flag says which of the two the caller is looking at, because "this
+ * will still change" and "this is final" are not the same table and must not
+ * be shown as though they were.
+ */
+export async function prizeTable(db: Db, season: string, minMatches = MIN_RANKED_MATCHES_FOR_PRIZE): Promise<PrizeTable> {
+  const [row] = await db.select({ status: seasons.status }).from(seasons).where(eq(seasons.key, season)).limit(1);
+  if (row?.status !== "closed") {
+    const rows = prizeOrder(await standings(db, { season }), minMatches).map((s) => ({
+      agentId: s.agentId,
+      name: s.name,
+      presetName: s.presetName,
+      mark: s.mark,
+      retired: s.retired,
+      prizeRank: s.prizeRank,
+      perChip: s.perChip,
+      rankedMatches: s.rankedMatches,
+      rankedStaked: s.rankedStaked,
+      rankedNetReal: s.rankedNetReal,
+      shortBy: s.shortBy,
+    }));
+    return { season, frozen: false, minMatches, rows };
+  }
+
+  const frozen = await db
+    .select({
+      agentId: agents.id,
+      name: agents.name,
+      presetName: agents.presetName,
+      mark: agents.mark,
+      retired: sql<boolean>`${agents.retiredAt} is not null`,
+      prizeRank: seasonStandings.prizeRank,
+      rankedMatches: seasonStandings.rankedMatches,
+      rankedStaked: seasonStandings.rankedStaked,
+      rankedNetReal: seasonStandings.rankedNetReal,
+    })
+    .from(seasonStandings)
+    .innerJoin(agents, eq(agents.id, seasonStandings.agentId))
+    .where(eq(seasonStandings.season, season))
+    // Placed first in their frozen order, then everyone else by how much they played.
+    .orderBy(sql`${seasonStandings.prizeRank} asc nulls last`, desc(seasonStandings.rankedMatches), agents.id);
+  return {
+    season,
+    frozen: true,
+    minMatches,
+    rows: frozen.map((f) => {
+      const rankedStaked = Number(f.rankedStaked);
+      const rankedNetReal = Number(f.rankedNetReal);
+      return {
+        ...f,
+        rankedStaked,
+        rankedNetReal,
+        perChip: rankedStaked === 0 ? null : rankedNetReal / rankedStaked,
+        // Recomputed for display only. The rank above is the stored one, so a
+        // later change to the minimum can move this number without moving the
+        // placement it once explained.
+        shortBy: f.prizeRank === null ? Math.max(1, minMatches - f.rankedMatches) : 0,
+      };
+    }),
+  };
 }

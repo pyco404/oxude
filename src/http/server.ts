@@ -24,6 +24,7 @@ import {
 } from "../db/runner.js";
 import { autoplayStatus, markSeen, setAutoplay, sinceYouLeft } from "../db/autoplay.js";
 import { renewAgent, rentalStatus, RenewError } from "../db/seasons.js";
+import { prizeTable } from "../db/standings.js";
 import { characterOf, createCharacter, isDefaultName, NO_MODEL, ownerCharacter, portraitSvg, publicCharacter, type CharacterDeps } from "../character/store.js";
 import { moderate, type Verdict } from "../character/moderation.js";
 import { traitsOf } from "../character/trait-store.js";
@@ -272,6 +273,7 @@ export function createApp(options: AppOptions): Server {
     ["GET", /^\/presets$/, getPresets],
     ["GET", /^\/roster$/, getRoster],
     ["GET", /^\/season$/, getSeason],
+    ["GET", /^\/prizes$/, getPrizes],
     ["POST", /^\/agents\/([^/]+)\/deposits$/, postDeposit],
     ["POST", /^\/deposits\/([^/]+)\/submit$/, postDepositSubmit],
     ["POST", /^\/rentals\/([^/]+)\/submit$/, postRentalSubmit],
@@ -757,6 +759,43 @@ export function createApp(options: AppOptions): Server {
   }
 
   /** The season in play: what the rent screen counts down to. Public. */
+  /**
+   * A season's prize standing: the order prizes would pay in, as things stand.
+   *
+   * Deliberately its own endpoint rather than a tab on /ladder. The ladder
+   * ranks net won; this ranks net per chip staked over ranked matches, with a
+   * minimum match count. They are different questions and they give different
+   * answers, and serving them from one route invites a client to relabel one
+   * as the other.
+   */
+  async function getPrizes(ctx: Ctx) {
+    const now = new Date();
+    let season;
+    try {
+      season = ctx.query.get("season") ? seasonByKey(ctx.query.get("season")!) : seasonAt(now);
+    } catch {
+      throw new HttpError(400, "season must be a Monday, as YYYY-MM-DD");
+    }
+    const limit = Math.min(Number(ctx.query.get("limit") ?? 50) || 50, 200);
+    const table = await prizeTable(db, season.key);
+    return {
+      season: {
+        key: season.key,
+        number: season.number,
+        startsAt: season.start,
+        endsAt: season.end,
+        current: season.key === seasonAt(now).key,
+      },
+      /** False while the season is open: this table will still move. */
+      frozen: table.frozen,
+      /** Ranked matches needed before an agent can be placed. */
+      minMatches: table.minMatches,
+      basis: "ranked net per chip staked",
+      placed: table.rows.filter((r) => r.prizeRank !== null).length,
+      rows: table.rows.slice(0, limit),
+    };
+  }
+
   async function getSeason() {
     const season = seasonAt(new Date());
     return {

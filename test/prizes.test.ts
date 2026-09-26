@@ -11,7 +11,8 @@ import { connect, migrate } from "../src/db/client.js";
 import { agents, seasonStandings } from "../src/db/schema.js";
 import { createAgent, runMatch } from "../src/db/runner.js";
 import { closeSeason } from "../src/db/seasons.js";
-import { seasonAt } from "../src/season.js";
+import { nextSeason, seasonAt } from "../src/season.js";
+import { listen } from "../src/http/server.js";
 import { someWallet } from "./helpers.js";
 
 /** A standing with everything but the figures under test filled in plausibly. */
@@ -181,5 +182,49 @@ describe("freezing both orderings at the boundary", () => {
     // A head-to-head is zero sum, so one of the two is above water and placed first.
     expect(expected.map((e) => e.prizeRank)).toEqual([1, 2]);
     await close();
+  });
+});
+
+describe("GET /prizes", () => {
+  it("serves the live order while the season runs, and the frozen one after it closes", async () => {
+    const c = await connect();
+    await migrate(c.db);
+    const db = c.db;
+    const current = seasonAt(new Date());
+    const a = await createAgent(db, { name: "Ra", presetName: "Bully", ownerId: someWallet() });
+    const b = await createAgent(db, { name: "Rb", presetName: "Mirage", ownerId: someWallet() });
+    for (let i = 0; i < MIN + 2; i++) await runMatch(db, a.id, b.id, { seed: 300 + i });
+
+    const { url, close: closeServer } = await listen({ db });
+    try {
+      const live = (await (await fetch(`${url}/prizes`)).json()) as any;
+      expect(live.season.key).toBe(current.key);
+      expect(live.season.current).toBe(true);
+      expect(live.frozen).toBe(false);
+      expect(live.minMatches).toBe(MIN);
+      expect(live.basis).toBe("ranked net per chip staked");
+      expect(live.placed).toBe(2);
+      expect(live.rows.map((r: any) => r.prizeRank)).toEqual([1, 2]);
+      // The per-chip figure is what the order is by, and it is the real net
+      // over the real stake - not the ladder's normalised number.
+      expect(live.rows[0].perChip).toBeCloseTo(live.rows[0].rankedNetReal / live.rows[0].rankedStaked);
+      expect(live.rows[0].perChip).toBeGreaterThan(live.rows[1].perChip);
+      expect(live.rows[0]).not.toHaveProperty("rankedNet");
+
+      const before = live.rows.map((r: any) => r.agentId);
+      await closeSeason(db, current.key, new Date(current.end.getTime() + 60_000));
+      const after = (await (await fetch(`${url}/prizes?season=${current.key}`)).json()) as any;
+      expect(after.frozen).toBe(true);
+      expect(after.rows.map((r: any) => r.agentId)).toEqual(before);
+
+      // A season nobody has played is an empty table, not an error.
+      const next = (await (await fetch(`${url}/prizes?season=${nextSeason(current).key}`)).json()) as any;
+      expect(next.rows).toEqual([]);
+      expect(next.placed).toBe(0);
+      expect((await fetch(`${url}/prizes?season=tuesday`)).status).toBe(400);
+    } finally {
+      await closeServer();
+      await c.close();
+    }
   });
 });
